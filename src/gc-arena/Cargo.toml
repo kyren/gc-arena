@@ -3,6 +3,7 @@ name = "gc-arena"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
+workspace = "../../"
 license = "MIT"
 description = "safe garbage collected arenas"
 repository = "https://github.com/kyren/gc-arena"
