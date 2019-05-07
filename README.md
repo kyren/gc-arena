@@ -115,3 +115,14 @@ the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), and
 the vast majority of the `Sequence` design is taken directly from
 [futures-rs](https://github.com/rust-lang-nursery/futures-rs).
+
+## License ##
+
+`luster` is licensed under either of:
+
+* MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
+* Creative Commons CC0 1.0 Universal Public Domain Dedication
+  [LICENSE-CC0](LICENSE-CC0) or
+  https://creativecommons.org/publicdomain/zero/1.0/
+
+at your option.
