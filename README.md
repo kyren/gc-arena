@@ -1,4 +1,4 @@
-# gc-arena and gc-sequence
+## gc-arena and gc-sequence
  
 This repo is home to the `gc-arena` and `gc-sequence` crates, which provide Rust
 with garbage collected arenas and a means of safely interacting with them.
@@ -6,7 +6,7 @@ with garbage collected arenas and a means of safely interacting with them.
 These crates are still fairly experimental and WIP, but they do work and provide
 genuinely safe garbage collected pointers.
 
-## gc-arena
+### gc-arena
 
 The `gc-arena` crate, along with its helper crate `gc-arena-derive`, provides a
 safe system for simple garbage collected allocation arenas.  There are two
@@ -40,7 +40,7 @@ collection in isolated garbage collected arenas.  All garbage collected pointers
 must forever live inside only this arena, and pointers from different arenas are
 prevented from being stored in the wrong arena.
 
-## gc-sequence
+### gc-sequence
 
 The `gc-arena` crate, while still useful, is very limiting.  Since garbage
 collection can only take place *between* calls to `mutate`, arbitrarily long
@@ -104,4 +104,9 @@ safe.  Some notable current limitations:
 
 ## Prior Art
 
-The ideas here are mostly not mine, much of this was heavily derived
+The ideas here are mostly not mine, much of this was heavily derived from
+[rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/)
+the idea of using "generativity" comes from [You can't spell trust without
+Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), and
+the vast majority of the `Sequence` design is taken directly from
+[futures-rs](https://github.com/rust-lang-nursery/futures-rs).
