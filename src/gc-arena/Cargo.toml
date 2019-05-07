@@ -5,7 +5,7 @@ authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-gc-arena-derive = { path = "../gc-arena-derive" }
+gc-arena-derive = { path = "../gc-arena-derive", version = "0.1" }
 
 [dev-dependencies]
 rand = "0.5"
