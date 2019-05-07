@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
 license = "MIT OR CC0"
+description = "proc-macro support for gc-arena"
 repository = "https://github.com/kyren/gc-arena"
 
 [lib]
