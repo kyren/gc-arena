@@ -1,3 +1,5 @@
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/gc-arena.svg)](https://circleci.com/gh/kyren/gc-arena)
+
 ## gc-arena and gc-sequence
  
 This repo is home to the `gc-arena` and `gc-sequence` crates, which provide Rust
