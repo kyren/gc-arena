@@ -118,7 +118,7 @@ the vast majority of the `Sequence` design is taken directly from
 
 ## License ##
 
-`luster` is licensed under either of:
+All code in this repository is licensed under either of:
 
 * MIT license [LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT
 * Creative Commons CC0 1.0 Universal Public Domain Dedication
