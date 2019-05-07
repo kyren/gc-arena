@@ -67,13 +67,14 @@ just this.
 Currently, these crates are WIP and experimental, but are basically usable and
 safe.  Some notable current limitations:
 
-* While they contain no *pathalogical* slowness, they are not highly optimized
-  currently.  The garbage collector in the `gc-arena` crate is a basic
-  incremental mark-and-sweep collector which by itself is not *terrible*, but
-  there is still a lot of unnecessary space overhead per-allocation.
-  Additionally, there is not currently a way to allocate DSTs in a Gc pointer,
-  instead requiring very slow double indirection for any non-`Sized` type.  Both
-  of these problems are very solvable, but this work hasn't been done yet.
+* While these crates hopefully contain no *pathalogical* slowness, they are not
+  highly optimized currently.  The garbage collector in the `gc-arena` crate is
+  a basic incremental mark-and-sweep collector which by itself is not
+  *terrible*, but there is still a lot of unnecessary space overhead
+  per-allocation.  Additionally, there is not currently a way to allocate DSTs
+  in a Gc pointer, instead requiring very slow double indirection for any
+  non-`Sized` type.  Both of these problems are very solvable, but this work
+  hasn't been done yet.
   
 * There is currently no system for object finalization.  This is not terribly
   difficult to implement, depending on the system, but it would require picking
@@ -101,6 +102,8 @@ safe.  Some notable current limitations:
   `Collect` on generators automatically through some as-yet-undesigned rust
   feature, this would greatly improve the convenience and viability of the
   techniques in these crates in general.
+
+* The crates are currently very light on documentation and examples.
 
 ## Prior Art
 
