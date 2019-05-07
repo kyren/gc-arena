@@ -104,8 +104,8 @@ safe.  Some notable current limitations:
 
 ## Prior Art
 
-The ideas here are mostly not mine, much of this was heavily derived from
-[rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/)
+The ideas here are mostly not mine, much of the design is borrowed heavily from
+[rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf), and
 the vast majority of the `Sequence` design is taken directly from
