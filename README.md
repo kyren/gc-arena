@@ -11,8 +11,8 @@ genuinely safe garbage collected pointers.
 ### gc-arena
 
 The `gc-arena` crate, along with its helper crate `gc-arena-derive`, provides
-safe allocation with cycle-detecting garbage collector within a closed "arena".
-There are two techniques at play that make this system sound:
+safe allocation with cycle-detecting garbage collection within a closed
+"arena".  There are two techniques at play that make this system sound:
 
 * Garbage collected objects are traced using the `Collect` trait, which must be
   implemented correctly to ensure that all reachable objects are found.  This
