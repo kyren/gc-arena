@@ -220,9 +220,9 @@ macro_rules! make_arena {
     };
 }
 
-/// Create a temporary arena without a root object perform the given operation on it.  No garbage
-/// collection will be done until the very end of the call, at which point all allocations will be
-/// collected.
+/// Create a temporary arena without a root object and perform the given operation on it.  No
+/// garbage collection will be done until the very end of the call, at which point all allocations
+/// will be collected.
 pub fn rootless_arena<F, R>(f: F) -> R
 where
     F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> R,
