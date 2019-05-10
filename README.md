@@ -88,11 +88,11 @@ safe.  Some notable current limitations:
   
 * A harder to solve limitation is that there is currently no system for
   multi-threaded allocation and collection.  The basic lifetime and safety
-  techniques here would still work in an arena supprinting multi-threading, but
+  techniques here would still work in an arena supporting multi-threading, but
   these crates do not support this.
   
 * Another limitiation is that the `Collect` trait does not provide a mechanism
-  to move pointers once they are allocated, so this limits the types of
+  to move objects once they are allocated, so this limits the types of
   collectors that could be written.
   
 * The `gc-sequence` crate is inconvenient to use, as it requires combinators to
