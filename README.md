@@ -83,7 +83,7 @@ safe.  Some notable current limitations:
   a particular set of edge-case finalization behavior.
   
 * There are lots of missing `Sequence` combinators, and there is currently no
-  way to conveniently constructing looping `Sequence`s.  This is easily
+  way of conveniently constructing looping `Sequence`s.  This is easily
   solvable, but not currently done.
   
 * A harder to solve limitation is that there is currently no system for
