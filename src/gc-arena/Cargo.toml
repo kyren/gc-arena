@@ -6,6 +6,7 @@ edition = "2018"
 workspace = "../../"
 license = "MIT"
 description = "safe garbage collected arenas"
+readme = "../../README.md"
 repository = "https://github.com/kyren/gc-arena"
 
 [dependencies]

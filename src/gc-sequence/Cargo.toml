@@ -6,6 +6,7 @@ edition = "2018"
 workspace = "../../"
 license = "MIT"
 description = "a system for encoding safe points for computations running on gc-arena"
+readme = "../../README.md"
 repository = "https://github.com/kyren/gc-arena"
 
 [dependencies]
