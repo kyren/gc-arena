@@ -1,3 +1,5 @@
+[![crates.io](https://img.shields.io/crates/v/gc-arena)](https://crates.io/crates/gc-arena)
+[![docs.rs](https://docs.rs/gc-arena/badge.svg)](https://docs.rs/gc-arena)
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/gc-arena.svg)](https://circleci.com/gh/kyren/gc-arena)
 
 ## gc-arena and gc-sequence
