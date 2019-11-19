@@ -4,7 +4,7 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct Done<O>(Option<O>);
 
 impl<'gc, O: Collect> Sequence<'gc> for Done<O> {

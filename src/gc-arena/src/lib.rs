@@ -9,6 +9,7 @@ mod gc;
 mod gc_cell;
 mod static_collect;
 mod types;
+pub mod no_drop;
 
 pub use self::arena::*;
 pub use self::collect::*;

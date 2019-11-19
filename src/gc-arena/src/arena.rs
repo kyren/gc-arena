@@ -66,7 +66,7 @@ impl ArenaParameters {
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
-/// #[collect(empty_drop)]
+/// #[collect(no_drop)]
 /// struct MyRoot<'gc> {
 ///     ptr: Gc<'gc, i32>,
 /// }

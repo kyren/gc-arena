@@ -2,7 +2,7 @@ use gc_arena::{ArenaParameters, Collect, Gc};
 use gc_sequence::{self as sequence, make_sequencable_arena, SequenceExt, SequenceResultExt};
 
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 struct TestRoot<'gc> {
     test: Gc<'gc, i32>,
 }

@@ -4,7 +4,7 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct MapOk<S, F>(S, Option<StaticCollect<F>>);
 
 impl<S, F> MapOk<S, F> {
@@ -35,7 +35,7 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct MapOkWith<S, C, F>(S, Option<(C, StaticCollect<F>)>);
 
 impl<S, C, F> MapOkWith<S, C, F> {
@@ -66,7 +66,7 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub struct MapError<S, F>(S, Option<StaticCollect<F>>);
 
 impl<S, F> MapError<S, F> {

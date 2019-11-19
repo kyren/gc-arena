@@ -8,7 +8,7 @@ use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, G
 #[test]
 fn simple_allocation() {
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct TestRoot<'gc> {
         test: Gc<'gc, i32>,
     }
@@ -31,7 +31,7 @@ fn repeated_allocation_deallocation() {
     unsafe_empty_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, (i32, RefCounter)>>>);
     make_arena!(TestArena, TestRoot);
 
@@ -79,7 +79,7 @@ fn all_dropped() {
     unsafe_empty_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
     make_arena!(TestArena, TestRoot);
 
@@ -106,7 +106,7 @@ fn all_garbage_collected() {
     unsafe_empty_collect!(RefCounter);
 
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
     make_arena!(TestArena, TestRoot);
 
@@ -134,7 +134,7 @@ fn all_garbage_collected() {
 fn derive_collect() {
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct Test1<'gc> {
         a: i32,
         b: Gc<'gc, i32>,
@@ -142,7 +142,7 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct Test2 {
         a: i32,
         b: i32,
@@ -150,7 +150,7 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     enum Test3<'gc> {
         B(Gc<'gc, i32>),
         A(i32),
@@ -158,19 +158,19 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     enum Test4 {
         A(i32),
     }
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct Test5(Gc<'static, i32>);
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(empty_drop)]
+    #[collect(no_drop)]
     struct Test6(i32);
 
     assert_eq!(Test1::needs_trace(), true);

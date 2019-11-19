@@ -4,7 +4,7 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Collect)]
-#[collect(empty_drop)]
+#[collect(no_drop)]
 pub enum FlattenOk<S, I> {
     First(S),
     Second(I),
