@@ -9,7 +9,7 @@ readme = "../../README.md"
 repository = "https://github.com/kyren/gc-arena"
 
 [dependencies]
-gc-arena-derive = { path = "../gc-arena-derive", version = "0.1" }
+gc-arena-derive = { path = "../gc-arena-derive", version = "0.2" }
 
 [dev-dependencies]
 rand = "0.5"

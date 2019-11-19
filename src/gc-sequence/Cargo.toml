@@ -9,4 +9,4 @@ readme = "../../README.md"
 repository = "https://github.com/kyren/gc-arena"
 
 [dependencies]
-gc-arena = { path = "../gc-arena", version = "0.1" }
+gc-arena = { path = "../gc-arena", version = "0.2" }
