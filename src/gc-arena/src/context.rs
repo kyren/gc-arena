@@ -49,17 +49,17 @@ pub struct Context {
     wakeup_total: Cell<usize>,
     allocation_debt: Cell<f64>,
 
-    all: Cell<Option<NonNull<GcBox<Collect>>>>,
-    sweep: Cell<Option<NonNull<GcBox<Collect>>>>,
-    sweep_prev: Cell<Option<NonNull<GcBox<Collect>>>>,
+    all: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
+    sweep: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
+    sweep_prev: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
 
-    gray: RefCell<Vec<NonNull<GcBox<Collect>>>>,
-    gray_again: RefCell<Vec<NonNull<GcBox<Collect>>>>,
+    gray: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
+    gray_again: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
-        struct DropAll(Option<NonNull<GcBox<Collect>>>);
+        struct DropAll(Option<NonNull<GcBox<dyn Collect>>>);
 
         impl Drop for DropAll {
             fn drop(&mut self) {
@@ -318,6 +318,6 @@ enum Phase {
     Sleep,
 }
 
-unsafe fn static_gc_box<'gc>(ptr: NonNull<GcBox<Collect + 'gc>>) -> NonNull<GcBox<Collect>> {
+unsafe fn static_gc_box<'gc>(ptr: NonNull<GcBox<dyn Collect + 'gc>>) -> NonNull<GcBox<dyn Collect>> {
     mem::transmute(ptr)
 }
