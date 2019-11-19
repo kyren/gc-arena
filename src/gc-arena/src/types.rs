@@ -55,4 +55,4 @@ impl GcFlags {
 }
 
 // Phantom type that holds a lifetime and ensures that it is invariant.
-pub(crate) type Invariant<'gc> = PhantomData<Cell<&'gc ()>>;
+pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
