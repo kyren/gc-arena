@@ -318,6 +318,8 @@ enum Phase {
     Sleep,
 }
 
-unsafe fn static_gc_box<'gc>(ptr: NonNull<GcBox<dyn Collect + 'gc>>) -> NonNull<GcBox<dyn Collect>> {
+unsafe fn static_gc_box<'gc>(
+    ptr: NonNull<GcBox<dyn Collect + 'gc>>,
+) -> NonNull<GcBox<dyn Collect>> {
     mem::transmute(ptr)
 }

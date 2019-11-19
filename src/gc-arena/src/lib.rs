@@ -7,13 +7,16 @@ mod collect_impl;
 mod context;
 mod gc;
 mod gc_cell;
+mod no_drop;
 mod static_collect;
 mod types;
-pub mod no_drop;
 
-pub use self::arena::*;
-pub use self::collect::*;
-pub use self::context::*;
-pub use self::gc::*;
-pub use self::gc_cell::*;
-pub use self::static_collect::*;
+pub use self::{
+    arena::{rootless_arena, ArenaParameters},
+    collect::Collect,
+    context::{CollectionContext, Context, MutationContext},
+    gc::Gc,
+    gc_cell::GcCell,
+    no_drop::MustNotImplDrop,
+    static_collect::StaticCollect,
+};

@@ -1,4 +1,4 @@
-use proc_macro2::{Ident, Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
 use synstructure::{decl_derive, AddBounds};
 
@@ -20,9 +20,9 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
     let mut mode = None;
 
     for attr in &s.ast().attrs {
-        match attr.interpret_meta() {
-            Some(syn::Meta::List(syn::MetaList { ident, nested, .. })) => {
-                if ident == Ident::new("collect", Span::call_site()) {
+        match attr.parse_meta() {
+            Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
+                if path.is_ident("collect") {
                     if let Some(prev_mode) = mode {
                         let prev_mode_str = match prev_mode {
                             Mode::RequireStatic => "require_static",
@@ -32,27 +32,12 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                         panic!("`Collect` mode was already specified with `#[collect({})]`, cannot specify twice", prev_mode_str);
                     }
 
-                    if let Some(syn::punctuated::Pair::End(nmeta)) = nested.first() {
-                        if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
-                                "require_static",
-                                Span::call_site(),
-                            )))
-                        {
+                    if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) = nested.first() {
+                        if path.is_ident("require_static") {
                             mode = Some(Mode::RequireStatic);
-                        } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
-                                "no_drop",
-                                Span::call_site(),
-                            )))
-                        {
+                        } else if path.is_ident("no_drop") {
                             mode = Some(Mode::NoDrop);
-                        } else if nmeta
-                            == &syn::NestedMeta::Meta(syn::Meta::Word(Ident::new(
-                                "unsafe_drop",
-                                Span::call_site(),
-                            )))
-                        {
+                        } else if path.is_ident("unsafe_drop") {
                             mode = Some(Mode::UnsafeDrop);
                         } else {
                             panic!("`#[collect]` requires one of: \"require_static\", \"no_drop\", or \"unsafe_drop\" as an argument");
@@ -112,7 +97,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
     let drop_impl = if mode == Mode::NoDrop {
         let mut s = s;
         s.add_bounds(AddBounds::None).gen_impl(quote! {
-            gen impl gc_arena::no_drop::MustNotImplDrop for @Self {}
+            gen impl gc_arena::MustNotImplDrop for @Self {}
         })
     } else {
         quote!()
