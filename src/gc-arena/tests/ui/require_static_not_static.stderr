@@ -1,0 +1,24 @@
+error[E0495]: cannot infer an appropriate lifetime for lifetime parameter `'a` due to conflicting requirements
+  --> $DIR/require_static_not_static.rs:13:5
+   |
+13 |     MyStruct::<'a>::needs_trace();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+note: first, the lifetime cannot outlive the lifetime `'a` as defined on the function body at 12:29...
+  --> $DIR/require_static_not_static.rs:12:29
+   |
+12 | fn assert_my_struct_collect<'a>() {
+   |                             ^^
+note: ...so that the types are compatible
+  --> $DIR/require_static_not_static.rs:13:5
+   |
+13 |     MyStruct::<'a>::needs_trace();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = note: expected `Collect`
+              found `Collect`
+   = note: but, the lifetime must be valid for the static lifetime...
+note: ...so that the type `NoCollectImpl<'_>` will meet its required lifetime bounds
+  --> $DIR/require_static_not_static.rs:13:5
+   |
+13 |     MyStruct::<'a>::needs_trace();
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
