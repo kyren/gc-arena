@@ -13,3 +13,4 @@ gc-arena-derive = { path = "../gc-arena-derive", version = "0.2" }
 
 [dev-dependencies]
 rand = "0.5"
+trybuild = "1.0"

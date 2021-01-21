@@ -180,3 +180,9 @@ fn derive_collect() {
     assert_eq!(Test5::needs_trace(), true);
     assert_eq!(Test6::needs_trace(), false);
 }
+
+#[test]
+fn ui() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/*.rs");
+}
