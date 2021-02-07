@@ -1,5 +1,5 @@
-use std::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
-use std::fmt::{self, Debug};
+use core::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
+use core::fmt::{self, Debug};
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};

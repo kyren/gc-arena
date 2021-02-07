@@ -1,4 +1,4 @@
-use std::{f64, usize};
+use core::{f64, usize};
 
 use crate::context::{Context, MutationContext};
 
