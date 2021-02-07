@@ -26,7 +26,9 @@ jobs:
           command: cargo build --workspace --all-targets
       - run:
           name: Build no_std targets
-          command: cargo build --manifest-path=src/gc-arena/Cargo.toml --no-default-features
+          command: |
+              cargo build --manifest-path=src/gc-arena/Cargo.toml --no-default-features
+              cargo build --manifest-path=src/gc-sequence/Cargo.toml --no-default-features
       - run:
           name: Run all tests
           command: cargo test --workspace
