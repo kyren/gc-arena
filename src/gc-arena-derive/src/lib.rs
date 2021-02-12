@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use synstructure::{decl_derive, AddBounds};
 
@@ -160,12 +160,20 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         for v in s.variants() {
             for b in v.bindings() {
                 let ty = &b.ast().ty;
-                quote!(|| <#ty as gc_arena::Collect>::needs_trace())
-                    .to_tokens(&mut needs_trace_body);
+                quote_spanned!(b.ast().span()=>
+                    || <#ty as gc_arena::Collect>::needs_trace()
+                ).to_tokens(&mut needs_trace_body);
             }
         }
         // Likewise, this will skip any fields that have `#[collect(require_static)]`
-        let trace_body = s.each(|bi| quote!(gc_arena::Collect::trace(#bi, cc)));
+        let trace_body = s.each(|bi| {
+            // Make sure to only use `quote_spanned`  on the method call
+            // tokens - we want to use the call site span for the `cc` identifier
+            let trace_method = quote_spanned!(bi.ast().span()=>
+                gc_arena::Collect::trace
+            );
+            quote!(#trace_method (#bi, cc))
+        });
 
         s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
             gen unsafe impl gc_arena::Collect for @Self #where_clause {
