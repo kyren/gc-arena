@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
+use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use core::hash::{BuildHasher, Hash};
 #[cfg(feature = "std")]
@@ -247,6 +248,15 @@ where
 unsafe impl<T> Collect for RefCell<T>
 where
     T: 'static,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        false
+    }
+}
+
+// SAFETY: `PhantomData` is a ZST, and therefore doesn't store anything
+unsafe impl<T> Collect for PhantomData<T>
 {
     #[inline]
     fn needs_trace() -> bool {
