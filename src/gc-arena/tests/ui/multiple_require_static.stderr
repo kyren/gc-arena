@@ -1,0 +1,5 @@
+error: Cannot specify multiple `#[collect]` attributes!
+ --> $DIR/multiple_require_static.rs:7:7
+  |
+7 |     #[collect(require_static)]
+  |       ^^^^^^^

@@ -179,4 +179,33 @@ fn derive_collect() {
     assert_eq!(Test4::needs_trace(), false);
     assert_eq!(Test5::needs_trace(), true);
     assert_eq!(Test6::needs_trace(), false);
+
+    struct NoImpl;
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Test7 {
+        #[collect(require_static)]
+        field: NoImpl,
+    }
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    enum Test8 {
+        First {
+            #[collect(require_static)]
+            field: NoImpl,
+        },
+    }
+
+    assert_eq!(Test7::needs_trace(), false);
+    assert_eq!(Test8::needs_trace(), false);
+}
+
+#[test]
+fn ui() {
+    let t = trybuild::TestCases::new();
+    t.compile_fail("tests/ui/*.rs");
 }

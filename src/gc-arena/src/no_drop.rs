@@ -4,4 +4,5 @@
 #[doc(hidden)]
 pub trait MustNotImplDrop {}
 
+#[allow(drop_bounds)]
 impl<T: Drop> MustNotImplDrop for T {}

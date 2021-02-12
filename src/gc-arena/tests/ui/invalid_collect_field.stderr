@@ -1,0 +1,5 @@
+error: Only `#[collect(require_static)]` is supported on a field
+ --> $DIR/invalid_collect_field.rs:6:15
+  |
+6 |     #[collect(invalid_arg)] field: u8
+  |               ^^^^^^^^^^^
