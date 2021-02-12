@@ -1,7 +1,9 @@
-use std::cell::{Cell, RefCell, UnsafeCell};
-use std::marker::PhantomData;
-use std::ptr::NonNull;
-use std::{f64, mem, usize};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use core::cell::{Cell, RefCell, UnsafeCell};
+use core::marker::PhantomData;
+use core::mem;
+use core::ptr::NonNull;
 
 use crate::arena::ArenaParameters;
 use crate::collect::Collect;
@@ -230,15 +232,12 @@ impl Context {
                         // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
                         self.allocation_debt.set(0.0);
 
-                        self.wakeup_total.set(
-                            self.total_allocated.get()
-                                + ((self.remembered_size.get() as f64
-                                    * self.parameters.pause_factor)
-                                    .round()
-                                    .min(usize::MAX as f64)
-                                    as usize)
-                                    .max(self.parameters.min_sleep),
-                        );
+                        let sleep = f64_to_usize(
+                            self.remembered_size.get() as f64 * self.parameters.pause_factor,
+                        )
+                        .min(self.parameters.min_sleep);
+
+                        self.wakeup_total.set(self.total_allocated.get() + sleep);
                     }
                 }
                 Phase::Sleep => break,
@@ -322,4 +321,51 @@ unsafe fn static_gc_box<'gc>(
     ptr: NonNull<GcBox<dyn Collect + 'gc>>,
 ) -> NonNull<GcBox<dyn Collect>> {
     mem::transmute(ptr)
+}
+
+/// Rounds a floating point number to an unsigned integer.
+///
+/// If the floating point number is outside the bounds of the unsigned
+/// integer, the number is clamped.
+///
+/// This methods works in no_std environments too.
+fn f64_to_usize(input: f64) -> usize {
+    // As per the Rustonomicon, the cast to usize is truncating.
+    // TODO: Use f64::round when that is available in no_std. See:
+    // https://github.com/rust-lang/rust/issues/50145
+    (input + 0.5) as usize
+}
+
+#[cfg(test)]
+mod test {
+    use super::f64_to_usize;
+
+    #[test]
+    fn test_clamp_f64() {
+        assert_eq!(f64_to_usize(f64::MIN), 0);
+        assert_eq!(f64_to_usize(-100.0), 0);
+        assert_eq!(f64_to_usize(-1.0), 0);
+        assert_eq!(f64_to_usize(-0.6), 0);
+        assert_eq!(f64_to_usize(0.0), 0);
+        assert_eq!(f64_to_usize(0.4), 0);
+        assert_eq!(f64_to_usize(0.5 - f64::EPSILON), 0);
+        assert_eq!(f64_to_usize(0.5), 1);
+        assert_eq!(f64_to_usize(0.6), 1);
+        assert_eq!(f64_to_usize(1.0), 1);
+        assert_eq!(f64_to_usize(100.0), 100);
+        assert_eq!(f64_to_usize(usize::MAX as f64), usize::MAX);
+        assert_eq!(f64_to_usize(f64::MAX), usize::MAX);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn test_clamp_f64_precision() {
+        fn std_impl(input: f64) -> usize {
+            input.round().min(usize::MAX as f64) as usize
+        }
+
+        // Precision is lost both using the no_std impl and the std impl
+        assert_eq!(std_impl((usize::MAX - 1) as f64) as usize, usize::MAX);
+        assert_eq!(f64_to_usize((usize::MAX - 1) as f64), usize::MAX);
+    }
 }

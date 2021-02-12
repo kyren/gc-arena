@@ -1,6 +1,6 @@
-use std::cell::{Cell, UnsafeCell};
-use std::marker::PhantomData;
-use std::ptr::NonNull;
+use core::cell::{Cell, UnsafeCell};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 use crate::collect::Collect;
 

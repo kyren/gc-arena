@@ -8,5 +8,9 @@ description = "a system for encoding safe points for computations running on gc-
 readme = "../../README.md"
 repository = "https://github.com/kyren/gc-arena"
 
+[features]
+default = ["std"]
+std = []
+
 [dependencies]
 gc-arena = { path = "../gc-arena", version = "0.2" }

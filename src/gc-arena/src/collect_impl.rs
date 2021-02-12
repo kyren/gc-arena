@@ -1,8 +1,14 @@
-use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::{BuildHasher, Hash};
-use std::rc::Rc;
-use std::sync::Arc;
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::rc::Rc;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::cell::{Cell, RefCell};
+#[cfg(feature = "std")]
+use core::hash::{BuildHasher, Hash};
+#[cfg(feature = "std")]
+use std::collections::{HashMap, HashSet};
 
 use crate::collect::Collect;
 use crate::context::CollectionContext;
@@ -132,6 +138,7 @@ unsafe impl<T: Collect> Collect for Vec<T> {
     }
 }
 
+#[cfg(feature = "std")]
 unsafe impl<K, V, S> Collect for HashMap<K, V, S>
 where
     K: Eq + Hash + Collect,
@@ -152,6 +159,7 @@ where
     }
 }
 
+#[cfg(feature = "std")]
 unsafe impl<T, S> Collect for HashSet<T, S>
 where
     T: Eq + Hash + Collect,

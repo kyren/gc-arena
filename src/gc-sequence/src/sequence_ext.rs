@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use gc_arena::{Collect, MutationContext};
 
 use crate::{

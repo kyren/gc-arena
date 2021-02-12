@@ -1,7 +1,7 @@
-use std::fmt::{self, Debug};
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::ptr::NonNull;
+use core::fmt::{self, Debug};
+use core::marker::PhantomData;
+use core::ops::Deref;
+use core::ptr::NonNull;
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};

@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use gc_arena::{Collect, MutationContext};
 
 /// A trait that describes a sequence of actions to perform, in between which garbage collection may

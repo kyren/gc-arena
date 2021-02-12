@@ -1,3 +1,10 @@
+#![no_std]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+extern crate alloc;
+
 #[doc(hidden)]
 pub use gc_arena_derive::*;
 

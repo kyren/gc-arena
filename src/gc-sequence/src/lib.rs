@@ -1,3 +1,10 @@
+#![no_std]
+
+#[cfg(feature = "std")]
+extern crate std;
+
+extern crate alloc;
+
 pub mod and_then;
 pub mod done;
 pub mod flatten;

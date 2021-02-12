@@ -1,7 +1,8 @@
+#[cfg(feature = "std")]
+use rand::distributions::Distribution;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 use std::rc::Rc;
-
-use rand::distributions::Distribution;
 
 use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell};
 
@@ -24,6 +25,7 @@ fn simple_allocation() {
     });
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn repeated_allocation_deallocation() {
     #[derive(Clone)]
