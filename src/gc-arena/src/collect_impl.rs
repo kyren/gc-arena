@@ -4,6 +4,7 @@ use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use alloc::collections::VecDeque;
 use core::cell::{Cell, RefCell};
 #[cfg(feature = "std")]
 use core::hash::{BuildHasher, Hash};
@@ -125,6 +126,20 @@ unsafe impl<T: Collect, E: Collect> Collect for Result<T, E> {
 }
 
 unsafe impl<T: Collect> Collect for Vec<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        for t in self {
+            t.trace(cc)
+        }
+    }
+}
+
+unsafe impl<T: Collect> Collect for VecDeque<T> {
     #[inline]
     fn needs_trace() -> bool {
         T::needs_trace()
