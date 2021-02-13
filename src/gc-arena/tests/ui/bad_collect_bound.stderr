@@ -1,0 +1,18 @@
+error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
+  --> $DIR/bad_collect_bound.rs:8:5
+   |
+8  |     field: NotCollect
+   |     ^^^^^^^^^^^^^^^^^ the trait `Collect` is not implemented for `NotCollect`
+   |
+  ::: $WORKSPACE/src/gc-arena/src/collect.rs
+   |
+   |         Self: Sized,
+   |               ----- required by this bound in `needs_trace`
+
+error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
+ --> $DIR/bad_collect_bound.rs:8:5
+  |
+8 |     field: NotCollect
+  |     ^^^^^^^^^^^^^^^^^ the trait `Collect` is not implemented for `NotCollect`
+  |
+  = note: required by `trace`
