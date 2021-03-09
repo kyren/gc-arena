@@ -264,13 +264,17 @@ impl Context {
             );
         }
 
-        let gc_box = GcBox {
-            flags: GcFlags::new(),
-            next: Cell::new(self.all.get()),
-            value: UnsafeCell::new(t),
-        };
-        gc_box.flags.set_needs_trace(T::needs_trace());
-        let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(gc_box)));
+        let flags = GcFlags::new();
+        flags.set_needs_trace(T::needs_trace());
+
+        let mut uninitialized = Box::new(mem::MaybeUninit::<GcBox<T>>::uninit());
+
+        core::ptr::write(&mut (*uninitialized.as_mut_ptr()).flags, flags);
+        core::ptr::write(&mut (*uninitialized.as_mut_ptr()).next, Cell::new(self.all.get()));
+        core::ptr::write(&mut (*uninitialized.as_mut_ptr()).value, UnsafeCell::new(t));
+
+        let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBox<T>);
+
         self.all.set(Some(static_gc_box(ptr)));
         if self.phase.get() == Phase::Sweep && self.sweep_prev.get().is_none() {
             self.sweep_prev.set(self.all.get());
