@@ -317,6 +317,7 @@ enum Phase {
     Sleep,
 }
 
+#[inline]
 unsafe fn static_gc_box<'gc>(
     ptr: NonNull<GcBox<dyn Collect + 'gc>>,
 ) -> NonNull<GcBox<dyn Collect>> {

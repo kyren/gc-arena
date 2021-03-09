@@ -20,10 +20,12 @@ pub(crate) struct GcBox<T: Collect + ?Sized> {
 pub(crate) struct GcFlags(Cell<u8>);
 
 impl GcFlags {
+    #[inline]
     pub(crate) fn new() -> GcFlags {
         GcFlags(Cell::new(0))
     }
 
+    #[inline]
     pub(crate) fn color(&self) -> GcColor {
         match self.0.get() & 0x3 {
             0x0 => GcColor::White,
@@ -33,6 +35,7 @@ impl GcFlags {
         }
     }
 
+    #[inline]
     pub(crate) fn set_color(&self, color: GcColor) {
         self.0.set(
             (self.0.get() & !0x3)
@@ -44,10 +47,12 @@ impl GcFlags {
         )
     }
 
+    #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
         self.0.get() & 0x4 != 0x0
     }
 
+    #[inline]
     pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
         self.0
             .set((self.0.get() & !0x4) | if needs_trace { 0x4 } else { 0x0 });
