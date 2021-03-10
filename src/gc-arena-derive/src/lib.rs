@@ -162,7 +162,8 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                 let ty = &b.ast().ty;
                 quote_spanned!(b.ast().span()=>
                     || <#ty as gc_arena::Collect>::needs_trace()
-                ).to_tokens(&mut needs_trace_body);
+                )
+                .to_tokens(&mut needs_trace_body);
             }
         }
         // Likewise, this will skip any fields that have `#[collect(require_static)]`

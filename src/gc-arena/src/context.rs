@@ -270,7 +270,10 @@ impl Context {
         let mut uninitialized = Box::new(mem::MaybeUninit::<GcBox<T>>::uninit());
 
         core::ptr::write(&mut (*uninitialized.as_mut_ptr()).flags, flags);
-        core::ptr::write(&mut (*uninitialized.as_mut_ptr()).next, Cell::new(self.all.get()));
+        core::ptr::write(
+            &mut (*uninitialized.as_mut_ptr()).next,
+            Cell::new(self.all.get()),
+        );
         core::ptr::write(&mut (*uninitialized.as_mut_ptr()).value, UnsafeCell::new(t));
 
         let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBox<T>);
