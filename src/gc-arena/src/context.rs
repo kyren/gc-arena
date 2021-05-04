@@ -267,7 +267,6 @@ impl Context {
         let flags = GcFlags::new();
         flags.set_needs_trace(T::needs_trace());
 
-
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
