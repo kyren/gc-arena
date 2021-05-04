@@ -8,6 +8,8 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
    |
    |         Self: Sized,
    |               ----- required by this bound in `needs_trace`
+   |
+   = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
  --> $DIR/bad_collect_bound.rs:8:5
@@ -16,3 +18,4 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
   |     ^^^^^^^^^^^^^^^^^ the trait `Collect` is not implemented for `NotCollect`
   |
   = note: required by `trace`
+  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)

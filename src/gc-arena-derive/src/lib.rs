@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use synstructure::{decl_derive, AddBounds};
@@ -160,19 +160,35 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         for v in s.variants() {
             for b in v.bindings() {
                 let ty = &b.ast().ty;
-                quote_spanned!(b.ast().span()=>
+                // Resolving the span at the call site makes rustc
+                // emit a 'the error originates a derive macro note'
+                // We only use this span on tokens that need to resolve
+                // to items (e.g. `gc_arena::Collect`), so this won't
+                // cause any hygiene issues
+                let call_span = b.ast().span().resolved_at(Span::call_site());
+                quote_spanned!(call_span=>
                     || <#ty as gc_arena::Collect>::needs_trace()
                 ).to_tokens(&mut needs_trace_body);
             }
         }
         // Likewise, this will skip any fields that have `#[collect(require_static)]`
         let trace_body = s.each(|bi| {
-            // Make sure to only use `quote_spanned`  on the method call
-            // tokens - we want to use the call site span for the `cc` identifier
-            let trace_method = quote_spanned!(bi.ast().span()=>
-                gc_arena::Collect::trace
-            );
-            quote!(#trace_method (#bi, cc))
+            // See the above call to `needs_trace` for an explanation of this
+            let call_span = bi.ast().span().resolved_at(Span::call_site());
+            quote_spanned!(call_span=>
+                {
+                    // Use a temporary variable to ensure that
+                    // all tokens in the call to `gc_arena::Collect::trace`
+                    // have the same hygiene information. If we used #bi
+                    // directly, then we would have a mix of hygiene contexts,
+                    // which would cause rustc to produce sub-optimal error
+                    // messagse due to its inability to merge the spans.
+                    // This is purely for diagnostic purposes, and has no effect
+                    // on correctness
+                    let bi = #bi;
+                    gc_arena::Collect::trace(bi, cc)
+                }
+            )
         });
 
         s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
