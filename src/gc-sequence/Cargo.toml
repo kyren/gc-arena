@@ -13,4 +13,4 @@ default = ["std"]
 std = []
 
 [dependencies]
-gc-arena = { path = "../gc-arena", version = "0.2" }
+gc-arena = { path = "../gc-arena", version = "0.2.1" }

@@ -13,7 +13,7 @@ default = ["std"]
 std = []
 
 [dependencies]
-gc-arena-derive = { path = "../gc-arena-derive", version = "0.2" }
+gc-arena-derive = { path = "../gc-arena-derive", version = "0.2.1"}
 
 [dev-dependencies]
 rand = "0.8"
