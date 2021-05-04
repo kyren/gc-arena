@@ -264,13 +264,31 @@ impl Context {
             );
         }
 
-        let gc_box = GcBox {
-            flags: GcFlags::new(),
+        let flags = GcFlags::new();
+        flags.set_needs_trace(T::needs_trace());
+
+
+        // Make the generated code easier to optimize into `T` being constructed in place or at the
+        // very least only memcpy'd once.
+        // For more information, see: https://github.com/kyren/gc-arena/pull/14
+        /*
+        let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(GcBox {
+            flags: flags,
             next: Cell::new(self.all.get()),
             value: UnsafeCell::new(t),
-        };
-        gc_box.flags.set_needs_trace(T::needs_trace());
-        let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(gc_box)));
+        })));
+        */
+        let mut uninitialized = Box::new(mem::MaybeUninit::<GcBox<T>>::uninit());
+        core::ptr::write(
+            uninitialized.as_mut_ptr(),
+            GcBox {
+                flags: flags,
+                next: Cell::new(self.all.get()),
+                value: UnsafeCell::new(t),
+            },
+        );
+        let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBox<T>);
+
         self.all.set(Some(static_gc_box(ptr)));
         if self.phase.get() == Phase::Sweep && self.sweep_prev.get().is_none() {
             self.sweep_prev.set(self.all.get());
