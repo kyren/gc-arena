@@ -59,8 +59,8 @@ macro_rules! make_sequencable_arena {
 
     (@impl $modvis:vis, $innervis:vis, $module:ident, $root:ident) => {
         $modvis mod $module {
-            use std::any::Any;
-            use std::marker::PhantomData;
+            use core::any::Any;
+            use core::marker::PhantomData;
 
             use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
             use gc_sequence::{Sequence, SequenceExt};

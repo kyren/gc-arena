@@ -104,7 +104,7 @@ macro_rules! make_arena {
     (@impl $v:vis $arena:ident, $root:ident) => {
         $v struct $arena {
             context: $crate::Context,
-            root: ::std::mem::ManuallyDrop<$root<'static>>,
+            root: ::core::mem::ManuallyDrop<$root<'static>>,
         }
 
         impl $arena {
@@ -122,7 +122,7 @@ macro_rules! make_arena {
                     let root: $root<'static> = ::std::mem::transmute(f(context.mutation_context()));
                     $arena {
                         context: context,
-                        root: ::std::mem::ManuallyDrop::new(root),
+                        root: ::core::mem::ManuallyDrop::new(root),
                     }
                 }
             }
@@ -142,7 +142,7 @@ macro_rules! make_arena {
                     let root: $root<'static> = ::std::mem::transmute(root);
                     Ok($arena {
                         context: context,
-                        root: ::std::mem::ManuallyDrop::new(root),
+                        root: ::core::mem::ManuallyDrop::new(root),
                     })
                 }
             }
@@ -213,7 +213,7 @@ macro_rules! make_arena {
         impl Drop for $arena {
             fn drop(&mut self) {
                 unsafe {
-                    ::std::mem::ManuallyDrop::drop(&mut self.root);
+                    ::core::mem::ManuallyDrop::drop(&mut self.root);
                 }
             }
         }
