@@ -1,3 +1,6 @@
+## [0.2.2]
+- No changes, fixing a release snafu with cargo-release
+
 ## [0.2.1]
 - Allow using `#[collect(require_static)]` on fields
 - Add no_std compatibility for gc-arena and gc-sequence
