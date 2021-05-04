@@ -1,14 +1,14 @@
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use alloc::collections::VecDeque;
 use core::cell::{Cell, RefCell};
-use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use core::hash::{BuildHasher, Hash};
+use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
@@ -271,8 +271,7 @@ where
 }
 
 // SAFETY: `PhantomData` is a ZST, and therefore doesn't store anything
-unsafe impl<T> Collect for PhantomData<T>
-{
+unsafe impl<T> Collect for PhantomData<T> {
     #[inline]
     fn needs_trace() -> bool {
         false
