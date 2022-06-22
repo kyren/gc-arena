@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::alloc::Layout;
 use core::cell::{Cell, RefCell, UnsafeCell};
 use core::marker::PhantomData;
 use core::mem;
@@ -24,6 +25,10 @@ impl<'gc, 'context> MutationContext<'gc, 'context> {
 
     pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) {
         self.context.write_barrier(ptr)
+    }
+
+    pub(crate) unsafe fn upgrade<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) -> bool {
+        self.context.upgrade(ptr)
     }
 }
 
@@ -51,11 +56,27 @@ pub struct Context {
     wakeup_total: Cell<usize>,
     allocation_debt: Cell<f64>,
 
+    // A linked list of all allocated `GcBox`es.
     all: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
+
+    // A copy of the head of `all` at the end of `Phase::Propagate`.
+    // During `Phase::Sweep`, we free all white allocations on this list.
+    // Any allocations created *during* `Phase::Sweep` will be added to `all`,
+    // but `sweep` will *not* be updated. This ensures that we keep allocations
+    // alive until we've had a chance to trace them.
     sweep: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
+
+    // The most recent black object that we encountered during `Phase::Sweep`.
+    // When we free objects, we update this `GcBox.next` to remove them from
+    // the linked list.
     sweep_prev: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
 
+    /// A queue of gray objects, used during `Phase::Propagate`.
+    /// This holds traceable objects that have yet to be traced.
     gray: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
+
+    // A queue of gray objects that became gray as a result
+    // of a `write_barrier` call.
     gray_again: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
 }
 
@@ -181,6 +202,10 @@ impl Context {
                         // If we have no objects left in the normal gray queue, we enter the sweep
                         // phase.
                         self.phase.set(Phase::Sweep);
+
+                        // Set `sweep to the current head of our `all` linked list. Any new allocations
+                        // during the newly-entered `Phase:Sweep` will update `all`, but will *not*
+                        // be reachable from `this.sweep`.
                         self.sweep.set(self.all.get());
                     }
                 }
@@ -196,6 +221,21 @@ impl Context {
                         // the main list and destruct it, otherwise it should be black, and we
                         // simply turn it white again.
                         if sweep.flags.color() == GcColor::White {
+                            if sweep.flags.has_weak_ref() {
+                                // Keep the `GcBox` as part of the linked list if we traced a weak pointer
+                                // to it. The weak pointer still needs access to the `GcBox` to be able to
+                                // check if the object is still alive. We can only deallocate the `GcBox`,
+                                // once there are no weak pointers left.
+                                self.sweep_prev.set(Some(sweep_ptr));
+                                sweep.flags.set_has_weak_ref(false);
+                                if sweep.flags.alive() {
+                                    sweep.flags.set_alive(false);
+                                    // SAFETY: Since this object is white, that means there are no more strong pointers
+                                    // to this object, only weak pointers, so we can safely drop its contents.
+                                    core::ptr::drop_in_place(sweep.value.get());
+                                }
+                                continue;
+                            }
                             // If the next object in the sweep portion of the main list is white, we
                             // need to remove it from the main object list and destruct it.
                             if let Some(sweep_prev) = self.sweep_prev.get() {
@@ -211,7 +251,18 @@ impl Context {
                             work_done += sweep_size as f64;
                             self.allocation_debt
                                 .set((self.allocation_debt.get() - sweep_size as f64).max(0.0));
-                            drop(Box::from_raw(sweep_ptr.as_ptr()));
+                            if sweep.flags.alive() {
+                                // If the alive flag is set, that means we havn't dropped the inner value of this object,
+                                // so it is safe to drop normally.
+                                drop(Box::from_raw(sweep_ptr.as_ptr()));
+                            } else {
+                                // If the alive flag is not set, then that means we have already dropped the inner value,
+                                // so we only need to free the GcBox.
+                                alloc::alloc::dealloc(
+                                    sweep_ptr.as_ptr().cast(),
+                                    Layout::for_value(sweep),
+                                );
+                            }
                         } else {
                             // If the next object in the sweep portion of the main list is black, we
                             // need to keep it but turn it back white.  No gray objects should be in
@@ -222,6 +273,7 @@ impl Context {
                             self.sweep_prev.set(Some(sweep_ptr));
                             self.remembered_size
                                 .set(self.remembered_size.get() + sweep_size);
+                            sweep.flags.set_has_weak_ref(false);
                             sweep.flags.set_color(GcColor::White);
                         }
                     } else {
@@ -265,6 +317,7 @@ impl Context {
         }
 
         let flags = GcFlags::new();
+        flags.set_alive(true);
         flags.set_needs_trace(T::needs_trace());
 
         // Make the generated code easier to optimize into `T` being constructed in place or at the
@@ -323,6 +376,57 @@ impl Context {
                 }
             }
         }
+    }
+
+    /// Determines whether or not a Gc pointer is safe to be upgraded.
+    /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
+    ///
+    /// Safety: `ptr` must be a valid pointer to a GcBox<T>.
+    unsafe fn upgrade<T: Collect>(&self, ptr: NonNull<GcBox<T>>) -> bool {
+        let gc_box = ptr.as_ref();
+
+        // This object has already been freed, definitely not safe to upgrade.
+        if !gc_box.flags.alive() {
+            return false;
+        }
+
+        // Consider the different possible phases of the GC:
+        // * In `Phase:Wake` or `Phase::Sleep`, the GC is not running, so we can upgrade.
+        //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
+        //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
+        //   or having created a new allocation.
+        //
+        // * In `Phase::Propagate`:
+        //   If the newly-created `GcWeak` or `GcCell` survives the current `arena.mutate`
+        //   call, then it must have been stored somewhere, triggering a write barrier.
+        //   This will ensure that the new `Gc`/`GcCell` gets traced (if it's now reachable)
+        //   before we transition to `Phase::Sweep`.
+        //
+        // * In `Phase::Sweep`:
+        //   If the allocation is white and has the `has_weak_ref()` flag set, then it's impossile
+        //   for it to have been freshly-created during this `Phase::Sweep`. `has_weak_ref_` is only
+        //   set when a `GcWeak/GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from
+        //   an existing `Gc/GcCell` via `downgrade()`, so `has_weak_ref() == true` means that a
+        //   `GcWeak/GcWeakCell` existing during the last `Phase::Sweep.`
+        //
+        //   Therefore, a white object with `has_weak_ref() == true` is guaranteed to be deallocated
+        //   during this `Phase::Sweep`, and we must not upgrade it.
+        //
+        //   Conversely, it's always safe to upgrade a white object with `has_weak_ref() == false`.
+        //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since `has_weak_ref` is false,
+        //   there cannot have been any `GcWeak/GcWeakCell`s during the last `Phase::Sweep`, so it
+        //   must have been created during this `Phase::Sweep`. This is only possible if the allocation
+        //   was freshly-created - if the object existed during `Phase::Sweep` but was not traced, then
+        //   it must have been unreachable, which means that the user wouldn't have been able to call
+        //   `Downgrade`. Therefore, we can safely upgrade, knowing that the object will not be freed
+        //   despite being white.
+        if self.phase.get() == Phase::Sweep
+            && gc_box.flags.color() == GcColor::White
+            && gc_box.flags.has_weak_ref()
+        {
+            return false;
+        }
+        true
     }
 }
 

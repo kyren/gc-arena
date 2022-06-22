@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
+use crate::gc_weak::GcWeak;
 use crate::types::{GcBox, Invariant};
 
 /// A garbage collected pointer to a type T.  Implements Copy, and is implemented as a plain machine
@@ -55,6 +56,10 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
             ptr: unsafe { mc.allocate(t) },
             _invariant: PhantomData,
         }
+    }
+
+    pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
+        GcWeak { inner: this }
     }
 
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this

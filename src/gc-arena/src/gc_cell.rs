@@ -4,6 +4,7 @@ use core::fmt::{self, Debug};
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc::Gc;
+use crate::GcWeakCell;
 
 /// A garbage collected pointer to a type T that may be safely mutated.  When a type that may hold
 /// `Gc` pointers is mutated, it may adopt new `Gc` pointers, and in order for this to be safe this
@@ -42,6 +43,14 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         ))
     }
 
+    pub fn downgrade(this: GcCell<'gc, T>) -> GcWeakCell<'gc, T> {
+        GcWeakCell { inner: this }
+    }
+
+    pub(crate) unsafe fn get_inner(&self) -> Gc<'gc, GcRefCell<T>> {
+        self.0
+    }
+
     pub fn ptr_eq(this: GcCell<'gc, T>, other: GcCell<'gc, T>) -> bool {
         this.as_ptr() == other.as_ptr()
     }
@@ -76,7 +85,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     }
 }
 
-struct GcRefCell<T: Collect> {
+pub(crate) struct GcRefCell<T: Collect> {
     cell: RefCell<T>,
 }
 
