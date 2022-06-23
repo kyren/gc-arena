@@ -278,56 +278,19 @@ unsafe impl<T> Collect for PhantomData<T> {
     }
 }
 
-macro_rules! impl_array_collect {
-    ($sz:expr) => {
-        unsafe impl<T: Collect> Collect for [T; $sz] {
-            #[inline]
-            fn needs_trace() -> bool {
-                T::needs_trace()
-            }
+unsafe impl<T: Collect, const N: usize> Collect for [T; N] {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
 
-            #[inline]
-            fn trace(&self, cc: CollectionContext) {
-                for t in self {
-                    t.trace(cc)
-                }
-            }
+    #[inline]
+    fn trace(&self, cc: CollectionContext) {
+        for t in self {
+            t.trace(cc)
         }
-    };
+    }
 }
-
-impl_array_collect!(1);
-impl_array_collect!(2);
-impl_array_collect!(3);
-impl_array_collect!(4);
-impl_array_collect!(5);
-impl_array_collect!(6);
-impl_array_collect!(7);
-impl_array_collect!(8);
-impl_array_collect!(9);
-impl_array_collect!(10);
-impl_array_collect!(11);
-impl_array_collect!(12);
-impl_array_collect!(13);
-impl_array_collect!(14);
-impl_array_collect!(15);
-impl_array_collect!(16);
-impl_array_collect!(17);
-impl_array_collect!(18);
-impl_array_collect!(19);
-impl_array_collect!(20);
-impl_array_collect!(21);
-impl_array_collect!(22);
-impl_array_collect!(23);
-impl_array_collect!(24);
-impl_array_collect!(25);
-impl_array_collect!(26);
-impl_array_collect!(27);
-impl_array_collect!(28);
-impl_array_collect!(29);
-impl_array_collect!(30);
-impl_array_collect!(31);
-impl_array_collect!(32);
 
 macro_rules! impl_tuple {
     () => (
