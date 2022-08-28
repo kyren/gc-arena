@@ -442,6 +442,7 @@ enum Phase {
     Sleep,
 }
 
+#[inline]
 unsafe fn static_gc_box<'gc>(
     ptr: NonNull<GcBox<dyn Collect + 'gc>>,
 ) -> NonNull<GcBox<dyn Collect>> {
@@ -454,6 +455,7 @@ unsafe fn static_gc_box<'gc>(
 /// integer, the number is clamped.
 ///
 /// This methods works in no_std environments too.
+#[inline]
 fn f64_to_usize(input: f64) -> usize {
     // As per the Rustonomicon, the cast to usize is truncating.
     // TODO: Use f64::round when that is available in no_std. See:

@@ -35,19 +35,25 @@ pub(crate) struct GcBox<T: Collect + ?Sized> {
 pub(crate) struct GcFlags(Cell<u8>);
 
 impl GcFlags {
+    #[inline]
     pub(crate) fn new() -> GcFlags {
         GcFlags(Cell::new(0))
     }
 
+    #[inline]
     pub(crate) fn color(&self) -> GcColor {
         match self.0.get() & 0x3 {
             0x0 => GcColor::White,
             0x1 => GcColor::Gray,
             0x2 => GcColor::Black,
-            _ => unreachable!(),
+            // this is needed for the compiler to codegen a simple AND.
+            // SAFETY: only possible extra value is 0x3,
+            // and the only place where we set these bits is in set_color
+            _ => unsafe { core::hint::unreachable_unchecked() },
         }
     }
 
+    #[inline]
     pub(crate) fn set_color(&self, color: GcColor) {
         self.0.set(
             (self.0.get() & !0x3)
@@ -59,6 +65,7 @@ impl GcFlags {
         )
     }
 
+    #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
         self.0.get() & 0x4 != 0x0
     }
