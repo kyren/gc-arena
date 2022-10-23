@@ -71,7 +71,7 @@ impl Drop for Context {
                         while let Some(ptr) = drop_resume.0.take() {
                             let gc_box = ptr.as_ref();
                             drop_resume.0 = gc_box.next.get();
-                            Box::from_raw(ptr.as_ptr());
+                            drop(Box::from_raw(ptr.as_ptr()));
                         }
                     }
                 }
@@ -211,7 +211,7 @@ impl Context {
                             work_done += sweep_size as f64;
                             self.allocation_debt
                                 .set((self.allocation_debt.get() - sweep_size as f64).max(0.0));
-                            Box::from_raw(sweep_ptr.as_ptr());
+                            drop(Box::from_raw(sweep_ptr.as_ptr()));
                         } else {
                             // If the next object in the sweep portion of the main list is black, we
                             // need to keep it but turn it back white.  No gray objects should be in
