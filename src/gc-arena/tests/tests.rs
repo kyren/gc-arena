@@ -4,7 +4,7 @@ use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell};
+use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak};
 
 #[test]
 fn simple_allocation() {
@@ -23,6 +23,51 @@ fn simple_allocation() {
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
     });
+}
+
+#[test]
+fn weak_allocation() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: GcCell<'gc, Option<Gc<'gc, i32>>>,
+        weak: GcWeak<'gc, i32>,
+    }
+
+    make_arena!(TestArena, TestRoot);
+
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+        let test = Gc::allocate(mc, 42);
+        let weak = Gc::downgrade(test);
+        assert!(weak.upgrade(mc).is_some());
+        TestRoot {
+            test: GcCell::allocate(mc, Some(test)),
+            weak,
+        }
+    });
+    arena.collect_all();
+    arena.mutate(|mc, root| {
+        assert!(root
+            .weak
+            .upgrade(mc)
+            .map(|gc| Gc::ptr_eq(gc, root.test.read().unwrap()))
+            .unwrap_or(false));
+
+        *root.test.write(mc) = None;
+    });
+    let mut done = false;
+    while !done {
+        arena.mutate(|mc, root| {
+            // keep allocating objects to ensure the GC is triggered
+            Gc::allocate(mc, 0);
+            if let Some(gc) = root.weak.upgrade(mc) {
+                assert_eq!(*gc, 42);
+            } else {
+                done = true;
+            }
+        });
+        arena.collect_debt();
+    }
 }
 
 #[cfg(feature = "std")]
