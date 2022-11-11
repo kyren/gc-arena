@@ -16,5 +16,5 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
             (A, B, C, D)
             (A, B, C, D, E)
             (A, B, C, D, E, F)
-          and 45 others
+          and 47 others
   = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)

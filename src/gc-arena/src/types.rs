@@ -1,12 +1,14 @@
 use core::cell::{Cell, UnsafeCell};
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::collect::Collect;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum GcColor {
-    /// An object that was not reached during tracing.
+    /// An object that has not yet been reached by tracing (if we're in a tracing phase).
+    ///
     /// During `Phase::Sweep`, we will free all white objects
     /// that existed *before* the start of the current `Phase::Sweep`.
     /// Objects allocated during `Phase::Sweep` will be white, but will
@@ -27,7 +29,7 @@ pub(crate) enum GcColor {
 pub(crate) struct GcBox<T: Collect + ?Sized> {
     pub(crate) flags: GcFlags,
     pub(crate) next: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
-    pub(crate) value: UnsafeCell<T>,
+    pub(crate) value: ManuallyDrop<UnsafeCell<T>>,
 }
 
 pub(crate) struct GcFlags(Cell<u8>);
@@ -65,17 +67,18 @@ impl GcFlags {
     /// during the most recent `Phase::Propagate`. This is reset back to
     /// `false` during `Phase::Sweep`.
     #[inline]
-    pub(crate) fn has_weak_ref(&self) -> bool {
+    pub(crate) fn traced_weak_ref(&self) -> bool {
         self.0.get() & 0x8 != 0x0
     }
 
-    /// Determines whether or not we've dropped the stored `dyn Collect` value.
+    /// Determines whether or not we've dropped the `dyn Collect` value
+    /// stored in `GcBox.value`
     /// When we garbage-collect a `GcBox` that still has outstanding weak pointers,
     /// we set `alive` to false. When there are no more weak pointers remaining,
     /// we will deallocate the `GcBox`, but skip dropping the `dyn Collect` value
     /// (since we've already done it).
     #[inline]
-    pub(crate) fn alive(&self) -> bool {
+    pub(crate) fn is_live(&self) -> bool {
         self.0.get() & 0x10 != 0x0
     }
 
@@ -86,13 +89,13 @@ impl GcFlags {
     }
 
     #[inline]
-    pub(crate) fn set_has_weak_ref(&self, has_weak_ref: bool) {
+    pub(crate) fn set_traced_weak_ref(&self, traced_weak_ref: bool) {
         self.0
-            .set((self.0.get() & !0x8) | if has_weak_ref { 0x8 } else { 0x0 });
+            .set((self.0.get() & !0x8) | if traced_weak_ref { 0x8 } else { 0x0 });
     }
 
     #[inline]
-    pub(crate) fn set_alive(&self, alive: bool) {
+    pub(crate) fn set_live(&self, alive: bool) {
         self.0
             .set((self.0.get() & !0x10) | if alive { 0x10 } else { 0x0 });
     }
