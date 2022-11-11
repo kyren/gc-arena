@@ -1,21 +1,20 @@
 error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
-  --> $DIR/bad_collect_bound.rs:8:5
-   |
-8  |     field: NotCollect
-   |     ^^^^^ the trait `Collect` is not implemented for `NotCollect`
-   |
-  ::: $WORKSPACE/src/gc-arena/src/collect.rs
-   |
-   |         Self: Sized,
-   |               ----- required by this bound in `needs_trace`
-   |
-   = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
-
-error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
  --> $DIR/bad_collect_bound.rs:8:5
   |
+5 | #[derive(Collect)]
+  |          ------- in this derive macro expansion
+...
 8 |     field: NotCollect
-  |     ^^^^^ the trait `Collect` is not implemented for `NotCollect`
+  |     ^^^^^^^^^^^^^^^^^ the trait `Collect` is not implemented for `NotCollect`
   |
-  = note: required by `trace`
-  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
+  = help: the following other types implement trait `Collect`:
+            &'a T
+            &'a mut T
+            ()
+            (A, B)
+            (A, B, C)
+            (A, B, C, D)
+            (A, B, C, D, E)
+            (A, B, C, D, E, F)
+          and 76 others
+  = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)

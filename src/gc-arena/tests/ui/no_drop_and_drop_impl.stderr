@@ -1,4 +1,4 @@
-error[E0119]: conflicting implementations of trait `gc_arena::MustNotImplDrop` for type `Foo`:
+error[E0119]: conflicting implementations of trait `gc_arena::MustNotImplDrop` for type `Foo`
  --> $DIR/no_drop_and_drop_impl.rs:3:10
   |
 3 | #[derive(Collect)]
@@ -7,4 +7,4 @@ error[E0119]: conflicting implementations of trait `gc_arena::MustNotImplDrop` f
   = note: conflicting implementation in crate `gc_arena`:
           - impl<T> MustNotImplDrop for T
             where T: Drop;
-  = note: this error originates in a derive macro (in Nightly builds, run with -Z macro-backtrace for more info)
+  = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)
