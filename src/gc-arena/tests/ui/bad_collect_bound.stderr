@@ -5,7 +5,7 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
   |          ------- in this derive macro expansion
 ...
 8 |     field: NotCollect
-  |     ^^^^^^^^^^^^^^^^^ the trait `Collect` is not implemented for `NotCollect`
+  |     ^^^^^ the trait `Collect` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect`:
             &'a T
@@ -16,5 +16,5 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
             (A, B, C, D)
             (A, B, C, D, E)
             (A, B, C, D, E, F)
-          and 76 others
+          and 45 others
   = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)
