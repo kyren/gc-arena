@@ -153,7 +153,7 @@ macro_rules! make_arena {
             /// during this call, but no garbage collection will take place during this method.
             #[allow(unused)]
             #[inline]
-            pub fn mutate<F, R>(&mut self, f: F) -> R
+            pub fn mutate<F, R>(&self, f: F) -> R
             where
                 F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>, &$root<'gc>) -> R,
             {
