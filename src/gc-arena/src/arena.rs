@@ -1,6 +1,9 @@
-use core::{f64, usize};
+use core::{f64, mem::ManuallyDrop, usize};
 
-use crate::context::{Context, MutationContext};
+use crate::{
+    context::{Context, MutationContext},
+    Collect,
+};
 
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {
@@ -94,130 +97,153 @@ impl ArenaParameters {
 #[macro_export]
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
-        make_arena!(@impl pub(self) $arena, $root);
+        make_arena!(pub(self) $arena, $root);
     };
 
-    ($v:vis $arena:ident, $root:ident) => {
-        make_arena!(@impl $v $arena, $root);
+    ($vis:vis $arena:ident, $root:ident) => {
+        // Instead of generating an impl of `RootProvider`, we use a trait object.
+        // The projection `<R as RootProvider<'gc>>::Root` is used to obtain the root
+        // type with the lifetime `'gc` applied
+        // By using a trait object, we avoid the need to generate a new type for each
+        // invocation of this macro, which would lead to name conflicts if the macro was
+        // used multiple times in the same scope.
+        $vis type $arena = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a>>>;
     };
+}
 
-    (@impl $v:vis $arena:ident, $root:ident) => {
-        $v struct $arena {
-            context: $crate::Context,
-            root: ::core::mem::ManuallyDrop<$root<'static>>,
-        }
+#[doc(hidden)]
+/// A helper trait for the `make_arena` macro. Writing
+/// <R as RootProvider<'gc>>::Root is similar to writing a GAT `R::Root<'gc>`,
+/// but it works on older versions of Rust. Additionally, GATs currently
+/// prevent a trait from being object-safe, which prevents the trait object
+/// trick we use in `make_arena` from working.
+pub trait RootProvider<'a> {
+    type Root: Collect;
+}
 
-        impl $arena {
-            /// Create a new arena with the given garbage collector tuning parameters.  You must
-            /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
-            /// The held root type is immutable inside the arena, in order to provide mutation, you
-            /// must use `GcCell` types inside the root.
-            #[allow(unused)]
-            pub fn new<F>(arena_parameters: $crate::ArenaParameters, f: F) -> $arena
-            where
-                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>) -> $root<'gc>,
-            {
-                unsafe {
-                    let context = $crate::Context::new(arena_parameters);
-                    let root: $root<'static> = ::std::mem::transmute(f(context.mutation_context()));
-                    $arena {
-                        context: context,
-                        root: ::core::mem::ManuallyDrop::new(root),
-                    }
-                }
-            }
+pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
+    context: crate::Context,
+    root: ManuallyDrop<<R as RootProvider<'static>>::Root>,
+}
 
-            /// Similar to `new`, but allows for constructor that can fail.
-            #[allow(unused)]
-            pub fn try_new<F, E>(
-                arena_parameters: $crate::ArenaParameters,
-                f: F,
-            ) -> Result<$arena, E>
-            where
-                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>) -> Result<$root<'gc>, E>,
-            {
-                unsafe {
-                    let context = $crate::Context::new(arena_parameters);
-                    let root: $root = f(context.mutation_context())?;
-                    let root: $root<'static> = ::std::mem::transmute(root);
-                    Ok($arena {
-                        context: context,
-                        root: ::core::mem::ManuallyDrop::new(root),
-                    })
-                }
-            }
-
-            /// The primary means of interacting with a garbage collected arena.  Accepts a callback
-            /// which receives a `MutationContext` and a reference to the root, and can return any
-            /// non garbage collected value.  The callback may "mutate" any part of the object graph
-            /// during this call, but no garbage collection will take place during this method.
-            #[allow(unused)]
-            #[inline]
-            pub fn mutate<F, R>(&self, f: F) -> R
-            where
-                F: for<'gc> FnOnce($crate::MutationContext<'gc, '_>, &$root<'gc>) -> R,
-            {
-                unsafe {
-                    f(
-                        self.context.mutation_context(),
-                        ::std::mem::transmute::<&$root<'static>, _>(&*self.root),
-                    )
-                }
-            }
-
-            /// Return total currently used memory
-            #[allow(unused)]
-            #[inline]
-            pub fn total_allocated(&self) -> usize {
-                self.context.total_allocated()
-            }
-
-            /// When the garbage collector is not sleeping, all allocated objects cause the arena to
-            /// accumulate "allocation debt".  This debt is then be used to time incremental garbage
-            /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
-            /// debt is measured in bytes, but will generally increase at a rate faster than that of
-            /// allocation so that collection will always complete.
-            #[allow(unused)]
-            #[inline]
-            pub fn allocation_debt(&self) -> f64 {
-                self.context.allocation_debt()
-            }
-
-            /// Run the incremental garbage collector until the allocation debt is <= 0.0.  There is
-            /// no minimum unit of work enforced here, so it may be faster to only call this method
-            /// when the allocation debt is above some threshold.
-            #[allow(unused)]
-            #[inline]
-            pub fn collect_debt(&mut self) {
-                unsafe {
-                    let debt = self.context.allocation_debt();
-                    if debt > 0.0 {
-                        self.context.do_collection(&*self.root, debt);
-                    }
-                }
-            }
-
-            /// Run the current garbage collection cycle to completion, stopping once the garbage
-            /// collector has entered the sleeping phase.  If the garbage collector is currently
-            /// sleeping, starts a new cycle and runs that cycle to completion.
-            #[allow(unused)]
-            pub fn collect_all(&mut self) {
-                self.context.wake();
-                unsafe {
-                    self.context
-                        .do_collection(&*self.root, ::std::f64::INFINITY);
-                }
+impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
+    /// Create a new arena with the given garbage collector tuning parameters.  You must
+    /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
+    /// The held root type is immutable inside the arena, in order to provide mutation, you
+    /// must use `GcCell` types inside the root.
+    #[allow(unused)]
+    pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
+    where
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> <R as RootProvider<'gc>>::Root,
+    {
+        unsafe {
+            let context = crate::Context::new(arena_parameters);
+            // Note - we transmute the `MutationContext` to a `'static` lifetime here,
+            // instead of transmuting the root type returned by `f`. Transmuting the root
+            // type is allowed in nightly versions of rust
+            // (see https://github.com/rust-lang/rust/pull/101520#issuecomment-1252016235)
+            // but is not yet stable. Transmuting the `MutationContext` is completely invisible
+            // to the callback `f` (since it needs to handle an arbitrary lifetime),
+            // and lets us stay compatible with older versions of Rust
+            let mutation_context: MutationContext<'static, '_> =
+                ::core::mem::transmute(context.mutation_context());
+            let root: <R as RootProvider<'static>>::Root = f(mutation_context);
+            Arena {
+                context: context,
+                root: ::core::mem::ManuallyDrop::new(root),
             }
         }
+    }
 
-        impl Drop for $arena {
-            fn drop(&mut self) {
-                unsafe {
-                    ::core::mem::ManuallyDrop::drop(&mut self.root);
-                }
+    /// Similar to `new`, but allows for constructor that can fail.
+    #[allow(unused)]
+    pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
+    where
+        F: for<'gc> FnOnce(
+            crate::MutationContext<'gc, '_>,
+        ) -> Result<<R as RootProvider<'gc>>::Root, E>,
+    {
+        unsafe {
+            let context = crate::Context::new(arena_parameters);
+            let mutation_context: MutationContext<'static, '_> =
+                ::core::mem::transmute(context.mutation_context());
+            let root: <R as RootProvider<'static>>::Root = f(mutation_context)?;
+            Ok(Arena {
+                context: context,
+                root: ::core::mem::ManuallyDrop::new(root),
+            })
+        }
+    }
+
+    /// The primary means of interacting with a garbage collected arena.  Accepts a callback
+    /// which receives a `MutationContext` and a reference to the root, and can return any
+    /// non garbage collected value.  The callback may "mutate" any part of the object graph
+    /// during this call, but no garbage collection will take place during this method.
+    #[allow(unused)]
+    #[inline]
+    pub fn mutate<F, T>(&self, f: F) -> T
+    where
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &<R as RootProvider<'gc>>::Root) -> T,
+    {
+        unsafe {
+            f(
+                self.context.mutation_context(),
+                ::core::mem::transmute::<&<R as RootProvider<'static>>::Root, _>(&*self.root),
+            )
+        }
+    }
+
+    /// Return total currently used memory
+    #[allow(unused)]
+    #[inline]
+    pub fn total_allocated(&self) -> usize {
+        self.context.total_allocated()
+    }
+
+    /// When the garbage collector is not sleeping, all allocated objects cause the arena to
+    /// accumulate "allocation debt".  This debt is then be used to time incremental garbage
+    /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
+    /// debt is measured in bytes, but will generally increase at a rate faster than that of
+    /// allocation so that collection will always complete.
+    #[allow(unused)]
+    #[inline]
+    pub fn allocation_debt(&self) -> f64 {
+        self.context.allocation_debt()
+    }
+
+    /// Run the incremental garbage collector until the allocation debt is <= 0.0.  There is
+    /// no minimum unit of work enforced here, so it may be faster to only call this method
+    /// when the allocation debt is above some threshold.
+    #[allow(unused)]
+    #[inline]
+    pub fn collect_debt(&mut self) {
+        unsafe {
+            let debt = self.context.allocation_debt();
+            if debt > 0.0 {
+                self.context.do_collection(&*self.root, debt);
             }
         }
-    };
+    }
+
+    /// Run the current garbage collection cycle to completion, stopping once the garbage
+    /// collector has entered the sleeping phase.  If the garbage collector is currently
+    /// sleeping, starts a new cycle and runs that cycle to completion.
+    #[allow(unused)]
+    pub fn collect_all(&mut self) {
+        self.context.wake();
+        unsafe {
+            self.context
+                .do_collection(&*self.root, ::core::f64::INFINITY);
+        }
+    }
+}
+
+impl<R: for<'a> RootProvider<'a> + ?Sized> Drop for Arena<R> {
+    fn drop(&mut self) {
+        unsafe {
+            ::core::mem::ManuallyDrop::drop(&mut self.root);
+        }
+    }
 }
 
 /// Create a temporary arena without a root object and perform the given operation on it.  No

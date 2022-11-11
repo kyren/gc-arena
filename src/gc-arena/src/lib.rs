@@ -19,7 +19,7 @@ mod static_collect;
 mod types;
 
 pub use self::{
-    arena::{rootless_arena, ArenaParameters},
+    arena::{rootless_arena, Arena, ArenaParameters, RootProvider},
     collect::Collect,
     context::{CollectionContext, Context, MutationContext},
     gc::Gc,
