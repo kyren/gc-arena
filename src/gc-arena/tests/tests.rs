@@ -16,7 +16,7 @@ fn simple_allocation() {
 
     make_arena!(TestArena, TestRoot);
 
-    let mut arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
+    let arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
         test: Gc::allocate(mc, 42),
     });
 
@@ -87,7 +87,7 @@ fn all_dropped() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+    let arena = TestArena::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, Vec::new()))
     });
 
