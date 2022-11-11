@@ -88,10 +88,10 @@ impl Drop for Context {
                 unsafe {
                     if let Some(ptr) = self.0.take() {
                         let mut drop_resume = DropAll(Some(ptr));
-                        while let Some(mut ptr) = drop_resume.0.take() {
+                        while let Some(ptr) = drop_resume.0.take() {
                             let gc_box = ptr.as_ref();
                             drop_resume.0 = gc_box.next.get();
-                            free_gc_box(ptr.as_mut());
+                            free_gc_box(ptr);
                         }
                     }
                 }
@@ -249,7 +249,7 @@ impl Context {
                                 work_done += sweep_size as f64;
                                 self.allocation_debt
                                     .set((self.allocation_debt.get() - sweep_size as f64).max(0.0));
-                                free_gc_box(sweep);
+                                free_gc_box(sweep_ptr);
                             }
                         } else {
                             // If the next object in the sweep portion of the main list is black, we
@@ -419,7 +419,14 @@ impl Context {
     }
 }
 
-unsafe fn free_gc_box<'gc>(ptr: &mut GcBox<dyn Collect + 'gc>) {
+unsafe fn free_gc_box<'gc>(mut ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
+    // Safety: We need to construct this mutable reference here - we *can not* take
+    // it as a parameter. Stacked borrows requires that a reference from a function
+    // parameter be live for the entire function, but we deallocate the memory at the end
+    // of this function.
+    // Constructing the reference here only requires that it be live where it's actually
+    // used in the function.
+    let ptr: &mut GcBox<dyn Collect + 'gc> = ptr.as_mut();
     if ptr.flags.is_live() {
         // If the alive flag is set, that means we haven't dropped the inner value of this object,
         ManuallyDrop::drop(&mut ptr.value);
