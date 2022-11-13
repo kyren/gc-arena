@@ -23,7 +23,7 @@ mod types;
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, RootProvider},
     collect::Collect,
-    context::{CollectionContext, Context, MutationContext},
+    context::{CollectionContext, MutationContext},
     gc::Gc,
     gc_cell::GcCell,
     gc_weak::GcWeak,

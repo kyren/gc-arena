@@ -46,7 +46,7 @@ impl<'context> CollectionContext<'context> {
 
 // Main gc context type, public because it must be accessible from the `make_arena!` macro.
 #[doc(hidden)]
-pub struct Context {
+pub(crate) struct Context {
     parameters: ArenaParameters,
 
     phase: Cell<Phase>,
@@ -103,7 +103,7 @@ impl Drop for Context {
 }
 
 impl Context {
-    pub unsafe fn new(parameters: ArenaParameters) -> Context {
+    pub(crate) unsafe fn new(parameters: ArenaParameters) -> Context {
         Context {
             parameters,
             phase: Cell::new(Phase::Wake),
@@ -121,7 +121,7 @@ impl Context {
 
     // Creates a MutationContext with an unbounded 'gc lifetime.
     #[inline]
-    pub unsafe fn mutation_context<'gc, 'context>(
+    pub(crate) unsafe fn mutation_context<'gc, 'context>(
         &'context self,
     ) -> MutationContext<'gc, 'context> {
         MutationContext {
@@ -131,17 +131,17 @@ impl Context {
     }
 
     #[inline]
-    pub fn allocation_debt(&self) -> f64 {
+    pub(crate) fn allocation_debt(&self) -> f64 {
         self.allocation_debt.get()
     }
 
     #[inline]
-    pub fn total_allocated(&self) -> usize {
+    pub(crate) fn total_allocated(&self) -> usize {
         self.total_allocated.get()
     }
 
     // If the garbage collector is currently in the sleep phase, transition to the wake phase.
-    pub fn wake(&self) {
+    pub(crate) fn wake(&self) {
         if self.phase.get() == Phase::Sleep {
             self.phase.set(Phase::Wake);
         }
@@ -155,7 +155,7 @@ impl Context {
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
         let mut work_done = 0.0;
         let cc = CollectionContext { context: self };
 

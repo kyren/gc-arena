@@ -122,7 +122,7 @@ pub trait RootProvider<'a> {
 }
 
 pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
-    context: crate::Context,
+    context: Context,
     root: ManuallyDrop<<R as RootProvider<'static>>::Root>,
 }
 
@@ -137,7 +137,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> <R as RootProvider<'gc>>::Root,
     {
         unsafe {
-            let context = crate::Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             // Note - we transmute the `MutationContext` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -164,7 +164,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         ) -> Result<<R as RootProvider<'gc>>::Root, E>,
     {
         unsafe {
-            let context = crate::Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
                 ::core::mem::transmute(context.mutation_context());
             let root: <R as RootProvider<'static>>::Root = f(mutation_context)?;
