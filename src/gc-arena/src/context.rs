@@ -72,11 +72,17 @@ pub(crate) struct Context {
 
     /// A queue of gray objects, used during `Phase::Propagate`.
     /// This holds traceable objects that have yet to be traced.
+    /// When we enter `Phase::Propagate`, we push `root` to this queue.
     gray: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
 
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
     gray_again: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
+
+    // The root object of the arena. This is only `None` during initialization,
+    // while we're invoking the callback passed to `Arena::new` or `Arena::try_new`.
+    // Afterwards, it should always be `Some`
+    root: Option<NonNull<GcBox<dyn Collect>>>,
 }
 
 impl Drop for Context {
@@ -106,7 +112,7 @@ impl Context {
     pub(crate) unsafe fn new(parameters: ArenaParameters) -> Context {
         Context {
             parameters,
-            phase: Cell::new(Phase::Wake),
+            phase: Cell::new(Phase::Propagate),
             total_allocated: Cell::new(0),
             remembered_size: Cell::new(0),
             wakeup_total: Cell::new(0),
@@ -116,6 +122,7 @@ impl Context {
             sweep_prev: Cell::new(None),
             gray: RefCell::new(Vec::new()),
             gray_again: RefCell::new(Vec::new()),
+            root: None,
         }
     }
 
@@ -130,6 +137,18 @@ impl Context {
         }
     }
 
+    // Must be called exactly once, after invoking the callback passed to `Arena::new` or
+    // `Arena::try_new`. This sets the root object, and pushes it to the gray queue.
+    //
+    // # Safety: Must be called with the root object of the parent `Arena`.
+    pub(crate) unsafe fn initialize<R: Collect>(&mut self, root: R) -> NonNull<GcBox<R>> {
+        let root = self.allocate(root);
+        let static_root = static_gc_box(root);
+        self.root = Some(static_root);
+        self.gray.borrow_mut().push(static_root);
+        root
+    }
+
     #[inline]
     pub(crate) fn allocation_debt(&self) -> f64 {
         self.allocation_debt.get()
@@ -140,10 +159,12 @@ impl Context {
         self.total_allocated.get()
     }
 
-    // If the garbage collector is currently in the sleep phase, transition to the wake phase.
+    // If the garbage collector is currently in the sleep phase,
+    // add the root to the gray queue and transition to the `Propagate` phase.
     pub(crate) fn wake(&self) {
         if self.phase.get() == Phase::Sleep {
-            self.phase.set(Phase::Wake);
+            self.phase.set(Phase::Propagate);
+            self.gray.borrow_mut().push(self.root.unwrap());
         }
     }
 
@@ -155,24 +176,12 @@ impl Context {
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
+    pub(crate) unsafe fn do_collection(&mut self, work: f64) -> f64 {
         let mut work_done = 0.0;
         let cc = CollectionContext { context: self };
 
         while work > work_done {
             match self.phase.get() {
-                Phase::Wake => {
-                    // In the Wake phase, we trace the root object and add its children to the gray
-                    // queue, and transition to the propagate phase.
-                    root.trace(cc);
-
-                    let root_size = mem::size_of::<R>() as f64;
-                    work_done += root_size;
-                    self.allocation_debt
-                        .set((self.allocation_debt.get() - root_size).max(0.0));
-
-                    self.phase.set(Phase::Propagate);
-                }
                 Phase::Propagate => {
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue.  Objects from the normal gray queue count as regular work, but objects
@@ -293,7 +302,7 @@ impl Context {
             .set(self.total_allocated.get() + alloc_size);
         if self.phase.get() == Phase::Sleep && self.total_allocated.get() > self.wakeup_total.get()
         {
-            self.phase.set(Phase::Wake);
+            self.wake();
         }
 
         if self.phase.get() != Phase::Sleep {
@@ -379,7 +388,7 @@ impl Context {
         }
 
         // Consider the different possible phases of the GC:
-        // * In `Phase:Wake` or `Phase::Sleep`, the GC is not running, so we can upgrade.
+        // * In `Phase::Sleep`, the GC is not running, so we can upgrade.
         //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
         //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
         //   or having created a new allocation.
@@ -436,7 +445,6 @@ unsafe fn free_gc_box<'gc>(mut ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Phase {
-    Wake,
     Propagate,
     Sweep,
     Sleep,
