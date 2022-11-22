@@ -26,9 +26,9 @@ impl<'gc, T: 'gc + Collect> Debug for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> Copy for Gc<'gc, T> {}
+impl<'gc, T: 'gc> Copy for Gc<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for Gc<'gc, T> {
+impl<'gc, T: 'gc> Clone for Gc<'gc, T> {
     fn clone(&self) -> Gc<'gc, T> {
         *self
     }

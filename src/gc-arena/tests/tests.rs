@@ -259,7 +259,7 @@ fn ui() {
 
 #[test]
 fn recursive_struct_indirect_gc() {
-    #[derive(Collect)]
+    #[derive(Clone, Copy, Collect)]
     #[collect(no_drop)]
     pub enum Value<'gc, S: 'gc> {
         #[allow(dead_code)]
@@ -275,7 +275,7 @@ fn recursive_struct_indirect_gc() {
 
 #[test]
 fn recursive_struct_indirect_gccell() {
-    #[derive(Collect)]
+    #[derive(Clone, Copy, Collect)]
     #[collect(no_drop)]
     pub enum Value<'gc, S: 'gc> {
         #[allow(dead_code)]

@@ -13,9 +13,9 @@ use crate::GcWeakCell;
 /// `Gc::write_barrier`.
 pub struct GcCell<'gc, T: 'gc>(Gc<'gc, GcRefCell<T>>);
 
-impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
+impl<'gc, T: 'gc> Copy for GcCell<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
+impl<'gc, T: 'gc> Clone for GcCell<'gc, T> {
     fn clone(&self) -> GcCell<'gc, T> {
         *self
     }
