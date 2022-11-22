@@ -4,7 +4,9 @@ use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak, GcWeakCell};
+use gc_arena::{
+    make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak, GcWeakCell,
+};
 
 #[test]
 fn simple_allocation() {
