@@ -19,6 +19,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     }
 
     let mut mode = None;
+    let mut override_bound = None;
 
     for attr in &s.ast().attrs {
         match attr.parse_meta() {
@@ -33,15 +34,32 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                         panic!("`Collect` mode was already specified with `#[collect({})]`, cannot specify twice", prev_mode_str);
                     }
 
-                    if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) = nested.first() {
-                        if path.is_ident("require_static") {
-                            mode = Some(Mode::RequireStatic);
-                        } else if path.is_ident("no_drop") {
-                            mode = Some(Mode::NoDrop);
-                        } else if path.is_ident("unsafe_drop") {
-                            mode = Some(Mode::UnsafeDrop);
-                        } else {
-                            panic!("`#[collect]` requires one of: \"require_static\", \"no_drop\", or \"unsafe_drop\" as an argument");
+                    for nested in nested {
+                        match nested {
+                            syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
+                                if path.is_ident("require_static") {
+                                    mode = Some(Mode::RequireStatic);
+                                } else if path.is_ident("no_drop") {
+                                    mode = Some(Mode::NoDrop);
+                                } else if path.is_ident("unsafe_drop") {
+                                    mode = Some(Mode::UnsafeDrop);
+                                } else {
+                                    panic!("`#[collect]` requires one of: \"require_static\", \"no_drop\", or \"unsafe_drop\" as an argument");
+                                }
+                            }
+                            syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
+                                if value.path.is_ident("bound") {
+                                    match value.lit {
+                                        syn::Lit::Str(x) => override_bound = Some(x),
+                                        _ => {
+                                            panic!("`#[collect]` bound expression must be a string")
+                                        }
+                                    }
+                                } else {
+                                    panic!("`#[collect]` encountered an unknown nested item");
+                                }
+                            }
+                            _ => panic!("`#[collect]` encountered an unknown nested item"),
                         }
                     }
                 }
@@ -55,7 +73,13 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let where_clause = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
     } else {
-        quote!()
+        override_bound
+            .as_ref()
+            .map(|x| {
+                x.parse()
+                    .expect("`#[collect]` failed to parse explicit trait bound expression")
+            })
+            .unwrap_or_else(|| quote!())
     };
 
     let mut errors = vec![];
@@ -192,7 +216,12 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             )
         });
 
-        s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
+        let bounds_type = if override_bound.is_some() {
+            AddBounds::None
+        } else {
+            AddBounds::Fields
+        };
+        s.clone().add_bounds(bounds_type).gen_impl(quote! {
             gen unsafe impl gc_arena::Collect for @Self #where_clause {
                 #[inline]
                 fn needs_trace() -> bool {
