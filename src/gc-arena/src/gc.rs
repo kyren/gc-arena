@@ -13,7 +13,7 @@ use crate::types::{GcBox, Invariant};
 /// through "generativity" such `Gc` pointers may not escape the arena they were born in or be
 /// stored inside TLS.  This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
-pub struct Gc<'gc, T: 'gc + Collect> {
+pub struct Gc<'gc, T: 'gc> {
     pub(crate) ptr: NonNull<GcBox<T>>,
     _invariant: Invariant<'gc>,
 }

@@ -256,3 +256,35 @@ fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
 }
+
+#[test]
+fn recursive_struct_indirect_gc() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub enum Value<'gc, S: 'gc> {
+        #[allow(dead_code)]
+        Closure(Gc<'gc, Closure<'gc, S>>),
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub struct Closure<'gc, S: 'gc> {
+        pub vars: Vec<Value<'gc, S>>,
+    }
+}
+
+#[test]
+fn recursive_struct_indirect_gccell() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub enum Value<'gc, S: 'gc> {
+        #[allow(dead_code)]
+        Closure(GcCell<'gc, Closure<'gc, S>>),
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub struct Closure<'gc, S: 'gc> {
+        pub vars: Vec<Value<'gc, S>>,
+    }
+}
