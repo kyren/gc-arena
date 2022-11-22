@@ -4,19 +4,19 @@ use crate::{CollectionContext, MutationContext};
 
 use core::fmt::{self, Debug};
 
-pub struct GcWeak<'gc, T: 'gc + Collect> {
+pub struct GcWeak<'gc, T> {
     pub(crate) inner: Gc<'gc, T>,
 }
 
-impl<'gc, T: Collect + 'gc> Copy for GcWeak<'gc, T> {}
+impl<'gc, T> Copy for GcWeak<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for GcWeak<'gc, T> {
+impl<'gc, T> Clone for GcWeak<'gc, T> {
     fn clone(&self) -> GcWeak<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: 'gc + Collect> Debug for GcWeak<'gc, T> {
+impl<'gc, T> Debug for GcWeak<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "(GcWeak)")
     }

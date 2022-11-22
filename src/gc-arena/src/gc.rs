@@ -13,12 +13,12 @@ use crate::types::{GcBox, Invariant};
 /// through "generativity" such `Gc` pointers may not escape the arena they were born in or be
 /// stored inside TLS.  This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
-pub struct Gc<'gc, T: 'gc> {
+pub struct Gc<'gc, T> {
     pub(crate) ptr: NonNull<GcBox<T>>,
     _invariant: Invariant<'gc>,
 }
 
-impl<'gc, T: 'gc + Collect> Debug for Gc<'gc, T> {
+impl<'gc, T> Debug for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_struct("Gc")
             .field("ptr", unsafe { &self.ptr.as_ref().value.get() })
@@ -26,9 +26,9 @@ impl<'gc, T: 'gc + Collect> Debug for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc> Copy for Gc<'gc, T> {}
+impl<'gc, T> Copy for Gc<'gc, T> {}
 
-impl<'gc, T: 'gc> Clone for Gc<'gc, T> {
+impl<'gc, T> Clone for Gc<'gc, T> {
     fn clone(&self) -> Gc<'gc, T> {
         *self
     }
@@ -42,11 +42,25 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
+impl<'gc, T> Deref for Gc<'gc, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         unsafe { &*self.ptr.as_ref().value.get() }
+    }
+}
+
+impl<'gc, T> Gc<'gc, T> {
+    pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
+        GcWeak { inner: this }
+    }
+
+    pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
+        Gc::as_ptr(this) == Gc::as_ptr(other)
+    }
+
+    pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
+        unsafe { gc.ptr.as_ref().value.get() }
     }
 }
 
@@ -58,10 +72,6 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
         }
     }
 
-    pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
-        GcWeak { inner: this }
-    }
-
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
     /// method must be used to ensure safe mutability.  Safe to call, but only necessary from unsafe
     /// code.
@@ -69,13 +79,5 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
         unsafe {
             mc.write_barrier(gc.ptr);
         }
-    }
-
-    pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
-        Gc::as_ptr(this) == Gc::as_ptr(other)
-    }
-
-    pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe { gc.ptr.as_ref().value.get() }
     }
 }

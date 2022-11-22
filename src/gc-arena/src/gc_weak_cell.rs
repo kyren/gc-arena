@@ -3,19 +3,19 @@ use crate::{collect::Collect, MutationContext};
 
 use core::fmt::{self, Debug};
 
-pub struct GcWeakCell<'gc, T: 'gc + Collect> {
+pub struct GcWeakCell<'gc, T> {
     pub(crate) inner: GcCell<'gc, T>,
 }
 
-impl<'gc, T: Collect + 'gc> Copy for GcWeakCell<'gc, T> {}
+impl<'gc, T> Copy for GcWeakCell<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for GcWeakCell<'gc, T> {
+impl<'gc, T> Clone for GcWeakCell<'gc, T> {
     fn clone(&self) -> GcWeakCell<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: 'gc + Collect> Debug for GcWeakCell<'gc, T> {
+impl<'gc, T> Debug for GcWeakCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "(GcWeakCell)")
     }

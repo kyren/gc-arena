@@ -4,7 +4,7 @@ use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak};
+use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak, GcWeakCell, MutationContext};
 
 #[test]
 fn simple_allocation() {
@@ -261,15 +261,22 @@ fn ui() {
 fn recursive_struct_indirect_gc() {
     #[derive(Clone, Copy, Collect)]
     #[collect(no_drop)]
-    pub enum Value<'gc, S: 'gc> {
+    pub enum Value<'gc, S> {
         #[allow(dead_code)]
         Closure(Gc<'gc, Closure<'gc, S>>),
     }
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    pub struct Closure<'gc, S: 'gc> {
+    pub struct Closure<'gc, S> {
         pub vars: Vec<Value<'gc, S>>,
+    }
+
+    #[allow(dead_code)]
+    fn foo<'gc, S>(x: Value<'gc, S>) -> usize {
+        match x {
+            Value::Closure(x) => x.vars.len(),
+        }
     }
 }
 
@@ -277,14 +284,73 @@ fn recursive_struct_indirect_gc() {
 fn recursive_struct_indirect_gccell() {
     #[derive(Clone, Copy, Collect)]
     #[collect(no_drop)]
-    pub enum Value<'gc, S: 'gc> {
+    pub enum Value<'gc, S> {
         #[allow(dead_code)]
         Closure(GcCell<'gc, Closure<'gc, S>>),
     }
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    pub struct Closure<'gc, S: 'gc> {
+    pub struct Closure<'gc, S> {
         pub vars: Vec<Value<'gc, S>>,
     }
+
+    #[allow(dead_code)]
+    fn foo<'gc, S>(x: Value<'gc, S>) -> usize {
+        match x {
+            Value::Closure(x) => x.read().vars.len(),
+        }
+    }
+    // #[allow(dead_code)]
+    // fn bar<'gc, S>(mc: MutationContext<'gc, '_>, x: Value<'gc, S>) -> usize {
+    //     match x {
+    //         Value::Closure(x) => x.write(mc).vars.len(),
+    //     }
+    // }
+}
+
+#[test]
+fn recursive_struct_indirect_gcweak() {
+    #[derive(Clone, Copy, Collect)]
+    #[collect(no_drop)]
+    pub enum Value<'gc, S> {
+        #[allow(dead_code)]
+        Closure(GcWeak<'gc, Closure<'gc, S>>),
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub struct Closure<'gc, S> {
+        pub vars: Vec<Value<'gc, S>>,
+    }
+
+    // #[allow(dead_code)]
+    // fn bar<'gc, S>(mc: MutationContext<'gc, '_>, x: Value<'gc, S>) -> usize {
+    //     match x {
+    //         Value::Closure(x) => x.upgrade(mc).unwrap().vars.len(),
+    //     }
+    // }
+}
+
+#[test]
+fn recursive_struct_indirect_gcweakcell() {
+    #[derive(Clone, Copy, Collect)]
+    #[collect(no_drop)]
+    pub enum Value<'gc, S> {
+        #[allow(dead_code)]
+        Closure(GcWeakCell<'gc, Closure<'gc, S>>),
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    pub struct Closure<'gc, S> {
+        pub vars: Vec<Value<'gc, S>>,
+    }
+
+    // #[allow(dead_code)]
+    // fn bar<'gc, S>(mc: MutationContext<'gc, '_>, x: Value<'gc, S>) -> usize {
+    //     match x {
+    //         Value::Closure(x) => x.upgrade(mc).unwrap().vars.len(),
+    //     }
+    // }
 }

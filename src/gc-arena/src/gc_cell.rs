@@ -11,17 +11,17 @@ use crate::GcWeakCell;
 /// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
 /// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
 /// `Gc::write_barrier`.
-pub struct GcCell<'gc, T: 'gc>(Gc<'gc, GcRefCell<T>>);
+pub struct GcCell<'gc, T>(Gc<'gc, GcRefCell<T>>);
 
-impl<'gc, T: 'gc> Copy for GcCell<'gc, T> {}
+impl<'gc, T> Copy for GcCell<'gc, T> {}
 
-impl<'gc, T: 'gc> Clone for GcCell<'gc, T> {
+impl<'gc, T> Clone for GcCell<'gc, T> {
     fn clone(&self) -> GcCell<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
+impl<'gc, T> Debug for GcCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt.debug_tuple("GcCell").field(&self.0).finish()
     }
@@ -33,16 +33,7 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for GcCell<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
-    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
-        GcCell(Gc::allocate(
-            mc,
-            GcRefCell {
-                cell: RefCell::new(t),
-            },
-        ))
-    }
-
+impl<'gc, T> GcCell<'gc, T> {
     pub fn downgrade(this: GcCell<'gc, T>) -> GcWeakCell<'gc, T> {
         GcWeakCell { inner: this }
     }
@@ -66,6 +57,17 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
 
     pub fn try_read<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
         self.0.cell.try_borrow()
+    }
+}
+
+impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
+    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
+        GcCell(Gc::allocate(
+            mc,
+            GcRefCell {
+                cell: RefCell::new(t),
+            },
+        ))
     }
 
     #[track_caller]

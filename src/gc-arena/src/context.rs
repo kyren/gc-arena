@@ -340,7 +340,7 @@ impl Context {
     unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
-        // objects.  Turn black obejcts to gray to prevent this.
+        // objects.  Turn black objects to gray to prevent this.
         let gc_box = ptr.as_ref();
         if self.phase.get() == Phase::Propagate && gc_box.flags.color() == GcColor::Black {
             gc_box.flags.set_color(GcColor::Gray);
