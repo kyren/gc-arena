@@ -48,6 +48,7 @@ macro_rules! static_collect {
 }
 
 static_collect!(bool);
+static_collect!(char);
 static_collect!(u8);
 static_collect!(u16);
 static_collect!(u32);
