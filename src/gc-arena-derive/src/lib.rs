@@ -219,7 +219,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         let bounds_type = if override_bound.is_some() {
             AddBounds::None
         } else {
-            AddBounds::Fields
+            AddBounds::Generics
         };
         s.clone().add_bounds(bounds_type).gen_impl(quote! {
             gen unsafe impl gc_arena::Collect for @Self #where_clause {

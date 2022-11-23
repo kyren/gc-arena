@@ -4,7 +4,7 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(no_drop, bound = "where S: Collect, I: Collect, F: 'static")]
 pub enum AndThen<S, F, I> {
     First(S, Option<StaticCollect<F>>),
     Second(Option<(I, StaticCollect<F>)>),
@@ -47,7 +47,10 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(
+    no_drop,
+    bound = "where S: Collect, C: Collect, I: Collect, F: 'static"
+)]
 pub enum AndThenWith<S, C, F, I> {
     First(S, Option<(C, StaticCollect<F>)>),
     Second(Option<(C, I, StaticCollect<F>)>),
