@@ -1,5 +1,5 @@
 error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
- --> $DIR/bad_collect_bound.rs:8:5
+ --> tests/ui/bad_collect_bound.rs:8:5
   |
 5 | #[derive(Collect)]
   |          ------- in this derive macro expansion
@@ -16,5 +16,5 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
             (A, B, C, D)
             (A, B, C, D, E)
             (A, B, C, D, E, F)
-          and 47 others
+          and $N others
   = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)
