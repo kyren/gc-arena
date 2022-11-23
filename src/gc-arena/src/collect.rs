@@ -11,7 +11,7 @@ use crate::context::CollectionContext;
 ///   3. Internal mutability *must* not be used to adopt new `Gc` pointers without calling
 ///      `Gc::write_barrier` during the same arena mutation.
 ///
-/// It is, however, possible to implement this trait safely by procedurally deriving it, which
+/// It is, however, possible to implement this trait safely by procedurally deriving it (see [`gc_arena_derive::Collect`]), which
 /// requires that every field in the structure also implement `Collect`, and implements a safe,
 /// empty version of `Drop`.  Internally mutable types like `Cell` and `RefCell` do not implement
 /// `Collect` in such a way that it is possible to store `Gc` pointers inside them, so the write

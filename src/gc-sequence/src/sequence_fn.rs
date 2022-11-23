@@ -11,7 +11,7 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(no_drop, bound = "where F: 'static")]
 pub struct SequenceFn<F>(Option<StaticCollect<F>>);
 
 impl<F> SequenceFn<F> {
@@ -43,7 +43,7 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(no_drop, bound = "where C: Collect, F: 'static")]
 pub struct SequenceFnWith<C, F>(Option<(C, StaticCollect<F>)>);
 
 impl<C, F> SequenceFnWith<C, F> {

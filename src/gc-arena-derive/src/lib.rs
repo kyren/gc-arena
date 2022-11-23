@@ -18,31 +18,61 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         UnsafeDrop,
     }
 
+    macro_rules! usage_error {
+        ($($t:tt)*) => {{
+            let msg = format!($($t)*);
+            panic!("{}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`.", msg);
+        }}
+    }
+
     let mut mode = None;
+    let mut override_bound = None;
 
     for attr in &s.ast().attrs {
         match attr.parse_meta() {
             Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
                 if path.is_ident("collect") {
-                    if let Some(prev_mode) = mode {
-                        let prev_mode_str = match prev_mode {
-                            Mode::RequireStatic => "require_static",
-                            Mode::NoDrop => "no_drop",
-                            Mode::UnsafeDrop => "unsafe_drop",
-                        };
-                        panic!("`Collect` mode was already specified with `#[collect({})]`, cannot specify twice", prev_mode_str);
+                    if mode.is_some() {
+                        panic!("multiple `#[collect(...)]` attributes found on the same item. consider combining them.");
                     }
 
-                    if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) = nested.first() {
-                        if path.is_ident("require_static") {
-                            mode = Some(Mode::RequireStatic);
-                        } else if path.is_ident("no_drop") {
-                            mode = Some(Mode::NoDrop);
-                        } else if path.is_ident("unsafe_drop") {
-                            mode = Some(Mode::UnsafeDrop);
-                        } else {
-                            panic!("`#[collect]` requires one of: \"require_static\", \"no_drop\", or \"unsafe_drop\" as an argument");
+                    for nested in nested {
+                        match nested {
+                            syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
+                                if mode.is_some() {
+                                    usage_error!("multiple modes specified");
+                                }
+
+                                if path.is_ident("require_static") {
+                                    mode = Some(Mode::RequireStatic);
+                                } else if path.is_ident("no_drop") {
+                                    mode = Some(Mode::NoDrop);
+                                } else if path.is_ident("unsafe_drop") {
+                                    mode = Some(Mode::UnsafeDrop);
+                                } else {
+                                    usage_error!("unknown option")
+                                }
+                            }
+                            syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
+                                if override_bound.is_some() {
+                                    usage_error!("multiple bounds specified");
+                                }
+
+                                if value.path.is_ident("bound") {
+                                    match value.lit {
+                                        syn::Lit::Str(x) => override_bound = Some(x),
+                                        _ => usage_error!("bound must be str"),
+                                    }
+                                } else {
+                                    usage_error!("unknown option");
+                                }
+                            }
+                            _ => usage_error!("unknown option"),
                         }
+                    }
+
+                    if mode.is_none() {
+                        usage_error!("missing mode");
                     }
                 }
             }
@@ -50,12 +80,20 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         }
     }
 
-    let mode = mode.expect("deriving `Collect` requires a `#[collect(<mode>)]` attribute, where `<mode>` is one of \"require_static\", \"no_drop\", or \"unsafe_drop\"");
+    let mode = mode.unwrap_or_else(|| {
+        usage_error!("deriving `Collect` requires a `#[collect(...)]` attribute")
+    });
 
     let where_clause = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
     } else {
-        quote!()
+        override_bound
+            .as_ref()
+            .map(|x| {
+                x.parse()
+                    .expect("`#[collect]` failed to parse explicit trait bound expression")
+            })
+            .unwrap_or_else(|| quote!())
     };
 
     let mut errors = vec![];
@@ -192,7 +230,12 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             )
         });
 
-        s.clone().add_bounds(AddBounds::Fields).gen_impl(quote! {
+        let bounds_type = if override_bound.is_some() {
+            AddBounds::None
+        } else {
+            AddBounds::Generics
+        };
+        s.clone().add_bounds(bounds_type).gen_impl(quote! {
             gen unsafe impl gc_arena::Collect for @Self #where_clause {
                 #[inline]
                 fn needs_trace() -> bool {
@@ -223,4 +266,36 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     }
 }
 
-decl_derive!([Collect, attributes(collect)] => collect_derive);
+decl_derive! {
+    [Collect, attributes(collect)] =>
+    /// Derives the `Collect` trait needed to trace a gc type.
+    ///
+    /// To derive `Collect`, an additional attribute is required on the struct/enum called `collect`.
+    /// This has several optional arguments, but the only required argument is the derive strategy.
+    /// This can be one of
+    ///
+    /// - `#[collect(require_static)]` - Adds a `'static` bound, which allows for a no-op trace implementation.
+    ///   This is the ideal choice where possible.
+    /// - `#[collect(no_drop)]` - The typical safe tracing derive strategy which only has to add a requirement
+    ///   that your struct/enum does not have a custom implementation of `Drop`.
+    /// - `#[collect(unsafe_drop)]` - The most versatile tracing derive strategy which allows a custom drop implementation.
+    ///   However, this strategy can lead to unsoundness if care is not taken (see the above explanation of `Drop` interactions).
+    ///
+    /// The `collect` attribute also accepts a number of optional configuration settings:
+    ///
+    /// - `#[collect(bound = "<code>")]` - Replaces the default generated `where` clause with the given code.
+    ///   This can be an empty string to add no `where` clause, or otherwise must start with `"where"`,
+    ///   e.g., `#[collect(bound = "where T: Collect")]`.
+    ///   Note that this option is ignored for `require_static` mode since the only bound it produces is `Self: 'static`.
+    ///   Also note that providing an explicit bound in this way is safe, and only changes the trait bounds used
+    ///   to enable the implementation of `Collect`.
+    ///
+    /// Options may be passed to the `collect` attribute together, e.g., `#[collect(no_drop, bound = "")]`.
+    ///
+    /// The `collect` attribute may also be used on any field of an enum or struct, however the only allowed usage
+    /// is to specify the strategy as `require_static` (no other strategies are allowed, and no optional settings can be specified).
+    /// This will add a `'static` bound to the type of the field (regardless of an explicit `bound` setting)
+    /// in exchange for not having to trace into the given field (the ideal choice where possible).
+    /// Note that if the entire struct/enum is marked with `require_static` then this is unnecessary.
+    collect_derive
+}

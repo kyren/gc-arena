@@ -4,7 +4,7 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(no_drop, bound = "where S: Collect, F: 'static")]
 pub struct Map<S, F>(S, Option<StaticCollect<F>>);
 
 impl<S, F> Map<S, F> {
@@ -32,7 +32,7 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(no_drop, bound = "where S: Collect, C: Collect, F: 'static")]
 pub struct MapWith<S, C, F>(S, Option<(C, StaticCollect<F>)>);
 
 impl<S, C, F> MapWith<S, C, F> {

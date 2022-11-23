@@ -4,7 +4,10 @@ use crate::Sequence;
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(
+    no_drop,
+    bound = "where <S as Sequence<'gc>>::Output: Collect, F: 'static"
+)]
 pub enum Then<'gc, S, F>
 where
     S: Sequence<'gc>,
@@ -49,7 +52,10 @@ where
 
 #[must_use = "sequences do nothing unless stepped"]
 #[derive(Debug, Collect)]
-#[collect(no_drop)]
+#[collect(
+    no_drop,
+    bound = "where C: Collect, <S as Sequence<'gc>>::Output: Collect, F: 'static"
+)]
 pub enum ThenWith<'gc, S, C, F>
 where
     S: Sequence<'gc>,
