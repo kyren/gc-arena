@@ -18,6 +18,13 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         UnsafeDrop,
     }
 
+    macro_rules! usage_error {
+        ($($t:tt)*) => {{
+            let msg = format!($($t)*);
+            panic!("{}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`.", msg);
+        }}
+    }
+
     let mut mode = None;
     let mut override_bound = None;
 
@@ -25,18 +32,17 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         match attr.parse_meta() {
             Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
                 if path.is_ident("collect") {
-                    if let Some(prev_mode) = mode {
-                        let prev_mode_str = match prev_mode {
-                            Mode::RequireStatic => "require_static",
-                            Mode::NoDrop => "no_drop",
-                            Mode::UnsafeDrop => "unsafe_drop",
-                        };
-                        panic!("`Collect` mode was already specified with `#[collect({})]`, cannot specify twice", prev_mode_str);
+                    if mode.is_some() {
+                        panic!("multiple `#[collect(...)]` attributes found on the same item. consider combining them.");
                     }
 
                     for nested in nested {
                         match nested {
                             syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
+                                if mode.is_some() {
+                                    usage_error!("multiple modes specified");
+                                }
+
                                 if path.is_ident("require_static") {
                                     mode = Some(Mode::RequireStatic);
                                 } else if path.is_ident("no_drop") {
@@ -44,23 +50,29 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                                 } else if path.is_ident("unsafe_drop") {
                                     mode = Some(Mode::UnsafeDrop);
                                 } else {
-                                    panic!("`#[collect]` requires one of: \"require_static\", \"no_drop\", or \"unsafe_drop\" as an argument");
+                                    usage_error!("unknown option")
                                 }
                             }
                             syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
+                                if override_bound.is_some() {
+                                    usage_error!("multiple bounds specified");
+                                }
+
                                 if value.path.is_ident("bound") {
                                     match value.lit {
                                         syn::Lit::Str(x) => override_bound = Some(x),
-                                        _ => {
-                                            panic!("`#[collect]` bound expression must be a string")
-                                        }
+                                        _ => usage_error!("bound must be str"),
                                     }
                                 } else {
-                                    panic!("`#[collect]` encountered an unknown nested item");
+                                    usage_error!("unknown option");
                                 }
                             }
-                            _ => panic!("`#[collect]` encountered an unknown nested item"),
+                            _ => usage_error!("unknown option"),
                         }
+                    }
+
+                    if mode.is_none() {
+                        usage_error!("missing mode");
                     }
                 }
             }
@@ -68,7 +80,9 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         }
     }
 
-    let mode = mode.expect("deriving `Collect` requires a `#[collect(<mode>)]` attribute, where `<mode>` is one of \"require_static\", \"no_drop\", or \"unsafe_drop\"");
+    let mode = mode.unwrap_or_else(|| {
+        usage_error!("deriving `Collect` requires a `#[collect(...)]` attribute")
+    });
 
     let where_clause = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
