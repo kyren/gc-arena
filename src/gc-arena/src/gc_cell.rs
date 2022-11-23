@@ -1,5 +1,5 @@
 use core::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
-use core::fmt::{self, Debug};
+use core::fmt::{self, Debug, Pointer};
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
@@ -23,7 +23,30 @@ impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
 
 impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_tuple("GcCell").field(&self.0).finish()
+        match self.try_read() {
+            Ok(borrow) => fmt.debug_struct("GcCell").field("value", &borrow).finish(),
+            Err(_) => {
+                // The GcCell is mutably borrowed so we can't look at its value
+                // here. Show a placeholder instead.
+                struct BorrowedPlaceholder;
+
+                impl Debug for BorrowedPlaceholder {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        f.write_str("<borrowed>")
+                    }
+                }
+
+                fmt.debug_struct("GcCell")
+                    .field("value", &BorrowedPlaceholder)
+                    .finish()
+            }
+        }
+    }
+}
+
+impl<'gc, T: 'gc + Collect> Pointer for GcCell<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&self.as_ptr(), fmt)
     }
 }
 
