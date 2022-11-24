@@ -142,8 +142,6 @@ pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
 impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters.  You must
     /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
-    /// The held root type is immutable inside the arena, in order to provide mutation, you
-    /// must use `GcCell` types inside the root.
     pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
     where
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
@@ -191,14 +189,40 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// non garbage collected value.  The callback may "mutate" any part of the object graph
     /// during this call, but no garbage collection will take place during this method.
     #[inline]
-    pub fn mutate<F, T>(&self, f: F) -> T
+    pub fn mutate<'a, F, T>(&'a self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
     {
+        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
+        // this is safe as all objects in the graph live until the next collection, which
+        // requires exclusive access to the arena.
         unsafe {
             f(
                 self.context.mutation_context(),
                 ::core::mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
+            )
+        }
+    }
+
+    /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
+    /// cost of an extra write barrier.
+    #[inline]
+    pub fn mutate_root<'a, F, T>(&'a mut self, f: F) -> T
+    where
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
+    {
+        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
+        // this is safe as all objects in the graph live until the next collection, which
+        // requires exclusive access to the arena. Additionally, the write barrier ensures
+        // that any changes to the root set are properly picked up.
+        unsafe {
+            let mc = self.context.mutation_context();
+            mc.write_barrier(self.root);
+            f(
+                mc,
+                ::core::mem::transmute::<&mut Root<'static, R>, _>(
+                    &mut *self.root.as_ref().value.get(),
+                ),
             )
         }
     }
