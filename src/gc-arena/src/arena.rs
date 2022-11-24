@@ -105,6 +105,10 @@ pub trait RootProvider<'a> {
     type Root: Collect;
 }
 
+#[doc(hidden)]
+/// An helper type alias to simplify signatures in `Arena`s documentation.
+pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
+
 /// A generic, garbage collected arena. Use the [`make_arena`] macro to create specialized instances
 /// of this type.
 ///
@@ -132,7 +136,7 @@ pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
     // Our `Context` stores a type-erased pointer to the root type
     // (which cannot be converted back to a non-erased pointer)
     // which is pushed to the gray queue from `wake()`.
-    root: NonNull<GcBox<<R as RootProvider<'static>>::Root>>,
+    root: NonNull<GcBox<Root<'static, R>>>,
 }
 
 impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
@@ -143,7 +147,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[allow(unused)]
     pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> <R as RootProvider<'gc>>::Root,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
     {
         unsafe {
             let mut context = Context::new(arena_parameters);
@@ -156,7 +160,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             // and lets us stay compatible with older versions of Rust
             let mutation_context: MutationContext<'static, '_> =
                 ::core::mem::transmute(context.mutation_context());
-            let root: <R as RootProvider<'static>>::Root = f(mutation_context);
+            let root: Root<'static, R> = f(mutation_context);
             let root = context.initialize(root);
             Arena {
                 context: context,
@@ -169,15 +173,13 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[allow(unused)]
     pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
-        F: for<'gc> FnOnce(
-            crate::MutationContext<'gc, '_>,
-        ) -> Result<<R as RootProvider<'gc>>::Root, E>,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
             let mut context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
                 ::core::mem::transmute(context.mutation_context());
-            let root: <R as RootProvider<'static>>::Root = f(mutation_context)?;
+            let root: Root<'static, R> = f(mutation_context)?;
             let root = context.initialize(root);
             Ok(Arena {
                 context: context,
@@ -194,14 +196,12 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &<R as RootProvider<'gc>>::Root) -> T,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &Root<'gc, R>) -> T,
     {
         unsafe {
             f(
                 self.context.mutation_context(),
-                ::core::mem::transmute::<&<R as RootProvider<'static>>::Root, _>(
-                    &*self.root.as_ref().value.get(),
-                ),
+                ::core::mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
             )
         }
     }
