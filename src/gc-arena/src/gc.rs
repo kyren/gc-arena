@@ -1,4 +1,4 @@
-use core::fmt::{self, Debug};
+use core::fmt::{self, Debug, Display, Pointer};
 use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ptr::NonNull;
@@ -18,11 +18,21 @@ pub struct Gc<'gc, T: 'gc + Collect> {
     _invariant: Invariant<'gc>,
 }
 
-impl<'gc, T: 'gc + Collect> Debug for Gc<'gc, T> {
+impl<'gc, T: 'gc + Collect + Debug> Debug for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt.debug_struct("Gc")
-            .field("ptr", unsafe { &self.ptr.as_ref().value.get() })
-            .finish()
+        fmt::Debug::fmt(&**self, fmt)
+    }
+}
+
+impl<'gc, T: 'gc + Collect> Pointer for Gc<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Pointer::fmt(&Gc::as_ptr(*self), fmt)
+    }
+}
+
+impl<'gc, T: 'gc + Collect + Display> Display for Gc<'gc, T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&**self, fmt)
     }
 }
 
