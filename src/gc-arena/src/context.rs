@@ -44,8 +44,6 @@ impl<'context> CollectionContext<'context> {
     }
 }
 
-// Main gc context type, public because it must be accessible from the `make_arena!` macro.
-#[doc(hidden)]
 pub(crate) struct Context {
     parameters: ArenaParameters,
 
