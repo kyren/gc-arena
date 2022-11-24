@@ -100,7 +100,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
 
     let collect_impl = if mode == Mode::RequireStatic {
         s.clone().add_bounds(AddBounds::None).gen_impl(quote! {
-            gen unsafe impl gc_arena::Collect for @Self #where_clause {
+            gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
                 #[inline]
                 fn needs_trace() -> bool {
                     false
@@ -205,7 +205,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                 // cause any hygiene issues
                 let call_span = b.ast().span().resolved_at(Span::call_site());
                 quote_spanned!(call_span=>
-                    || <#ty as gc_arena::Collect>::needs_trace()
+                    || <#ty as ::gc_arena::Collect>::needs_trace()
                 )
                 .to_tokens(&mut needs_trace_body);
             }
@@ -225,7 +225,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                     // This is purely for diagnostic purposes, and has no effect
                     // on correctness
                     let bi = #bi;
-                    gc_arena::Collect::trace(bi, cc)
+                    ::gc_arena::Collect::trace(bi, cc)
                 }
             )
         });
@@ -236,7 +236,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             AddBounds::Generics
         };
         s.clone().add_bounds(bounds_type).gen_impl(quote! {
-            gen unsafe impl gc_arena::Collect for @Self #where_clause {
+            gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
                 #[inline]
                 fn needs_trace() -> bool {
                     #needs_trace_body
@@ -253,7 +253,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let drop_impl = if mode == Mode::NoDrop {
         let mut s = s;
         s.add_bounds(AddBounds::None).gen_impl(quote! {
-            gen impl gc_arena::MustNotImplDrop for @Self {}
+            gen impl ::gc_arena::MustNotImplDrop for @Self {}
         })
     } else {
         quote!()
