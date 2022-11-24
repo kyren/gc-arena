@@ -97,18 +97,14 @@ impl ArenaParameters {
 /// pointers and manually ensuring that invariants are held.
 #[macro_export]
 macro_rules! make_arena {
-    ($arena:ident, $root:ident) => {
-        make_arena!(pub(self) $arena, $root);
-    };
-
-    ($vis:vis $arena:ident, $root:ident) => {
+    ($vis:vis $arena:ident $(( $($arena_generics:tt)* ))?, $root:ident $(( $($root_generics:tt)* ))?) => {
         // Instead of generating an impl of `RootProvider`, we use a trait object.
         // The projection `<R as RootProvider<'gc>>::Root` is used to obtain the root
         // type with the lifetime `'gc` applied
         // By using a trait object, we avoid the need to generate a new type for each
         // invocation of this macro, which would lead to name conflicts if the macro was
         // used multiple times in the same scope.
-        $vis type $arena = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a>>>;
+        $vis type $arena $(< $($arena_generics)* >)? = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a, $($($root_generics)*)?>>>;
     };
 }
 

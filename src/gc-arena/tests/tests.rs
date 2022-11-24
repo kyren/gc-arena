@@ -252,6 +252,22 @@ fn derive_collect() {
 }
 
 #[test]
+fn generic_make_arena() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Test<'gc, T: 'gc + Collect>(Gc<'gc, T>);
+    make_arena!(TestArena(T), Test(T));
+
+    fn test<T: 'static + Collect + Copy>(v: T) -> T {
+        let arena = TestArena::new(Default::default(), |mc| Test(Gc::allocate(mc, v)));
+        arena.mutate(|_, arena| *arena.0)
+    }
+
+    assert_eq!(test(34), 34);
+    assert_eq!(test(false), false);
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
