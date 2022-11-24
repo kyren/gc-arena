@@ -6,6 +6,7 @@ use crate::{
     Collect,
 };
 
+/// Tuning parameters for a given garbage collected [`Arena`].
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {
     pub(crate) pause_factor: f64,
@@ -59,12 +60,12 @@ impl ArenaParameters {
     }
 }
 
-/// Creates a new "garbage collected arena" type.  The macro takes two parameters, the name you
+/// Creates a new "garbage collected [`Arena`]" type.  The macro takes two parameters, the name you
 /// would like to give the arena type, and the type of the arena root.  The root type must implement
-/// the `Collect` trait, and be a type that takes a single generic lifetime parameter which is used
+/// the [`Collect`] trait, and be a type that takes a single generic lifetime parameter which is used
 /// for any held `Gc` pointer types.
 ///
-/// An eample:
+/// An example:
 /// ```
 /// # use gc_arena::{Collect, Gc, make_arena};
 /// #
@@ -77,24 +78,6 @@ impl ArenaParameters {
 /// make_arena!(MyArena, MyRoot);
 /// # }
 /// ```
-///
-/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
-/// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
-/// must be manually triggered outside the `mutate` method, and works best when units of work inside
-/// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
-/// scripting language runtimes.
-///
-/// The arena API is able to provide extremely cheap Gc pointers because it is based around
-/// "generativity".  During construction and access, the root type is branded by a unique, invariant
-/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
-/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
-/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
-/// to come from, and that they're all either reachable from root or have been allocated during the
-/// current `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
-/// pointers must be either reachable from root or they are unreachable and safe to collect.  In
-/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
-/// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
-/// pointers and manually ensuring that invariants are held.
 #[macro_export]
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
@@ -122,6 +105,26 @@ pub trait RootProvider<'a> {
     type Root: Collect;
 }
 
+/// A generic, garbage collected arena. Use the [`make_arena`] macro to create specialized instances
+/// of this type.
+///
+/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
+/// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
+/// must be manually triggered outside the `mutate` method, and works best when units of work inside
+/// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
+/// scripting language runtimes.
+///
+/// The arena API is able to provide extremely cheap Gc pointers because it is based around
+/// "generativity".  During construction and access, the root type is branded by a unique, invariant
+/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
+/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
+/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
+/// to come from, and that they're all either reachable from root or have been allocated during the
+/// current `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
+/// pointers must be either reachable from root or they are unreachable and safe to collect.  In
+/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
+/// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
+/// pointers and manually ensuring that invariants are held.
 pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
     context: Context,
     // Note - we store a pointer to the non-erased root type,
