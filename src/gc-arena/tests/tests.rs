@@ -255,18 +255,21 @@ fn derive_collect() {
 fn generic_make_arena() {
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct Test<'gc, T: 'gc + Collect, const N: usize>(Gc<'gc, T>, [(); N]);
-    make_arena!(TestArena(T, const N: usize), Test((T, T), N));
+    struct Test<'gc, T: 'gc + Collect, const N: usize, U: 'gc + Collect>(Gc<'gc, T>, [(); N], U);
+    make_arena!(TestArena(T, const N: usize, U), Test((T, T), N, Gc<'gc, U>));
 
-    fn test<const N: usize, T: 'static + Collect + Copy>(v: T) -> ((T, T), usize) {
-        let arena = TestArena::<T, N>::new(Default::default(), |mc| {
-            Test(Gc::allocate(mc, (v, v)), [(); N])
+    fn test<const N: usize, T: 'static + Collect + Copy, U: 'static + Collect + Copy>(
+        v: T,
+        x: U,
+    ) -> ((T, T), usize, U) {
+        let arena = TestArena::<T, N, U>::new(Default::default(), |mc| {
+            Test(Gc::allocate(mc, (v, v)), [(); N], Gc::allocate(mc, x))
         });
-        arena.mutate(|_, arena| (*arena.0, arena.1.len()))
+        arena.mutate(|_, arena| (*arena.0, arena.1.len(), *arena.2))
     }
 
-    assert_eq!(test::<12, _>(34), ((34, 34), 12));
-    assert_eq!(test::<7, _>(false), ((false, false), 7));
+    assert_eq!(test::<12, _, _>(34, 12i8), ((34, 34), 12, 12i8));
+    assert_eq!(test::<7, _, _>(false, -6i64), ((false, false), 7, -6i64));
 }
 
 #[test]

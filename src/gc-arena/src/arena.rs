@@ -104,7 +104,7 @@ macro_rules! make_arena {
         // By using a trait object, we avoid the need to generate a new type for each
         // invocation of this macro, which would lead to name conflicts if the macro was
         // used multiple times in the same scope.
-        $vis type $arena $(< $($arena_generics)* >)? = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a, $($($root_generics)*)?>>>;
+        $vis type $arena $(< $($arena_generics)* >)? = $crate::Arena<dyn for<'gc> $crate::RootProvider<'gc, Root = $root<'gc, $($($root_generics)*)?>>>;
     };
 }
 
