@@ -255,12 +255,14 @@ fn derive_collect() {
 fn generic_make_arena() {
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct Test<'gc, T: 'gc + Collect, const N: usize>(Gc<'gc, T>);
+    struct Test<'gc, T: 'gc + Collect, const N: usize>(Gc<'gc, T>, [(); N]);
     make_arena!(TestArena(T, const N: usize), Test((T, T), N));
 
     fn test<const N: usize, T: 'static + Collect + Copy>(v: T) -> ((T, T), usize) {
-        let arena = TestArena::<T, N>::new(Default::default(), |mc| Test(Gc::allocate(mc, (v, v))));
-        (arena.mutate(|_, arena| *arena.0), N)
+        let arena = TestArena::<T, N>::new(Default::default(), |mc| {
+            Test(Gc::allocate(mc, (v, v)), [(); N])
+        });
+        arena.mutate(|_, arena| (*arena.0, arena.1.len()))
     }
 
     assert_eq!(test::<12, _>(34), ((34, 34), 12));
