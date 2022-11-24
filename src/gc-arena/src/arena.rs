@@ -6,6 +6,7 @@ use crate::{
     Collect,
 };
 
+/// Tuning parameters for a given garbage collected [`Arena`].
 #[derive(Debug, Clone)]
 pub struct ArenaParameters {
     pub(crate) pause_factor: f64,
@@ -59,12 +60,12 @@ impl ArenaParameters {
     }
 }
 
-/// Creates a new "garbage collected arena" type.  The macro takes two parameters, the name you
+/// Creates a new "garbage collected [`Arena`]" type.  The macro takes two parameters, the name you
 /// would like to give the arena type, and the type of the arena root.  The root type must implement
-/// the `Collect` trait, and be a type that takes a single generic lifetime parameter which is used
+/// the [`Collect`] trait, and be a type that takes a single generic lifetime parameter which is used
 /// for any held `Gc` pointer types.
 ///
-/// An eample:
+/// An example:
 /// ```
 /// # use gc_arena::{Collect, Gc, make_arena};
 /// #
@@ -77,24 +78,6 @@ impl ArenaParameters {
 /// make_arena!(MyArena, MyRoot);
 /// # }
 /// ```
-///
-/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
-/// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
-/// must be manually triggered outside the `mutate` method, and works best when units of work inside
-/// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
-/// scripting language runtimes.
-///
-/// The arena API is able to provide extremely cheap Gc pointers because it is based around
-/// "generativity".  During construction and access, the root type is branded by a unique, invariant
-/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
-/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
-/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
-/// to come from, and that they're all either reachable from root or have been allocated during the
-/// current `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
-/// pointers must be either reachable from root or they are unreachable and safe to collect.  In
-/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
-/// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
-/// pointers and manually ensuring that invariants are held.
 #[macro_export]
 macro_rules! make_arena {
     ($arena:ident, $root:ident) => {
@@ -122,6 +105,30 @@ pub trait RootProvider<'a> {
     type Root: Collect;
 }
 
+#[doc(hidden)]
+/// An helper type alias to simplify signatures in `Arena`s documentation.
+pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
+
+/// A generic, garbage collected arena. Use the [`make_arena`] macro to create specialized instances
+/// of this type.
+///
+/// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
+/// garbage collected pointers.  It provides incremental mark and sweep garbage collection which
+/// must be manually triggered outside the `mutate` method, and works best when units of work inside
+/// `mutate` can be kept relatively small.  It is designed primarily to be a garbage collector for
+/// scripting language runtimes.
+///
+/// The arena API is able to provide extremely cheap Gc pointers because it is based around
+/// "generativity".  During construction and access, the root type is branded by a unique, invariant
+/// lifetime `'gc` which ensures that `Gc` pointers must be contained inside the root object
+/// hierarchy and cannot escape the arena callbacks or be smuggled inside another arena.  This way,
+/// the arena can be sure that during mutation, all `Gc` pointers come from the arena we expect them
+/// to come from, and that they're all either reachable from root or have been allocated during the
+/// current `mutate` call.  When not inside the `mutate` callback, the arena knows that all `Gc`
+/// pointers must be either reachable from root or they are unreachable and safe to collect.  In
+/// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls to
+/// `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
+/// pointers and manually ensuring that invariants are held.
 pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
     context: Context,
     // Note - we store a pointer to the non-erased root type,
@@ -129,7 +136,7 @@ pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
     // Our `Context` stores a type-erased pointer to the root type
     // (which cannot be converted back to a non-erased pointer)
     // which is pushed to the gray queue from `wake()`.
-    root: NonNull<GcBox<<R as RootProvider<'static>>::Root>>,
+    root: NonNull<GcBox<Root<'static, R>>>,
 }
 
 impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
@@ -137,10 +144,9 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
     /// The held root type is immutable inside the arena, in order to provide mutation, you
     /// must use `GcCell` types inside the root.
-    #[allow(unused)]
     pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> <R as RootProvider<'gc>>::Root,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
     {
         unsafe {
             let mut context = Context::new(arena_parameters);
@@ -153,7 +159,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             // and lets us stay compatible with older versions of Rust
             let mutation_context: MutationContext<'static, '_> =
                 ::core::mem::transmute(context.mutation_context());
-            let root: <R as RootProvider<'static>>::Root = f(mutation_context);
+            let root: Root<'static, R> = f(mutation_context);
             let root = context.initialize(root);
             Arena {
                 context: context,
@@ -163,18 +169,15 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    #[allow(unused)]
     pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
-        F: for<'gc> FnOnce(
-            crate::MutationContext<'gc, '_>,
-        ) -> Result<<R as RootProvider<'gc>>::Root, E>,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
             let mut context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
                 ::core::mem::transmute(context.mutation_context());
-            let root: <R as RootProvider<'static>>::Root = f(mutation_context)?;
+            let root: Root<'static, R> = f(mutation_context)?;
             let root = context.initialize(root);
             Ok(Arena {
                 context: context,
@@ -187,24 +190,20 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// which receives a `MutationContext` and a reference to the root, and can return any
     /// non garbage collected value.  The callback may "mutate" any part of the object graph
     /// during this call, but no garbage collection will take place during this method.
-    #[allow(unused)]
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &<R as RootProvider<'gc>>::Root) -> T,
+        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>, &Root<'gc, R>) -> T,
     {
         unsafe {
             f(
                 self.context.mutation_context(),
-                ::core::mem::transmute::<&<R as RootProvider<'static>>::Root, _>(
-                    &*self.root.as_ref().value.get(),
-                ),
+                ::core::mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
             )
         }
     }
 
-    /// Return total currently used memory
-    #[allow(unused)]
+    /// Return total currently used memory.
     #[inline]
     pub fn total_allocated(&self) -> usize {
         self.context.total_allocated()
@@ -215,7 +214,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
     /// debt is measured in bytes, but will generally increase at a rate faster than that of
     /// allocation so that collection will always complete.
-    #[allow(unused)]
     #[inline]
     pub fn allocation_debt(&self) -> f64 {
         self.context.allocation_debt()
@@ -224,7 +222,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Run the incremental garbage collector until the allocation debt is <= 0.0.  There is
     /// no minimum unit of work enforced here, so it may be faster to only call this method
     /// when the allocation debt is above some threshold.
-    #[allow(unused)]
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
@@ -238,7 +235,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Run the current garbage collection cycle to completion, stopping once the garbage
     /// collector has entered the sleeping phase.  If the garbage collector is currently
     /// sleeping, starts a new cycle and runs that cycle to completion.
-    #[allow(unused)]
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
