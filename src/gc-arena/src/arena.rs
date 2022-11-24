@@ -144,7 +144,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// provide a closure that accepts a `MutationContext` and returns the appropriate root.
     /// The held root type is immutable inside the arena, in order to provide mutation, you
     /// must use `GcCell` types inside the root.
-    #[allow(unused)]
     pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
     where
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
@@ -170,7 +169,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    #[allow(unused)]
     pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
@@ -192,7 +190,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// which receives a `MutationContext` and a reference to the root, and can return any
     /// non garbage collected value.  The callback may "mutate" any part of the object graph
     /// during this call, but no garbage collection will take place during this method.
-    #[allow(unused)]
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
@@ -206,8 +203,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         }
     }
 
-    /// Return total currently used memory
-    #[allow(unused)]
+    /// Return total currently used memory.
     #[inline]
     pub fn total_allocated(&self) -> usize {
         self.context.total_allocated()
@@ -218,7 +214,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// collection based on the tuning parameters set in `ArenaParameters`.  The allocation
     /// debt is measured in bytes, but will generally increase at a rate faster than that of
     /// allocation so that collection will always complete.
-    #[allow(unused)]
     #[inline]
     pub fn allocation_debt(&self) -> f64 {
         self.context.allocation_debt()
@@ -227,7 +222,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Run the incremental garbage collector until the allocation debt is <= 0.0.  There is
     /// no minimum unit of work enforced here, so it may be faster to only call this method
     /// when the allocation debt is above some threshold.
-    #[allow(unused)]
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
@@ -241,7 +235,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Run the current garbage collection cycle to completion, stopping once the garbage
     /// collector has entered the sleeping phase.  If the garbage collector is currently
     /// sleeping, starts a new cycle and runs that cycle to completion.
-    #[allow(unused)]
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
