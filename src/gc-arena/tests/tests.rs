@@ -2,9 +2,12 @@
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak};
+use gc_arena::{
+    make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak, Invariant,
+};
 
 #[test]
 fn simple_allocation() {
@@ -22,6 +25,79 @@ fn simple_allocation() {
 
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
+    });
+}
+
+#[test]
+fn round_trip_through_pointer() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, i32>,
+        test_cell: GcCell<'gc, i32>,
+        test_value: GcCell<'gc, Value<'gc, i32>>,
+    }
+
+    #[derive(Default, Copy, Clone)]
+    struct Value<'gc, T: Collect + 'gc> {
+        ptr: Option<*const T>,
+        _phantom: Invariant<'gc>,
+    }
+
+    unsafe impl<'gc, T: Collect + 'gc> Collect for Value<'gc, T> {
+        #[inline]
+        fn trace(&self, cc: gc_arena::CollectionContext) {
+            if let Some(gc) = self.as_gc() {
+                gc.trace(cc)
+            }
+        }
+    }
+
+    impl<'gc, T: Collect + 'gc> From<Gc<'gc, T>> for Value<'gc, T> {
+        fn from(gc: Gc<'gc, T>) -> Self {
+            Value {
+                ptr: Some(Gc::as_ptr(gc)),
+                _phantom: PhantomData,
+            }
+        }
+    }
+
+    impl<'gc, T: 'gc + Collect> Value<'gc, T> {
+        pub fn as_gc(&self) -> Option<Gc<'gc, T>> {
+            self.ptr.map(|value| {
+                // SAFETY: we have a `Collect` impl that traces this pointer across arena mutations
+                unsafe { Gc::from_raw(value) }
+            })
+        }
+    }
+
+    make_arena!(TestArena, TestRoot);
+
+    let mut arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
+        test: Gc::allocate(mc, 42),
+        test_cell: GcCell::allocate(mc, 1337),
+        test_value: GcCell::allocate(mc, Default::default()),
+    });
+
+    arena.mutate(|mc, root| {
+        let raw = Gc::as_ptr(root.test);
+        let gc_ptr = unsafe { Gc::from_raw(raw) };
+
+        assert!(Gc::ptr_eq(root.test, gc_ptr));
+
+        let raw = root.test_cell.as_ptr();
+        let gc_ptr = unsafe { GcCell::from_raw(raw) };
+
+        assert!(GcCell::ptr_eq(root.test_cell, gc_ptr));
+
+        *root.test_value.write(mc) = Value::from(Gc::allocate(mc, -42));
+    });
+
+    arena.collect_all();
+    arena.collect_all();
+
+    arena.mutate(|_mc, root| {
+        assert_eq!(*root.test_value.read().as_gc().unwrap(), -42);
     });
 }
 

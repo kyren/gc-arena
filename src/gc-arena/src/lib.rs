@@ -16,6 +16,7 @@ mod gc;
 mod gc_cell;
 mod gc_weak;
 mod gc_weak_cell;
+mod layout_polyfill;
 mod no_drop;
 mod static_collect;
 mod types;
@@ -30,4 +31,5 @@ pub use self::{
     gc_weak_cell::GcWeakCell,
     no_drop::MustNotImplDrop,
     static_collect::StaticCollect,
+    types::Invariant,
 };

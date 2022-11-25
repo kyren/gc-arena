@@ -78,16 +78,30 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         this.as_ptr() == other.as_ptr()
     }
 
-    pub fn as_ptr(self) -> *mut T {
+    pub fn as_ptr(&self) -> *const GcRefCell<T> {
+        Gc::as_ptr(self.0)
+    }
+
+    /// Returns a pointer to the inner `T`
+    pub fn inner_ptr(&self) -> *mut T {
         self.0.cell.as_ptr()
     }
 
+    /// Construct a [GcCell] from a raw pointer
+    ///
+    /// # Safety
+    ///
+    /// See the safety guidelines for [`Gc::from_raw`].
+    pub unsafe fn from_raw(ptr: *const GcRefCell<T>) -> Self {
+        Self(Gc::from_raw(ptr))
+    }
+
     #[track_caller]
-    pub fn read<'a>(&'a self) -> Ref<'a, T> {
+    pub fn read(&self) -> Ref<'_, T> {
         self.0.cell.borrow()
     }
 
-    pub fn try_read<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
+    pub fn try_read(&self) -> Result<Ref<'_, T>, BorrowError> {
         self.0.cell.try_borrow()
     }
 
@@ -108,7 +122,7 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     }
 }
 
-pub(crate) struct GcRefCell<T: Collect> {
+pub struct GcRefCell<T: Collect> {
     cell: RefCell<T>,
 }
 

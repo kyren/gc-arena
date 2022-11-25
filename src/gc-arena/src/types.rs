@@ -26,6 +26,7 @@ pub(crate) enum GcColor {
     Black,
 }
 
+#[repr(C)]
 pub(crate) struct GcBox<T: Collect + ?Sized> {
     pub(crate) flags: GcFlags,
     pub(crate) next: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
@@ -109,4 +110,4 @@ impl GcFlags {
 }
 
 // Phantom type that holds a lifetime and ensures that it is invariant.
-pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
+pub type Invariant<'a> = PhantomData<Cell<&'a ()>>;
