@@ -1,9 +1,10 @@
 use core::alloc::Layout;
+use core::cell::UnsafeCell;
 use core::fmt::{self, Debug, Display, Pointer};
 use core::marker::PhantomData;
 use core::mem::align_of;
 use core::ops::Deref;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
@@ -86,7 +87,14 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     }
 
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe { gc.ptr.as_ref().value.get() }
+        let ptr: *mut GcBox<T> = NonNull::as_ptr(gc.ptr);
+
+        // SAFETY: This cannot go through Deref::deref or create temporary references
+        // because stacked borrows requires that any new (temporary) shared ref
+        // that gets created from a raw pointer invalidates any previous
+        // tag associated with that pointer. So, this gets a pointer to the
+        // underlying value without creating any temporary references.
+        unsafe { UnsafeCell::raw_get(ptr::addr_of!((*ptr).value) as _) }
     }
 
     unsafe fn from_inner(ptr: NonNull<GcBox<T>>) -> Self {
