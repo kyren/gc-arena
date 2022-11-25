@@ -1,11 +1,14 @@
+use core::alloc::Layout;
 use core::fmt::{self, Debug, Display, Pointer};
 use core::marker::PhantomData;
+use core::mem::align_of;
 use core::ops::Deref;
 use core::ptr::NonNull;
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc_weak::GcWeak;
+use crate::layout_polyfill;
 use crate::types::{GcBox, Invariant};
 
 /// A garbage collected pointer to a type T.  Implements Copy, and is implemented as a plain machine
@@ -62,10 +65,7 @@ impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
 
 impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
-        Gc {
-            ptr: unsafe { mc.allocate(t) },
-            _invariant: PhantomData,
-        }
+        unsafe { Self::from_inner(mc.allocate(t)) }
     }
 
     pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
@@ -88,4 +88,39 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
         unsafe { gc.ptr.as_ref().value.get() }
     }
+
+    unsafe fn from_inner(ptr: NonNull<GcBox<T>>) -> Self {
+        Self {
+            ptr,
+            _invariant: PhantomData,
+        }
+    }
+
+    unsafe fn from_ptr(ptr: *mut GcBox<T>) -> Self {
+        unsafe { Self::from_inner(NonNull::new_unchecked(ptr)) }
+    }
+
+    /// Construct a [Gc] from a raw pointer
+    ///
+    /// # Safety
+    ///
+    /// The raw pointer passed in must come from a call to [Gc::as_ptr]
+    pub unsafe fn from_raw(ptr: *const T) -> Self {
+        let offset = data_offset::<T>();
+
+        let raw = ptr.cast::<u8>();
+
+        // Reverse the offset to find the original GcBox.
+        let gc_ptr = unsafe { raw.sub(offset) as *mut GcBox<T> };
+
+        unsafe { Self::from_ptr(gc_ptr) }
+    }
+}
+
+/// Get the offset within a `GcBox` for the payload behind a pointer.
+fn data_offset<T>() -> usize {
+    // Calculates the aligned offset of the value contained within a GcBox.
+    // Because GcBox is repr(C), the contained value will always be the last field in memory.
+    let layout = Layout::new::<GcBox<()>>();
+    layout.size() + layout_polyfill::layout_padding_needed_for(&layout, align_of::<T>())
 }

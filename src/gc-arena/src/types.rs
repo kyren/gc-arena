@@ -26,6 +26,7 @@ pub(crate) enum GcColor {
     Black,
 }
 
+#[repr(C)]
 pub(crate) struct GcBox<T: Collect + ?Sized> {
     pub(crate) flags: GcFlags,
     pub(crate) next: Cell<Option<NonNull<GcBox<dyn Collect>>>>,

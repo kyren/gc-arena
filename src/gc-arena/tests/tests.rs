@@ -26,6 +26,35 @@ fn simple_allocation() {
 }
 
 #[test]
+fn round_trip_through_pointer() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, i32>,
+        test_cell: GcCell<'gc, i32>,
+    }
+
+    make_arena!(TestArena, TestRoot);
+
+    let arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
+        test: Gc::allocate(mc, 42),
+        test_cell: GcCell::allocate(mc, 1337),
+    });
+
+    arena.mutate(|_mc, root| {
+        let raw = Gc::as_ptr(root.test);
+        let gc_ptr = unsafe { Gc::from_raw(raw) };
+
+        assert!(Gc::ptr_eq(root.test, gc_ptr));
+
+        let raw = root.test_cell.as_ptr();
+        let gc_ptr = unsafe { GcCell::from_raw(raw) };
+
+        assert!(GcCell::ptr_eq(root.test_cell, gc_ptr));
+    });
+}
+
+#[test]
 fn weak_allocation() {
     #[derive(Collect)]
     #[collect(no_drop)]
