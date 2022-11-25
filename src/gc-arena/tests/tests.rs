@@ -40,7 +40,7 @@ fn weak_allocation() {
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
         TestRoot {
-            test: GcCell::allocate(mc, Some(test)),
+            test: GcCell::allocate_cell(mc, Some(test)),
             weak,
         }
     });
@@ -120,7 +120,7 @@ fn repeated_allocation_deallocation() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, HashMap::new()))
+        TestRoot(GcCell::allocate_cell(mc, HashMap::new()))
     });
 
     let key_range = rand::distributions::Uniform::from(0..10000);
@@ -167,7 +167,7 @@ fn all_dropped() {
     let r = RefCounter(Rc::new(()));
 
     let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(GcCell::allocate_cell(mc, Vec::new()))
     });
 
     arena.mutate(|mc, root| {
@@ -193,7 +193,7 @@ fn all_garbage_collected() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(GcCell::allocate_cell(mc, Vec::new()))
     });
 
     arena.mutate(|mc, root| {
@@ -465,21 +465,13 @@ fn test_unsize() {
     use std::fmt::Display;
 
     gc_arena::rootless_arena(|mc| {
-        let gc: Gc<'_, String> = Gc::allocate(mc, "Hello world!".into());
+        let gc: Gc<'_, i32> = Gc::allocate(mc, 12345);
         let gc_weak = Gc::downgrade(gc);
 
         let dyn_gc = unsize!(gc => dyn Display);
         let dyn_weak = unsize!(gc_weak => dyn Display);
-        assert_eq!(dyn_gc.to_string(), "Hello world!");
-        assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
-
-        let gc: GcCell<'_, i32> = GcCell::allocate(mc, 12345);
-        let gc_weak = GcCell::downgrade(gc);
-
-        let dyn_gc = unsize!(gc => dyn Display);
-        let dyn_weak = unsize!(gc_weak => dyn Display);
-        assert_eq!(dyn_gc.read().to_string(), "12345");
-        assert_eq!(dyn_weak.upgrade(mc).unwrap().read().to_string(), "12345");
+        assert_eq!(dyn_gc.to_string(), "12345");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "12345");
     })
 }
 

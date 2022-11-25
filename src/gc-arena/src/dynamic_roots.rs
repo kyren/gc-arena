@@ -4,7 +4,11 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
+use crate::{
+    cell::{Mutable, RefCell},
+    types::GcBox,
+    Collect, Gc, MutationContext, Root, Rootable,
+};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -16,31 +20,20 @@ use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 //      a match lets us know that this `Gc` must have originated from *this* set, so it is safe to
 //      cast it back to whatever our current `'gc` lifetime is.
 #[derive(Copy, Clone)]
-pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner>);
+pub struct DynamicRootSet<'gc>(Gc<'gc, Inner>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
-        // SAFETY: We do not adopt any new pointers so we don't need a write barrier.
-        unsafe {
-            // We cheat horribly and filter out dead handles during tracing. Since we have to go
-            // through the entire list of roots anyway, this is cheaper than filtering on e.g.
-            // stashing new roots.
-            self.0
-                .borrow_mut()
-                .handles
-                .retain(|handle| Weak::strong_count(&handle.rc) > 0);
-        }
-
         self.0.trace(cc);
     }
 }
 
 impl<'gc> DynamicRootSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Self {
-        DynamicRootSet(GcCell::allocate(
+        DynamicRootSet(Gc::allocate(
             mc,
             Inner {
-                handles: Vec::new(),
+                handles: RefCell::new(Vec::new()),
                 set_id: Rc::new(SetId {}),
             },
         ))
@@ -51,10 +44,12 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: MutationContext<'gc, '_>,
         root: Gc<'gc, Root<'gc, R>>,
     ) -> DynamicRoot<R> {
-        let mut inner = self.0.write(mc);
+        Gc::write_barrier(mc, self.0);
+        // SAFETY: we just called the write barrier above.
+        let handles = unsafe { Mutable::assume(&self.0.handles) };
 
-        let rc = Rc::new(inner.set_id.clone());
-        inner.handles.push(Handle {
+        let rc = Rc::new(self.0.set_id.clone());
+        handles.write().push(Handle {
             ptr: unsafe { GcBox::erase(root.ptr) },
             rc: Rc::downgrade(&rc),
         });
@@ -72,7 +67,7 @@ impl<'gc> DynamicRootSet<'gc> {
         root: &DynamicRoot<R>,
     ) -> Gc<'gc, Root<'gc, R>> {
         assert_eq!(
-            Rc::as_ptr(&self.0.read().set_id),
+            Rc::as_ptr(&self.0.set_id),
             Rc::as_ptr(root.rc.as_ref()),
             "provided `DynamicRoot` does not originate from this `DynamicRootSet`",
         );
@@ -93,17 +88,25 @@ pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
 struct SetId {}
 
 struct Inner {
-    handles: Vec<Handle>,
+    handles: RefCell<Vec<Handle>>,
     set_id: Rc<SetId>,
 }
 
 unsafe impl<'gc> Collect for Inner {
     fn trace(&self, cc: crate::CollectionContext) {
-        for handle in &self.handles {
-            unsafe {
-                cc.trace(handle.ptr);
+        // SAFETY: We do not adopt any new pointers so we don't need a write barrier.
+        let mut handles = unsafe { Mutable::assume(&self.handles).write() };
+
+        // We cheat horribly and filter out dead handles during tracing. Since we have to go
+        // through the entire list of roots anyway, this is cheaper than filtering on e.g.
+        // stashing new roots.
+        handles.retain(|handle| {
+            let is_live = Weak::strong_count(&handle.rc) > 0;
+            if is_live {
+                unsafe { cc.trace(handle.ptr) }
             }
-        }
+            is_live
+        });
     }
 }
 

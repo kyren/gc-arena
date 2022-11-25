@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use core::ops::Deref;
 use core::ptr::NonNull;
 
+use crate::cell::{CellLike, Mutable};
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc_weak::GcWeak;
@@ -67,6 +68,14 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
             _invariant: PhantomData,
         }
     }
+
+    #[inline]
+    pub fn allocate_cell(mc: MutationContext<'gc, '_>, t: T::Target) -> Gc<'gc, T>
+    where
+        T: CellLike,
+    {
+        Gc::allocate(mc, T::wrap(t))
+    }
 }
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
@@ -83,10 +92,20 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         }
     }
 
+    #[inline]
+    pub fn mutate<'a>(mc: MutationContext<'gc, '_>, gc: &'a Self) -> &'a Mutable<T> {
+        unsafe {
+            mc.write_barrier(GcBox::erase(gc.ptr));
+            Mutable::assume(&*gc)
+        }
+    }
+
+    #[inline]
     pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
         Gc::as_ptr(this) == Gc::as_ptr(other)
     }
 
+    #[inline]
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
         let inner = unsafe { gc.ptr.as_ref() };
         core::ptr::addr_of!(inner.value) as *const T
