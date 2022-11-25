@@ -8,9 +8,11 @@ use crate::Collect;
 #[cfg(doc)]
 use crate::Gc;
 
+mod cell;
 mod mutable;
 mod ref_cell;
 
+pub use cell::Cell;
 pub use mutable::Mutable;
 pub use ref_cell::RefCell;
 
