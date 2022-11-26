@@ -1,32 +1,36 @@
 use core::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
-use core::fmt::{self, Debug, Pointer};
+use core::fmt::{self, Debug};
+use core::ptr::NonNull;
 
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc::Gc;
-use crate::GcWeakCell;
+use crate::types::GcBox;
 
-/// A garbage collected pointer to a type T that may be safely mutated.  When a type that may hold
-/// `Gc` pointers is mutated, it may adopt new `Gc` pointers, and in order for this to be safe this
-/// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
-/// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
-/// `Gc::write_barrier`.
-pub struct GcCell<'gc, T: 'gc + Collect>(Gc<'gc, GcRefCell<T>>);
+/// A garbage collected pointer to a type `T` that may be safely mutated.
+pub type GcCell<'gc, T> = Gc<'gc, GcRefCell<'gc, T>>;
 
-impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
-
-impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
-    fn clone(&self) -> GcCell<'gc, T> {
-        *self
-    }
+/// The `Gc` equivalent of a `RefCell`.
+///
+/// When a type that may hold `Gc` pointers is mutated, it may adopt new `Gc` pointers, and in
+/// order for this to be safe this must be accompanied by a call to `MutationContext::write_barrier`.
+/// This type wraps the given `T` in a `RefCell` in such a way that writing to the `RefCell`
+/// is always accompanied by a call to `MutationContext::write_barrier`.
+pub struct GcRefCell<'gc, T: Collect + 'gc> {
+    /// `Gc` allocation this `GcRefCell`` belongs to
+    allocation: NonNull<GcBox<dyn Collect + 'gc>>,
+    cell: RefCell<T>,
 }
 
-impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
+impl<'gc, T: 'gc + Collect + Debug> Debug for GcRefCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.try_read() {
-            Ok(borrow) => fmt.debug_struct("GcCell").field("value", &borrow).finish(),
+            Ok(borrow) => fmt
+                .debug_struct("GcRefCell")
+                .field("value", &borrow)
+                .finish(),
             Err(_) => {
-                // The GcCell is mutably borrowed so we can't look at its value
+                // The GcRefCell is mutably borrowed so we can't look at its value
                 // here. Show a placeholder instead.
                 struct BorrowedPlaceholder;
 
@@ -36,7 +40,7 @@ impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
                     }
                 }
 
-                fmt.debug_struct("GcCell")
+                fmt.debug_struct("GcRefCell")
                     .field("value", &BorrowedPlaceholder)
                     .finish()
             }
@@ -44,71 +48,45 @@ impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc + Collect> Pointer for GcCell<'gc, T> {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Pointer::fmt(&self.as_ptr(), fmt)
-    }
-}
-
-unsafe impl<'gc, T: 'gc + Collect> Collect for GcCell<'gc, T> {
-    fn trace(&self, cc: CollectionContext) {
-        self.0.trace(cc)
-    }
-}
-
-impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
-    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
-        GcCell(Gc::allocate(
-            mc,
-            GcRefCell {
-                cell: RefCell::new(t),
-            },
-        ))
-    }
-
-    pub fn downgrade(this: GcCell<'gc, T>) -> GcWeakCell<'gc, T> {
-        GcWeakCell { inner: this }
-    }
-
-    pub(crate) unsafe fn get_inner(&self) -> Gc<'gc, GcRefCell<T>> {
-        self.0
-    }
-
-    pub fn ptr_eq(this: GcCell<'gc, T>, other: GcCell<'gc, T>) -> bool {
-        this.as_ptr() == other.as_ptr()
-    }
-
-    pub fn as_ptr(&self) -> *const GcRefCell<T> {
-        Gc::as_ptr(self.0)
-    }
-
-    /// Returns a pointer to the inner `T`
-    pub fn inner_ptr(&self) -> *mut T {
-        self.0.cell.as_ptr()
-    }
-
-    /// Construct a [GcCell] from a raw pointer
+impl<T: Collect> GcRefCell<'_, T> {
+    /// Creates a new `GcRefCell` containing `t`.
     ///
     /// # Safety
     ///
-    /// The raw pointer passed in must come from a call to [GcCell::as_ptr]
-    pub unsafe fn from_raw(ptr: *const GcRefCell<T>) -> Self {
-        Self(Gc::from_raw(ptr))
+    /// The caller should initialize the allocation this `GcRefCell` belongs to,
+    /// as this function initializes it dangling.
+    unsafe fn new(t: T) -> Self {
+        GcRefCell {
+            allocation: NonNull::<GcBox<()>>::dangling(),
+            cell: RefCell::new(t),
+        }
+    }
+}
+
+impl<'gc, T: Collect + 'gc> GcRefCell<'gc, T> {
+    /// Allocates a new `GcRefCell` containing `t`.
+    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
+        unsafe {
+            let mut cell = mc.allocate(GcRefCell::new(t));
+
+            cell.as_mut().value.get_mut().allocation = cell;
+            Gc::from_inner(cell)
+        }
     }
 
     #[track_caller]
     pub fn read(&self) -> Ref<'_, T> {
-        self.0.cell.borrow()
+        self.cell.borrow()
     }
 
     pub fn try_read(&self) -> Result<Ref<'_, T>, BorrowError> {
-        self.0.cell.try_borrow()
+        self.cell.try_borrow()
     }
 
     #[track_caller]
     pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
-        let b = self.0.cell.borrow_mut();
-        Gc::write_barrier(mc, self.0);
+        let b = self.cell.borrow_mut();
+        unsafe { mc.write_barrier(self.allocation) };
         b
     }
 
@@ -116,18 +94,19 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         &'a self,
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, T>, BorrowMutError> {
-        let mb = self.0.cell.try_borrow_mut()?;
-        Gc::write_barrier(mc, self.0);
+        let mb = self.cell.try_borrow_mut()?;
+        unsafe { mc.write_barrier(self.allocation) };
         Ok(mb)
+    }
+
+    /// Returns a pointer to the wrapped `T`
+    pub fn as_ptr(&self) -> *mut T {
+        self.cell.as_ptr()
     }
 }
 
-pub struct GcRefCell<T: Collect> {
-    cell: RefCell<T>,
-}
-
-unsafe impl<'gc, T: Collect + 'gc> Collect for GcRefCell<T> {
+unsafe impl<'gc, T: Collect + 'gc> Collect for GcRefCell<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
-        self.cell.borrow().trace(cc);
+        self.read().trace(cc);
     }
 }

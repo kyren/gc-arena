@@ -4,7 +4,9 @@ use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak};
+use gc_arena::{
+    make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcRefCell, GcWeak,
+};
 
 #[test]
 fn simple_allocation() {
@@ -38,7 +40,7 @@ fn round_trip_through_pointer() {
 
     let arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
         test: Gc::allocate(mc, 42),
-        test_cell: GcCell::allocate(mc, 1337),
+        test_cell: GcRefCell::allocate(mc, 1337),
     });
 
     arena.mutate(|_mc, root| {
@@ -47,7 +49,7 @@ fn round_trip_through_pointer() {
 
         assert!(Gc::ptr_eq(root.test, gc_ptr));
 
-        let raw = root.test_cell.as_ptr();
+        let raw = GcCell::as_ptr(root.test_cell);
         let gc_ptr = unsafe { GcCell::from_raw(raw) };
 
         assert!(GcCell::ptr_eq(root.test_cell, gc_ptr));
@@ -70,7 +72,7 @@ fn weak_allocation() {
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
         TestRoot {
-            test: GcCell::allocate(mc, Some(test)),
+            test: GcRefCell::allocate(mc, Some(test)),
             weak,
         }
     });
@@ -114,7 +116,7 @@ fn repeated_allocation_deallocation() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, HashMap::new()))
+        TestRoot(GcRefCell::allocate(mc, HashMap::new()))
     });
 
     let key_range = rand::distributions::Uniform::from(0..10000);
@@ -162,7 +164,7 @@ fn all_dropped() {
     let r = RefCounter(Rc::new(()));
 
     let arena = TestArena::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(GcRefCell::allocate(mc, Vec::new()))
     });
 
     arena.mutate(|mc, root| {
@@ -189,7 +191,7 @@ fn all_garbage_collected() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(GcRefCell::allocate(mc, Vec::new()))
     });
 
     arena.mutate(|mc, root| {

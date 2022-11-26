@@ -97,7 +97,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
         unsafe { UnsafeCell::raw_get(ptr::addr_of!((*ptr).value) as _) }
     }
 
-    unsafe fn from_inner(ptr: NonNull<GcBox<T>>) -> Self {
+    pub(crate) unsafe fn from_inner(ptr: NonNull<GcBox<T>>) -> Self {
         Self {
             ptr,
             _invariant: PhantomData,

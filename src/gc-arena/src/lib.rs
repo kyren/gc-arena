@@ -15,7 +15,6 @@ mod context;
 mod gc;
 mod gc_cell;
 mod gc_weak;
-mod gc_weak_cell;
 mod layout_polyfill;
 mod no_drop;
 mod static_collect;
@@ -26,9 +25,8 @@ pub use self::{
     collect::Collect,
     context::{CollectionContext, MutationContext},
     gc::Gc,
-    gc_cell::GcCell,
-    gc_weak::GcWeak,
-    gc_weak_cell::GcWeakCell,
+    gc_cell::{GcCell, GcRefCell},
+    gc_weak::{GcWeak, GcWeakCell},
     no_drop::MustNotImplDrop,
     static_collect::StaticCollect,
 };

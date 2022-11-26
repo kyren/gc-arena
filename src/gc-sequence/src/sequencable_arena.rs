@@ -62,7 +62,7 @@ macro_rules! make_sequencable_arena {
             use core::any::Any;
             use core::marker::PhantomData;
 
-            use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, MutationContext};
+            use gc_arena::{make_arena, ArenaParameters, Collect, GcCell, GcRefCell, MutationContext};
             use gc_sequence::{Sequence, SequenceExt};
 
             use super::$root;
@@ -90,7 +90,7 @@ macro_rules! make_sequencable_arena {
                 {
                     Arena(InnerArena::new(arena_parameters, move |mc| InnerRoot {
                         root: f(mc),
-                        current_sequence: GcCell::allocate(mc, None),
+                        current_sequence: GcRefCell::allocate(mc, None),
                     }))
                 }
 
@@ -103,7 +103,7 @@ macro_rules! make_sequencable_arena {
                     Ok(Arena(InnerArena::try_new(arena_parameters, move |mc| {
                         Ok(InnerRoot {
                             root: f(mc)?,
-                            current_sequence: GcCell::allocate(mc, None),
+                            current_sequence: GcRefCell::allocate(mc, None),
                         })
                     })?))
                 }
