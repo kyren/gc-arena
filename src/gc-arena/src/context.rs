@@ -22,7 +22,7 @@ impl<'gc, 'context> MutationContext<'gc, 'context> {
         self.context.allocate(t)
     }
 
-    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn write_barrier(self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
         self.context.write_barrier(ptr)
     }
 
@@ -344,7 +344,7 @@ impl Context {
         ptr
     }
 
-    unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    unsafe fn write_barrier<'gc>(&self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects.  Turn black obejcts to gray to prevent this.

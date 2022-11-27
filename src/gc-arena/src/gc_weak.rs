@@ -1,8 +1,10 @@
 use crate::collect::Collect;
 use crate::gc::Gc;
-use crate::{CollectionContext, MutationContext};
+use crate::{CollectionContext, GcRefCell, MutationContext};
 
 use core::fmt::{self, Debug};
+
+pub type GcWeakCell<'gc, T> = GcWeak<'gc, GcRefCell<'gc, T>>;
 
 pub struct GcWeak<'gc, T: 'gc + Collect> {
     pub(crate) inner: Gc<'gc, T>,
