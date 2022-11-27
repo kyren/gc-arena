@@ -4,7 +4,9 @@ use rand::distributions::Distribution;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use gc_arena::{make_arena, unsafe_empty_collect, ArenaParameters, Collect, Gc, GcCell, GcWeak};
+use gc_arena::{
+    root_provider, unsafe_empty_collect, Arena, ArenaParameters, Collect, Gc, GcCell, GcWeak,
+};
 
 #[test]
 fn simple_allocation() {
@@ -14,11 +16,10 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    make_arena!(TestArena, TestRoot);
-
-    let arena = TestArena::new(ArenaParameters::default(), |mc| TestRoot {
-        test: Gc::allocate(mc, 42),
-    });
+    let arena =
+        Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| TestRoot {
+            test: Gc::allocate(mc, 42),
+        });
 
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
@@ -34,9 +35,7 @@ fn weak_allocation() {
         weak: GcWeak<'gc, i32>,
     }
 
-    make_arena!(TestArena, TestRoot);
-
-    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
         let test = Gc::allocate(mc, 42);
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
@@ -80,11 +79,10 @@ fn repeated_allocation_deallocation() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, (i32, RefCounter)>>>);
-    make_arena!(TestArena, TestRoot);
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, HashMap::new()))
     });
 
@@ -128,11 +126,10 @@ fn all_dropped() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
-    make_arena!(TestArena, TestRoot);
 
     let r = RefCounter(Rc::new(()));
 
-    let arena = TestArena::new(ArenaParameters::default(), |mc| {
+    let arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, Vec::new()))
     });
 
@@ -155,11 +152,10 @@ fn all_garbage_collected() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
-    make_arena!(TestArena, TestRoot);
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = TestArena::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, Vec::new()))
     });
 

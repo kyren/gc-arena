@@ -60,43 +60,6 @@ impl ArenaParameters {
     }
 }
 
-/// A convenience macro for creating a typedef for an [`Arena`] of a specific type without having to
-/// go through an implementation of `RootProvider`.
-///
-/// The macro takes two parameters, the name you would like to give the arena type, and the type of
-/// the arena root. The root type must implement the [`Collect`] trait, and be a type that takes a
-/// single generic lifetime parameter which is used for any held `Gc` pointer types.
-///
-/// An example:
-/// ```
-/// # use gc_arena::{Collect, Gc, make_arena};
-/// #
-/// # fn main() {
-/// #[derive(Collect)]
-/// #[collect(no_drop)]
-/// struct MyRoot<'gc> {
-///     ptr: Gc<'gc, i32>,
-/// }
-/// make_arena!(MyArena, MyRoot);
-/// # }
-/// ```
-#[macro_export]
-macro_rules! make_arena {
-    ($arena:ident, $root:ident) => {
-        make_arena!(pub(self) $arena, $root);
-    };
-
-    ($vis:vis $arena:ident, $root:ident) => {
-        // Instead of generating an impl of `RootProvider`, we use a trait object.
-        // The projection `<R as RootProvider<'gc>>::Root` is used to obtain the root
-        // type with the lifetime `'gc` applied
-        // By using a trait object, we avoid the need to generate a new type for each
-        // invocation of this macro, which would lead to name conflicts if the macro was
-        // used multiple times in the same scope.
-        $vis type $arena = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a>>>;
-    };
-}
-
 /// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
 /// the root [`Collect`] instance in an [`Arena`].
 ///
@@ -105,6 +68,34 @@ macro_rules! make_arena {
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait RootProvider<'a> {
     type Root: Collect;
+}
+
+/// A convenience macro for quickly creating type that implements of `RootProvider`.
+///
+/// The macro takes a single argument, which should be a generic type that references a `'gc`
+/// lifetime. When used as a root object, this `'gc` lifetime will be replaced with the branding
+/// lifetime.
+///
+/// ```
+/// # use gc_arena::{Arena, Collect, Gc, root_provider};
+/// #
+/// # fn main() {
+/// #[derive(Collect)]
+/// #[collect(no_drop)]
+/// struct MyRoot<'gc> {
+///     ptr: Gc<'gc, i32>,
+/// }
+///
+/// type MyArena = Arena<root_provider!(MyRoot<'gc>)>;
+/// # }
+/// ```
+#[macro_export]
+macro_rules! root_provider {
+    ($root:ty) => {
+        // Instead of generating an impl of `RootProvider`, we use a trait object. Thus, we avoid
+        // the need to generate a new type for each invocation of this macro.
+        dyn for<'gc> $crate::RootProvider<'gc, Root = $root>
+    };
 }
 
 /// A helper type alias for a `RootProvider::Root` for a specific lifetime.
