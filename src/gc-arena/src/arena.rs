@@ -89,6 +89,23 @@ pub trait RootProvider<'a> {
 /// type MyArena = Arena<root_provider!(MyRoot<'gc>)>;
 /// # }
 /// ```
+///
+/// The macro can also be used to create implementations of `RootProvider` that use other generic
+/// parameters, though in complex cases it may be better to implement `RootProvider` directly.
+///
+/// ```
+/// # use gc_arena::{Arena, Collect, Gc, root_provider, StaticCollect};
+/// #
+/// # fn main() {
+/// #[derive(Collect)]
+/// #[collect(no_drop)]
+/// struct MyGenericRoot<'gc, T: 'static> {
+///     ptr: Gc<'gc, StaticCollect<T>>,
+/// }
+///
+/// type MyGenericArena<T> = Arena<root_provider!(MyGenericRoot<'gc, T>)>;
+/// # }
+/// ```
 #[macro_export]
 macro_rules! root_provider {
     ($root:ty) => {
