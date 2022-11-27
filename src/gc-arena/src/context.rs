@@ -48,6 +48,7 @@ pub(crate) struct Context {
     parameters: ArenaParameters,
 
     phase: Cell<Phase>,
+    root_needs_trace: Cell<bool>,
     total_allocated: Cell<usize>,
     remembered_size: Cell<usize>,
     wakeup_total: Cell<usize>,
@@ -76,11 +77,6 @@ pub(crate) struct Context {
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
     gray_again: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
-
-    // The root object of the arena. This is only `None` during initialization,
-    // while we're invoking the callback passed to `Arena::new` or `Arena::try_new`.
-    // Afterwards, it should always be `Some`
-    root: Option<NonNull<GcBox<dyn Collect>>>,
 }
 
 impl Drop for Context {
@@ -111,6 +107,7 @@ impl Context {
         Context {
             parameters,
             phase: Cell::new(Phase::Propagate),
+            root_needs_trace: Cell::new(true),
             total_allocated: Cell::new(0),
             remembered_size: Cell::new(0),
             wakeup_total: Cell::new(0),
@@ -120,7 +117,6 @@ impl Context {
             sweep_prev: Cell::new(None),
             gray: RefCell::new(Vec::new()),
             gray_again: RefCell::new(Vec::new()),
-            root: None,
         }
     }
 
@@ -133,18 +129,6 @@ impl Context {
             _invariant: PhantomData,
             context: self,
         }
-    }
-
-    // Must be called exactly once, after invoking the callback passed to `Arena::new` or
-    // `Arena::try_new`. This sets the root object, and pushes it to the gray queue.
-    //
-    // # Safety: Must be called with the root object of the parent `Arena`.
-    pub(crate) unsafe fn initialize<R: Collect>(&mut self, root: R) -> NonNull<GcBox<R>> {
-        let root = self.allocate(root);
-        let static_root = static_gc_box(root);
-        self.root = Some(static_root);
-        self.gray.borrow_mut().push(static_root);
-        root
     }
 
     #[inline]
@@ -162,7 +146,13 @@ impl Context {
     pub(crate) fn wake(&self) {
         if self.phase.get() == Phase::Sleep {
             self.phase.set(Phase::Propagate);
-            self.gray.borrow_mut().push(self.root.unwrap());
+            self.root_needs_trace.set(true);
+        }
+    }
+
+    pub(crate) fn root_barrier(&self) {
+        if self.phase.get() == Phase::Propagate {
+            self.root_needs_trace.set(true);
         }
     }
 
@@ -174,13 +164,18 @@ impl Context {
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub(crate) unsafe fn do_collection(&mut self, work: f64) -> f64 {
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
         let mut work_done = 0.0;
         let cc = CollectionContext { context: self };
 
         while work > work_done {
             match self.phase.get() {
                 Phase::Propagate => {
+                    if self.root_needs_trace.get() {
+                        root.trace(cc);
+                        self.root_needs_trace.set(false);
+                    }
+
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue. Objects from the normal gray queue count as regular work, but objects
                     // which are gray a second time have already been counted as work, so we don't
@@ -276,7 +271,8 @@ impl Context {
                         self.sweep_prev.set(None);
                         self.phase.set(Phase::Sleep);
 
-                        // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
+                        // Do not let debt accumulate across cycles, when we enter sleep, zero the
+                        // debt out.
                         self.allocation_debt.set(0.0);
 
                         let sleep = f64_to_usize(

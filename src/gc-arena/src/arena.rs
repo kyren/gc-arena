@@ -1,8 +1,7 @@
-use core::{f64, mem, ptr::NonNull, usize};
+use core::{f64, mem, usize};
 
 use crate::{
     context::{Context, MutationContext},
-    types::GcBox,
     Collect,
 };
 
@@ -138,13 +137,9 @@ pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
 pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
+    // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
+    root: Root<'static, R>,
     context: Context,
-    // Note - we store a pointer to the non-erased root type,
-    // so that we can pass it to the callback provided to `mutate`.
-    // Our `Context` stores a type-erased pointer to the root type
-    // (which cannot be converted back to a non-erased pointer)
-    // which is pushed to the gray queue from `wake()`.
-    root: NonNull<GcBox<Root<'static, R>>>,
 }
 
 impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
@@ -155,7 +150,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
     {
         unsafe {
-            let mut context = Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             // Note - we transmute the `MutationContext` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -166,7 +161,6 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             let mutation_context: MutationContext<'static, '_> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context);
-            let root = context.initialize(root);
             Arena { context, root }
         }
     }
@@ -177,11 +171,10 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let mut context = Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context)?;
-            let root = context.initialize(root);
             Ok(Arena { context, root })
         }
     }
@@ -198,12 +191,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
         // this is safe as all objects in the graph live until the next collection, which
         // requires exclusive access to the arena.
-        unsafe {
-            f(
-                self.context.mutation_context(),
-                mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
-            )
-        }
+        unsafe { f(self.context.mutation_context(), &self.root) }
     }
 
     /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
@@ -213,18 +201,44 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     where
         F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
     {
+        self.context.root_barrier();
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
         // this is safe as all objects in the graph live until the next collection, which
         // requires exclusive access to the arena. Additionally, the write barrier ensures
         // that any changes to the root set are properly picked up.
-        unsafe {
-            let mc = self.context.mutation_context();
-            mc.write_barrier(self.root);
-            f(
-                mc,
-                mem::transmute::<&mut Root<'static, R>, _>(&mut *self.root.as_ref().value.get()),
-            )
+        unsafe { f(self.context.mutation_context(), &mut self.root) }
+    }
+
+    #[inline]
+    pub fn map_root<R2>(
+        self,
+        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
+    ) -> Arena<R2>
+    where
+        R2: for<'a> RootProvider<'a> + ?Sized,
+    {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root) };
+        Arena {
+            context: self.context,
+            root: new_root,
         }
+    }
+
+    #[inline]
+    pub fn try_map_root<R2, E>(
+        self,
+        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
+    ) -> Result<Arena<R2>, E>
+    where
+        R2: for<'a> RootProvider<'a> + ?Sized,
+    {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root)? };
+        Ok(Arena {
+            context: self.context,
+            root: new_root,
+        })
     }
 
     /// Return total currently used memory.
@@ -251,7 +265,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         unsafe {
             let debt = self.context.allocation_debt();
             if debt > 0.0 {
-                self.context.do_collection(debt);
+                self.context.do_collection(&self.root, debt);
             }
         }
     }
@@ -262,7 +276,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
-            self.context.do_collection(f64::INFINITY);
+            self.context.do_collection(&self.root, f64::INFINITY);
         }
     }
 }
