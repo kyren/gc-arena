@@ -60,10 +60,12 @@ impl ArenaParameters {
     }
 }
 
-/// Creates a new "garbage collected [`Arena`]" type. The macro takes two parameters, the name you
-/// would like to give the arena type, and the type of the arena root. The root type must implement
-/// the [`Collect`] trait, and be a type that takes a single generic lifetime parameter which is
-/// used for any held `Gc` pointer types.
+/// A convenience macro for creating a typedef for an [`Arena`] of a specific type without having to
+/// go through an implementation of `RootProvider`.
+///
+/// The macro takes two parameters, the name you would like to give the arena type, and the type of
+/// the arena root. The root type must implement the [`Collect`] trait, and be a type that takes a
+/// single generic lifetime parameter which is used for any held `Gc` pointer types.
 ///
 /// An example:
 /// ```
@@ -95,22 +97,20 @@ macro_rules! make_arena {
     };
 }
 
-#[doc(hidden)]
-/// A helper trait for the `make_arena` macro. Writing
-/// <R as RootProvider<'gc>>::Root is similar to writing a GAT `R::Root<'gc>`,
-/// but it works on older versions of Rust. Additionally, GATs currently
-/// prevent a trait from being object-safe, which prevents the trait object
-/// trick we use in `make_arena` from working.
+/// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
+/// the root [`Collect`] instance in an [`Arena`].
+///
+/// In order to use an implementation of this trait in an [`Arena`], it must implement
+/// `RootProvider<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
+/// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait RootProvider<'a> {
     type Root: Collect;
 }
 
-#[doc(hidden)]
-/// An helper type alias to simplify signatures in `Arena`s documentation.
+/// A helper type alias for a `RootProvider::Root` for a specific lifetime.
 pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
 
-/// A generic, garbage collected arena. Use the [`make_arena`] macro to create specialized instances
-/// of this type.
+/// A generic, garbage collected arena.
 ///
 /// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
 /// garbage collected pointers. It provides incremental mark and sweep garbage collection which
