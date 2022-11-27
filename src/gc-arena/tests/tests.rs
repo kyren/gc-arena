@@ -91,17 +91,17 @@ fn repeated_allocation_deallocation() {
     let key_range = rand::distributions::Uniform::from(0..10000);
     let mut rng = rand::thread_rng();
 
-    for _ in 0..200 {
+    for _ in 0..40 {
         arena.mutate(|mc, root| {
             let mut map = root.0.write(mc);
-            for _ in 0..100 {
+            for _ in 0..50 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.insert(i, Gc::allocate(mc, (i, r.clone()))) {
                     assert_eq!(old.0, i);
                 }
             }
 
-            for _ in 0..100 {
+            for _ in 0..50 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.remove(&i) {
                     assert_eq!(old.0, i);
