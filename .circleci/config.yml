@@ -7,8 +7,19 @@ jobs:
     steps:
       - checkout
       - run:
+          name: Setup Rust
+          command: |
+            rustup component add rustfmt
+            rustup toolchain uninstall nightly
+            rustup toolchain install nightly -c miri rust-src
+      - run:
           name: Version information
-          command: rustc --version; cargo --version; rustup --version
+          command: |
+            rustup --version
+            rustc --version
+            cargo --version
+            rustc +nightly --version
+            cargo +nightly --version
       - run:
           name: Calculate dependencies
           command: cargo generate-lockfile
@@ -18,7 +29,6 @@ jobs:
       - run:
           name: Check Formatting
           command: |
-              rustup component add rustfmt
               rustfmt --version
               cargo fmt --all -- --check --color=auto
       - run:
@@ -32,6 +42,16 @@ jobs:
       - run:
           name: Run all tests
           command: cargo test --workspace
+      - run:
+          name: Run all tests under miri
+          command: |
+            cargo +nightly miri test --workspace --tests --all-features -- --skip ui
+      - run:
+          name: Run all tests under sanitizers
+          command: |
+            RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
+            RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
+            RUSTFLAGS="-Z sanitizer=memory" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
       - save_cache:
           paths:
             - /usr/local/cargo/registry
