@@ -1,4 +1,4 @@
-use core::{f64, ptr::NonNull, usize};
+use core::{f64, mem, ptr::NonNull, usize};
 
 use crate::{
     context::{Context, MutationContext},
@@ -156,13 +156,10 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
             let mutation_context: MutationContext<'static, '_> =
-                ::core::mem::transmute(context.mutation_context());
+                mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context);
             let root = context.initialize(root);
-            Arena {
-                context: context,
-                root,
-            }
+            Arena { context, root }
         }
     }
 
@@ -174,13 +171,10 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         unsafe {
             let mut context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
-                ::core::mem::transmute(context.mutation_context());
+                mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context)?;
             let root = context.initialize(root);
-            Ok(Arena {
-                context: context,
-                root,
-            })
+            Ok(Arena { context, root })
         }
     }
 
@@ -199,7 +193,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         unsafe {
             f(
                 self.context.mutation_context(),
-                ::core::mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
+                mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
             )
         }
     }
@@ -220,9 +214,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             mc.write_barrier(self.root);
             f(
                 mc,
-                ::core::mem::transmute::<&mut Root<'static, R>, _>(
-                    &mut *self.root.as_ref().value.get(),
-                ),
+                mem::transmute::<&mut Root<'static, R>, _>(&mut *self.root.as_ref().value.get()),
             )
         }
     }
@@ -262,7 +254,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
-            self.context.do_collection(::core::f64::INFINITY);
+            self.context.do_collection(f64::INFINITY);
         }
     }
 }
