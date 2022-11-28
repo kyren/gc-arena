@@ -210,13 +210,10 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn map_root<R2>(
+    pub fn map_root<R2: for<'a> RootProvider<'a> + ?Sized>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
-    ) -> Arena<R2>
-    where
-        R2: for<'a> RootProvider<'a> + ?Sized,
-    {
+    ) -> Arena<R2> {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root) };
         Arena {
@@ -226,13 +223,10 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn try_map_root<R2, E>(
+    pub fn try_map_root<R2: for<'a> RootProvider<'a> + ?Sized, E>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
-    ) -> Result<Arena<R2>, E>
-    where
-        R2: for<'a> RootProvider<'a> + ?Sized,
-    {
+    ) -> Result<Arena<R2>, E> {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root)? };
         Ok(Arena {

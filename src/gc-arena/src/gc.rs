@@ -73,7 +73,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     }
 
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
-    /// method must be used to ensure safe mutability.  Safe to call, but only necessary from unsafe
+    /// method must be used to ensure safe mutability. Safe to call, but only necessary from unsafe
     /// code.
     pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {

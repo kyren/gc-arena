@@ -62,7 +62,7 @@ macro_rules! make_sequencable_arena {
             use core::any::Any;
             use core::marker::PhantomData;
 
-            use gc_arena::{root_provider, ArenaParameters, Collect, GcCell, MutationContext};
+            use gc_arena::{ArenaParameters, Collect, GcCell, MutationContext, Root, root_provider};
             use gc_sequence::{Sequence, SequenceExt};
 
             use super::$root;

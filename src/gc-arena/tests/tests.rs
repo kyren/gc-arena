@@ -248,6 +248,51 @@ fn derive_collect() {
 }
 
 #[test]
+fn test_map() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc> {
+        some_complex_state: Vec<Gc<'gc, i32>>,
+    }
+
+    let arena = Arena::<root_provider!(Root<'gc>)>::new(ArenaParameters::default(), |mc| Root {
+        some_complex_state: vec![Gc::allocate(mc, 42), Gc::allocate(mc, 69)],
+    });
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Intermediate<'gc> {
+        root: Root<'gc>,
+        state: Gc<'gc, i32>,
+    }
+
+    let arena = arena.map_root::<root_provider!(Intermediate<'gc>)>(|_, root| {
+        let state = root.some_complex_state[0];
+        Intermediate { root, state }
+    });
+
+    arena.mutate(|_, root| {
+        // A complex operation that does some allocations
+        assert_eq!(*root.state, 42);
+    });
+
+    let arena = arena
+        .try_map_root::<root_provider!(Intermediate<'gc>), ()>(|_, intermediate| {
+            let state = intermediate.root.some_complex_state[1];
+            Ok(Intermediate {
+                root: intermediate.root,
+                state,
+            })
+        })
+        .unwrap();
+
+    arena.mutate(|_, root| {
+        // Another complex operation that does some allocations
+        assert_eq!(*root.state, 69);
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
