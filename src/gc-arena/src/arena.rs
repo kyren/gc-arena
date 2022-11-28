@@ -145,9 +145,9 @@ pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
 impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `MutationContext` and returns the appropriate root.
-    pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
+    pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Root<'gc, R>,
     {
         unsafe {
             let context = Context::new(arena_parameters);
@@ -166,9 +166,9 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
+    pub fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
             let context = Context::new(arena_parameters);
@@ -186,7 +186,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[inline]
     pub fn mutate<'a, F, T>(&'a self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
     {
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
         // this is safe as all objects in the graph live until the next collection, which
@@ -199,7 +199,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[inline]
     pub fn mutate_root<'a, F, T>(&'a mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
     {
         self.context.root_barrier();
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
