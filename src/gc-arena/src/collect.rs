@@ -1,6 +1,6 @@
 use crate::context::CollectionContext;
 
-/// A trait for garbage collected objects that can be placed into `Gc` pointers.  This trait is
+/// A trait for garbage collected objects that can be placed into `Gc` pointers. This trait is
 /// unsafe, because `Gc` pointers inside an Arena are assumed never to be dangling, and in order to
 /// ensure this certain rules must be followed:
 ///
@@ -13,15 +13,14 @@ use crate::context::CollectionContext;
 ///
 /// It is, however, possible to implement this trait safely by procedurally deriving it (see
 /// [`gc_arena_derive::Collect`]), which requires that every field in the structure also implement
-/// `Collect`, and implements a safe, empty version of `Drop`.  Internally mutable types like
+/// `Collect`, and implements a safe, empty version of `Drop`. Internally mutable types like
 /// `Cell` and `RefCell` do not implement `Collect` in such a way that it is possible to store
 /// `Gc` pointers inside them, so the write barrier requirement cannot be broken when procedurally
-/// deriving `Collect`.  A safe way of providing internal mutability in this case is to use
-/// `GcCell`, which provides internal mutability while ensuring that the write barrier is always
-/// executed.
+/// deriving `Collect`. A safe way of providing internal mutability in this case is to use `GcCell`,
+/// which provides internal mutability while ensuring that the write barrier is always executed.
 pub unsafe trait Collect {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
-    /// to call, you may implement this method and return false.  The default implementation returns
+    /// to call, you may implement this method and return false. The default implementation returns
     /// true, signaling that `Collect::trace` must be called.
     #[inline]
     fn needs_trace() -> bool
@@ -31,7 +30,7 @@ pub unsafe trait Collect {
         true
     }
 
-    /// *Must* call `Collect::trace` on all held `Gc` pointers.  If this type holds inner types that
+    /// *Must* call `Collect::trace` on all held `Gc` pointers. If this type holds inner types that
     /// implement `Collect`, a valid implementation would simply call `Collect::trace` on all the
     /// held values to ensure this.
     #[inline]
