@@ -9,7 +9,7 @@ use crate::arena::ArenaParameters;
 use crate::collect::Collect;
 use crate::types::{GcBox, GcColor, GcFlags, Invariant};
 
-/// Handle value given by arena callbacks during construction and mutation.  Allows allocating new
+/// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
 #[derive(Copy, Clone)]
 pub struct MutationContext<'gc, 'context> {
@@ -167,9 +167,9 @@ impl Context {
     }
 
     // Do some collection work until we have either reached the target amount of work or are in the
-    // sleeping gc phase.  The unit of "work" here is a byte count of objects either turned black or
-    // freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units of
-    // work, whatever percentage of them are live or not.  Returns the amount of work actually
+    // sleeping gc phase. The unit of "work" here is a byte count of objects either turned black
+    // or freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units
+    // of work, whatever percentage of them are live or not. Returns the amount of work actually
     // performed, which may be less if we are entering the sleep phase.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
@@ -182,10 +182,10 @@ impl Context {
             match self.phase.get() {
                 Phase::Propagate => {
                     // We look for an object first in the normal gray queue, then the "gray again"
-                    // queue.  Objects from the normal gray queue count as regular work, but objects
+                    // queue. Objects from the normal gray queue count as regular work, but objects
                     // which are gray a second time have already been counted as work, so we don't
-                    // double count them.  Processing "gray again" objects later also gives them
-                    // more time to be mutated again without triggering another write barrier.
+                    // double count them. Processing "gray again" objects later also gives them more
+                    // time to be mutated again without triggering another write barrier.
                     let next_gray = if let Some(ptr) = self.gray.borrow_mut().pop() {
                         let gray_size = mem::size_of_val(ptr.as_ref()) as f64;
                         work_done += gray_size;
@@ -260,7 +260,7 @@ impl Context {
                             }
                         } else {
                             // If the next object in the sweep portion of the main list is black, we
-                            // need to keep it but turn it back white.  No gray objects should be in
+                            // need to keep it but turn it back white. No gray objects should be in
                             // this part of the main list, they should be added to the beginning of
                             // the list before the sweep pointer, so it should not be possible for
                             // us to encounter them here.
@@ -318,18 +318,11 @@ impl Context {
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
-        /*
-        let ptr = NonNull::new_unchecked(Box::into_raw(Box::new(GcBox {
-            flags: flags,
-            next: Cell::new(self.all.get()),
-            value: UnsafeCell::new(t),
-        })));
-        */
         let mut uninitialized = Box::new(mem::MaybeUninit::<GcBox<T>>::uninit());
         core::ptr::write(
             uninitialized.as_mut_ptr(),
             GcBox {
-                flags: flags,
+                flags,
                 next: Cell::new(self.all.get()),
                 value: ManuallyDrop::new(UnsafeCell::new(t)),
             },
@@ -347,7 +340,7 @@ impl Context {
     unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
-        // objects.  Turn black obejcts to gray to prevent this.
+        // objects. Turn black obejcts to gray to prevent this.
         let gc_box = ptr.as_ref();
         if self.phase.get() == Phase::Propagate && gc_box.flags.color() == GcColor::Black {
             gc_box.flags.set_color(GcColor::Gray);
