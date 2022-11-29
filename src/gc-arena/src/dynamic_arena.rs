@@ -39,8 +39,11 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
         // roots.
         let mut handles = self.handles.borrow_mut();
         handles.retain(|handle| Weak::strong_count(&handle.rc) != 0);
-        for handle in &*handles {
-            unsafe {
+
+        unsafe {
+            self.id.trace(cc);
+
+            for handle in &*handles {
                 cc.trace(handle.ptr);
             }
         }

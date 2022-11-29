@@ -297,6 +297,8 @@ fn test_dynamic_roots() {
     let mut arena: Arena<Rooted![DynamicRootSet<'gc>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
+    let initial_size = arena.total_allocated();
+
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Root1<'gc>(Gc<'gc, i32>);
@@ -319,7 +321,7 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert_ne!(arena.total_allocated(), 0);
+    assert!(arena.total_allocated() > initial_size);
 
     arena.mutate(|_, root_set| {
         let root1 = root_set.fetch(&root1);
@@ -336,7 +338,7 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert_eq!(arena.total_allocated(), 0);
+    assert!(arena.total_allocated() == initial_size);
 }
 
 #[test]
