@@ -10,20 +10,17 @@ use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 // sketchy. We know it is safe because:
 //   1) The `DynamicRootSet` must be created inside an arena and is branded with an invariant `'gc`
 //      lifetime.
-//   2) The `id` held inside the `DynamicRootSet` is a non-zero allocation with a *unique* address.
-//   3) The `id` is stored inside each `DynamicRoot` and checked against the set `id`, and a match
-//      lets us know that this `Gc` must have originated from *this* set, so it is safe to cast it
-//      back to whatever our current `'gc` lifetime is.
+//   2) The inner type inside the `DynamicRootSet` is a non-zero allocation with a *unique* address.
+//   3) The pointer to this type is stored inside each `DynamicRoot` and checked against the set
+//      `pointer, and a match lets us know that this `Gc` must have originated from *this* set, so
+//      it is safe to cast it back to whatever our current `'gc` lifetime is.
 #[derive(Copy, Clone)]
-pub struct DynamicRootSet<'gc> {
-    id: Gc<'gc, u8>,
-    handles: GcCell<'gc, Vec<Handle<'gc>>>,
-}
+pub struct DynamicRootSet<'gc>(GcCell<'gc, Vec<Handle<'gc>>>);
 
 #[derive(Clone)]
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
     ptr: Gc<'static, Root<'static, R>>,
-    id: *const u8,
+    id: *const (),
     // We identify dropped handles by checking an `Rc` handle count.
     _rc: Rc<()>,
 }
@@ -48,22 +45,18 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
             // We cheat horribly and filter out dead handles during tracing. Since we have to go
             // through the entire list of roots anyway, this is cheaper than filtering on e.g.
             // stashing new roots.
-            self.handles
+            self.0
                 .borrow_mut()
                 .retain(|handle| Weak::strong_count(&handle.rc) > 0);
         }
 
-        self.id.trace(cc);
-        self.handles.trace(cc);
+        self.0.trace(cc);
     }
 }
 
 impl<'gc> DynamicRootSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Self {
-        DynamicRootSet {
-            id: Gc::allocate(mc, 0),
-            handles: GcCell::allocate(mc, Vec::new()),
-        }
+        DynamicRootSet(GcCell::allocate(mc, Vec::new()))
     }
 
     pub fn stash<R: for<'a> Rootable<'a> + ?Sized>(
@@ -73,7 +66,7 @@ impl<'gc> DynamicRootSet<'gc> {
     ) -> DynamicRoot<R> {
         let rc = Rc::new(());
 
-        self.handles.write(mc).push(Handle {
+        self.0.write(mc).push(Handle {
             ptr: root.ptr,
             rc: Rc::downgrade(&rc),
         });
@@ -82,7 +75,7 @@ impl<'gc> DynamicRootSet<'gc> {
             ptr: unsafe {
                 mem::transmute::<Gc<'gc, Root<'gc, R>>, Gc<'static, Root<'static, R>>>(root)
             },
-            id: Gc::as_ptr(self.id),
+            id: GcCell::as_ptr(self.0) as *const (),
             _rc: rc,
         }
     }
@@ -92,7 +85,7 @@ impl<'gc> DynamicRootSet<'gc> {
         root: &DynamicRoot<R>,
     ) -> Gc<'gc, Root<'gc, R>> {
         assert_eq!(
-            Gc::as_ptr(self.id),
+            GcCell::as_ptr(self.0) as *const (),
             root.id,
             "provided `DynamicRoot` does not come from the `DynamicRootSet` it was provided to"
         );

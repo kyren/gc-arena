@@ -342,6 +342,28 @@ fn test_dynamic_roots() {
 }
 
 #[test]
+#[should_panic]
+fn test_dynamic_bad_set() {
+    let arena1: Arena<Rooted![DynamicRootSet<'gc>]> =
+        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+
+    let arena2: Arena<Rooted![DynamicRootSet<'gc>]> =
+        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc>(Gc<'gc, i32>);
+
+    let dyn_root = arena1.mutate(|mc, root| {
+        root.stash::<Rooted![Root<'gc>]>(mc, Gc::allocate(mc, Root(Gc::allocate(mc, 44))))
+    });
+
+    arena2.mutate(|_, root| {
+        root.fetch(&dyn_root);
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
