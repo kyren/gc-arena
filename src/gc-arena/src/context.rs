@@ -22,11 +22,11 @@ impl<'gc, 'context> MutationContext<'gc, 'context> {
         self.context.allocate(t)
     }
 
-    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn write_barrier(self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
         self.context.write_barrier(ptr)
     }
 
-    pub(crate) unsafe fn upgrade<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) -> bool {
+    pub(crate) unsafe fn upgrade(self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) -> bool {
         self.context.upgrade(ptr)
     }
 }
@@ -39,7 +39,7 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
-    pub(crate) unsafe fn trace<T: Collect>(self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn trace(self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         self.context.trace(ptr)
     }
 }
@@ -48,6 +48,7 @@ pub(crate) struct Context {
     parameters: ArenaParameters,
 
     phase: Cell<Phase>,
+    root_needs_trace: Cell<bool>,
     total_allocated: Cell<usize>,
     remembered_size: Cell<usize>,
     wakeup_total: Cell<usize>,
@@ -76,11 +77,6 @@ pub(crate) struct Context {
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
     gray_again: RefCell<Vec<NonNull<GcBox<dyn Collect>>>>,
-
-    // The root object of the arena. This is only `None` during initialization,
-    // while we're invoking the callback passed to `Arena::new` or `Arena::try_new`.
-    // Afterwards, it should always be `Some`
-    root: Option<NonNull<GcBox<dyn Collect>>>,
 }
 
 impl Drop for Context {
@@ -111,6 +107,7 @@ impl Context {
         Context {
             parameters,
             phase: Cell::new(Phase::Propagate),
+            root_needs_trace: Cell::new(true),
             total_allocated: Cell::new(0),
             remembered_size: Cell::new(0),
             wakeup_total: Cell::new(0),
@@ -120,7 +117,6 @@ impl Context {
             sweep_prev: Cell::new(None),
             gray: RefCell::new(Vec::new()),
             gray_again: RefCell::new(Vec::new()),
-            root: None,
         }
     }
 
@@ -133,18 +129,6 @@ impl Context {
             _invariant: PhantomData,
             context: self,
         }
-    }
-
-    // Must be called exactly once, after invoking the callback passed to `Arena::new` or
-    // `Arena::try_new`. This sets the root object, and pushes it to the gray queue.
-    //
-    // # Safety: Must be called with the root object of the parent `Arena`.
-    pub(crate) unsafe fn initialize<R: Collect>(&mut self, root: R) -> NonNull<GcBox<R>> {
-        let root = self.allocate(root);
-        let static_root = static_gc_box(root);
-        self.root = Some(static_root);
-        self.gray.borrow_mut().push(static_root);
-        root
     }
 
     #[inline]
@@ -162,7 +146,13 @@ impl Context {
     pub(crate) fn wake(&self) {
         if self.phase.get() == Phase::Sleep {
             self.phase.set(Phase::Propagate);
-            self.gray.borrow_mut().push(self.root.unwrap());
+            self.root_needs_trace.set(true);
+        }
+    }
+
+    pub(crate) fn root_barrier(&self) {
+        if self.phase.get() == Phase::Propagate {
+            self.root_needs_trace.set(true);
         }
     }
 
@@ -174,7 +164,7 @@ impl Context {
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub(crate) unsafe fn do_collection(&mut self, work: f64) -> f64 {
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
         let mut work_done = 0.0;
         let cc = CollectionContext { context: self };
 
@@ -204,9 +194,14 @@ impl Context {
                         let gc_box = ptr.as_ref();
                         (*gc_box.value.get()).trace(cc);
                         gc_box.flags.set_color(GcColor::Black);
+                    } else if self.root_needs_trace.get() {
+                        // We treat the root object as gray if `root_needs_trace` is set, and we
+                        // process it at the end of the gray queue for the same reason as the "gray
+                        // again" objects.
+                        root.trace(cc);
+                        self.root_needs_trace.set(false);
                     } else {
-                        // If we have no objects left in the normal gray queue, we enter the sweep
-                        // phase.
+                        // If we have no gray objects left, we enter the sweep phase.
                         self.phase.set(Phase::Sweep);
 
                         // Set `sweep to the current head of our `all` linked list. Any new allocations
@@ -276,7 +271,8 @@ impl Context {
                         self.sweep_prev.set(None);
                         self.phase.set(Phase::Sleep);
 
-                        // Do not let debt accumulate across cycles, when we enter sleep, zero the debt out.
+                        // Do not let debt accumulate across cycles, when we enter sleep, zero the
+                        // debt out.
                         self.allocation_debt.set(0.0);
 
                         let sleep = f64_to_usize(
@@ -337,7 +333,7 @@ impl Context {
         ptr
     }
 
-    unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    unsafe fn write_barrier(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
@@ -348,7 +344,7 @@ impl Context {
         }
     }
 
-    unsafe fn trace<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    unsafe fn trace(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         let gc_box = ptr.as_ref();
         match gc_box.flags.color() {
             GcColor::Black | GcColor::Gray => {}
@@ -370,7 +366,7 @@ impl Context {
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     ///
     /// Safety: `ptr` must be a valid pointer to a GcBox<T>.
-    unsafe fn upgrade<T: Collect>(&self, ptr: NonNull<GcBox<T>>) -> bool {
+    unsafe fn upgrade(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) -> bool {
         let gc_box = ptr.as_ref();
 
         // This object has already been freed, definitely not safe to upgrade.
@@ -442,9 +438,7 @@ enum Phase {
 }
 
 #[inline]
-unsafe fn static_gc_box<'gc>(
-    ptr: NonNull<GcBox<dyn Collect + 'gc>>,
-) -> NonNull<GcBox<dyn Collect>> {
+unsafe fn static_gc_box(ptr: NonNull<GcBox<dyn Collect + '_>>) -> NonNull<GcBox<dyn Collect>> {
     mem::transmute(ptr)
 }
 

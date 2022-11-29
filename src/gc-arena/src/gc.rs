@@ -8,10 +8,10 @@ use crate::context::{CollectionContext, MutationContext};
 use crate::gc_weak::GcWeak;
 use crate::types::{GcBox, Invariant};
 
-/// A garbage collected pointer to a type T.  Implements Copy, and is implemented as a plain machine
-/// pointer.  You can only allocate `Gc` pointers through an `Allocator` inside an arena type, and
-/// through "generativity" such `Gc` pointers may not escape the arena they were born in or be
-/// stored inside TLS.  This, combined with correct `Collect` implementations, means that `Gc`
+/// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
+/// pointer. You can only allocate `Gc` pointers through an `Allocator` inside an arena type,
+/// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
+/// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
 pub struct Gc<'gc, T: 'gc + Collect> {
     pub(crate) ptr: NonNull<GcBox<T>>,
@@ -73,7 +73,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     }
 
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
-    /// method must be used to ensure safe mutability.  Safe to call, but only necessary from unsafe
+    /// method must be used to ensure safe mutability. Safe to call, but only necessary from unsafe
     /// code.
     pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {

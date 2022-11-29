@@ -12,6 +12,7 @@ mod arena;
 mod collect;
 mod collect_impl;
 mod context;
+mod dynamic_roots;
 mod gc;
 mod gc_cell;
 mod gc_weak;
@@ -21,9 +22,10 @@ mod static_collect;
 mod types;
 
 pub use self::{
-    arena::{rootless_arena, Arena, ArenaParameters, Root, RootProvider},
+    arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
     collect::Collect,
     context::{CollectionContext, MutationContext},
+    dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     gc_cell::GcCell,
     gc_weak::GcWeak,

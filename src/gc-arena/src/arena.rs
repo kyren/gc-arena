@@ -1,8 +1,7 @@
-use core::{f64, mem, ptr::NonNull, usize};
+use core::{f64, mem, usize};
 
 use crate::{
     context::{Context, MutationContext},
-    types::GcBox,
     Collect,
 };
 
@@ -60,14 +59,24 @@ impl ArenaParameters {
     }
 }
 
-/// Creates a new "garbage collected [`Arena`]" type. The macro takes two parameters, the name you
-/// would like to give the arena type, and the type of the arena root. The root type must implement
-/// the [`Collect`] trait, and be a type that takes a single generic lifetime parameter which is
-/// used for any held `Gc` pointer types.
+/// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
+/// the root [`Collect`] instance in an [`Arena`].
 ///
-/// An example:
+/// In order to use an implementation of this trait in an [`Arena`], it must implement
+/// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
+/// branded by the unique, invariant lifetimes that makes an `Arena` sound.
+pub trait Rootable<'a> {
+    type Root: Collect + 'a;
+}
+
+/// A convenience macro for quickly creating type that implements of `Rootable`.
+///
+/// The macro takes a single argument, which should be a generic type that references a `'gc`
+/// lifetime. When used as a root object, this `'gc` lifetime will be replaced with the branding
+/// lifetime.
+///
 /// ```
-/// # use gc_arena::{Collect, Gc, make_arena};
+/// # use gc_arena::{Arena, Collect, Gc, Rootable};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
@@ -75,42 +84,40 @@ impl ArenaParameters {
 /// struct MyRoot<'gc> {
 ///     ptr: Gc<'gc, i32>,
 /// }
-/// make_arena!(MyArena, MyRoot);
+///
+/// type MyArena = Arena<Rootable![MyRoot<'gc>]>;
+/// # }
+/// ```
+///
+/// The macro can also be used to create implementations of `Rootable` that use other generic
+/// parameters, though in complex cases it may be better to implement `Rootable` directly.
+///
+/// ```
+/// # use gc_arena::{Arena, Collect, Gc, Rootable, StaticCollect};
+/// #
+/// # fn main() {
+/// #[derive(Collect)]
+/// #[collect(no_drop)]
+/// struct MyGenericRoot<'gc, T: 'static> {
+///     ptr: Gc<'gc, StaticCollect<T>>,
+/// }
+///
+/// type MyGenericArena<T> = Arena<Rootable![MyGenericRoot<'gc, T>]>;
 /// # }
 /// ```
 #[macro_export]
-macro_rules! make_arena {
-    ($arena:ident, $root:ident) => {
-        make_arena!(pub(self) $arena, $root);
-    };
-
-    ($vis:vis $arena:ident, $root:ident) => {
-        // Instead of generating an impl of `RootProvider`, we use a trait object.
-        // The projection `<R as RootProvider<'gc>>::Root` is used to obtain the root
-        // type with the lifetime `'gc` applied
-        // By using a trait object, we avoid the need to generate a new type for each
-        // invocation of this macro, which would lead to name conflicts if the macro was
-        // used multiple times in the same scope.
-        $vis type $arena = $crate::Arena<dyn for<'a> $crate::RootProvider<'a, Root = $root<'a>>>;
+macro_rules! Rootable {
+    ($root:ty) => {
+        // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
+        // need to generate a new type for each invocation of this macro.
+        dyn for<'gc> $crate::Rootable<'gc, Root = $root>
     };
 }
 
-#[doc(hidden)]
-/// A helper trait for the `make_arena` macro. Writing
-/// <R as RootProvider<'gc>>::Root is similar to writing a GAT `R::Root<'gc>`,
-/// but it works on older versions of Rust. Additionally, GATs currently
-/// prevent a trait from being object-safe, which prevents the trait object
-/// trick we use in `make_arena` from working.
-pub trait RootProvider<'a> {
-    type Root: Collect;
-}
+/// A helper type alias for a `Rootable::Root` for a specific lifetime.
+pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
-#[doc(hidden)]
-/// An helper type alias to simplify signatures in `Arena`s documentation.
-pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
-
-/// A generic, garbage collected arena. Use the [`make_arena`] macro to create specialized instances
-/// of this type.
+/// A generic, garbage collected arena.
 ///
 /// Garbage collected arenas allow for isolated sets of garbage collected objects with zero-overhead
 /// garbage collected pointers. It provides incremental mark and sweep garbage collection which
@@ -129,25 +136,21 @@ pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
+pub struct Arena<R: for<'a> Rootable<'a> + ?Sized> {
+    // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
+    root: Root<'static, R>,
     context: Context,
-    // Note - we store a pointer to the non-erased root type,
-    // so that we can pass it to the callback provided to `mutate`.
-    // Our `Context` stores a type-erased pointer to the root type
-    // (which cannot be converted back to a non-erased pointer)
-    // which is pushed to the gray queue from `wake()`.
-    root: NonNull<GcBox<Root<'static, R>>>,
 }
 
-impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
+impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `MutationContext` and returns the appropriate root.
-    pub fn new<F>(arena_parameters: crate::ArenaParameters, f: F) -> Arena<R>
+    pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Root<'gc, R>,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Root<'gc, R>,
     {
         unsafe {
-            let mut context = Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             // Note - we transmute the `MutationContext` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -158,22 +161,20 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
             let mutation_context: MutationContext<'static, '_> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context);
-            let root = context.initialize(root);
             Arena { context, root }
         }
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    pub fn try_new<F, E>(arena_parameters: crate::ArenaParameters, f: F) -> Result<Arena<R>, E>
+    pub fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
+        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let mut context = Context::new(arena_parameters);
+            let context = Context::new(arena_parameters);
             let mutation_context: MutationContext<'static, '_> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context)?;
-            let root = context.initialize(root);
             Ok(Arena { context, root })
         }
     }
@@ -185,17 +186,12 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[inline]
     pub fn mutate<'a, F, T>(&'a self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
     {
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
         // this is safe as all objects in the graph live until the next collection, which
         // requires exclusive access to the arena.
-        unsafe {
-            f(
-                self.context.mutation_context(),
-                mem::transmute::<&Root<'static, R>, _>(&*self.root.as_ref().value.get()),
-            )
-        }
+        unsafe { f(self.context.mutation_context(), &self.root) }
     }
 
     /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
@@ -203,20 +199,40 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     #[inline]
     pub fn mutate_root<'a, F, T>(&'a mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(crate::MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
     {
+        self.context.root_barrier();
         // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
         // this is safe as all objects in the graph live until the next collection, which
         // requires exclusive access to the arena. Additionally, the write barrier ensures
         // that any changes to the root set are properly picked up.
-        unsafe {
-            let mc = self.context.mutation_context();
-            mc.write_barrier(self.root);
-            f(
-                mc,
-                mem::transmute::<&mut Root<'static, R>, _>(&mut *self.root.as_ref().value.get()),
-            )
+        unsafe { f(self.context.mutation_context(), &mut self.root) }
+    }
+
+    #[inline]
+    pub fn map_root<R2: for<'a> Rootable<'a> + ?Sized>(
+        self,
+        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
+    ) -> Arena<R2> {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root) };
+        Arena {
+            context: self.context,
+            root: new_root,
         }
+    }
+
+    #[inline]
+    pub fn try_map_root<R2: for<'a> Rootable<'a> + ?Sized, E>(
+        self,
+        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
+    ) -> Result<Arena<R2>, E> {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root)? };
+        Ok(Arena {
+            context: self.context,
+            root: new_root,
+        })
     }
 
     /// Return total currently used memory.
@@ -243,7 +259,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
         unsafe {
             let debt = self.context.allocation_debt();
             if debt > 0.0 {
-                self.context.do_collection(debt);
+                self.context.do_collection(&self.root, debt);
             }
         }
     }
@@ -254,7 +270,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
-            self.context.do_collection(f64::INFINITY);
+            self.context.do_collection(&self.root, f64::INFINITY);
         }
     }
 }
