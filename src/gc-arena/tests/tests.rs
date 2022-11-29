@@ -303,19 +303,19 @@ fn test_dynamic_roots() {
     #[collect(no_drop)]
     struct Root1<'gc>(Gc<'gc, i32>);
 
-    let root1 = arena.mutate_root(|mc, root_set| {
-        root_set.stash::<Rooted![Root1<'gc>]>(Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
+    let root1 = arena.mutate(|mc, root_set| {
+        root_set.stash::<Rooted![Root1<'gc>]>(mc, Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
     });
 
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
 
-    let root2 = arena.mutate_root(|mc, root_set| {
-        root_set.stash::<Rooted![Root2<'gc>]>(Gc::allocate(
+    let root2 = arena.mutate(|mc, root_set| {
+        root_set.stash::<Rooted![Root2<'gc>]>(
             mc,
-            Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true)),
-        ))
+            Gc::allocate(mc, Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true))),
+        )
     });
 
     arena.collect_all();

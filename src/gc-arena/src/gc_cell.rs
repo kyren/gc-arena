@@ -102,6 +102,32 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
         Gc::write_barrier(mc, self.0);
         Ok(mb)
     }
+
+    /// Call `RefCell::borrow_mut` on the inner `RefCell` *without* the write barrier.
+    ///
+    /// SAFETY: In order to maintain the invariants of the garbage collector, no new `Gc` pointers
+    /// may be adopted by this type as a result of the interior mutability afforded here, unless the
+    /// write barrier is invoked manually before collection is triggered.
+    #[track_caller]
+    pub unsafe fn borrow_mut<'a>(&'a self) -> RefMut<'a, T> {
+        self.0.cell.borrow_mut()
+    }
+
+    /// Call `RefCell::try_borrow_mut` on the inner `RefCell` *without* the write barrier.
+    ///
+    /// SAFETY: The safety requirements of this method are exactly the same as
+    /// [`GcCell::borrow_mut`].
+    pub unsafe fn try_borrow_mut<'a>(&'a self) -> Result<RefMut<'a, T>, BorrowMutError> {
+        self.0.cell.try_borrow_mut()
+    }
+
+    /// Manually call the write barrier.
+    ///
+    /// Useful if a call to [`GcCell::borrow_mut`] has resulted in potentially adopting a new `Gc`
+    /// pointer. Safe to call, but only necessary from unsafe code.
+    pub fn write_barrier(&self, mc: MutationContext<'gc, '_>) {
+        Gc::write_barrier(mc, self.0);
+    }
 }
 
 pub(crate) struct GcRefCell<T: Collect> {
