@@ -171,11 +171,6 @@ impl Context {
         while work > work_done {
             match self.phase.get() {
                 Phase::Propagate => {
-                    if self.root_needs_trace.get() {
-                        root.trace(cc);
-                        self.root_needs_trace.set(false);
-                    }
-
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue. Objects from the normal gray queue count as regular work, but objects
                     // which are gray a second time have already been counted as work, so we don't
@@ -199,9 +194,14 @@ impl Context {
                         let gc_box = ptr.as_ref();
                         (*gc_box.value.get()).trace(cc);
                         gc_box.flags.set_color(GcColor::Black);
+                    } else if self.root_needs_trace.get() {
+                        // We treat the root object as gray if `root_needs_trace` is set, and we
+                        // process it at the end of the gray queue for the same reason as the "gray
+                        // again" objects.
+                        root.trace(cc);
+                        self.root_needs_trace.set(false);
                     } else {
-                        // If we have no objects left in the normal gray queue, we enter the sweep
-                        // phase.
+                        // If we have no gray objects left, we enter the sweep phase.
                         self.phase.set(Phase::Sweep);
 
                         // Set `sweep to the current head of our `all` linked list. Any new allocations
