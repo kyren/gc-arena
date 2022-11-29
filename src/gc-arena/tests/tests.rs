@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gc_arena::{
-    root_provider, unsafe_empty_collect, Arena, ArenaParameters, Collect, Gc, GcCell, GcWeak,
+    root_provider, unsafe_empty_collect, Arena, ArenaParameters, Collect, DynamicRootSet, Gc,
+    GcCell, GcWeak,
 };
 
 #[test]
@@ -290,6 +291,53 @@ fn test_map() {
         // Another complex operation that does some allocations
         assert_eq!(*root.state, 69);
     });
+}
+
+#[test]
+fn test_dynamic_roots() {
+    let mut arena: Arena<root_provider!(DynamicRootSet<'gc>)> =
+        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root1<'gc>(Gc<'gc, i32>);
+
+    let root1 = arena.mutate_root(|mc, root_set| {
+        root_set.stash::<root_provider!(Root1<'gc>)>(Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
+    });
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
+
+    let root2 = arena.mutate_root(|mc, root_set| {
+        root_set.stash::<root_provider!(Root2<'gc>)>(Gc::allocate(
+            mc,
+            Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true)),
+        ))
+    });
+
+    arena.collect_all();
+    arena.collect_all();
+
+    assert_ne!(arena.total_allocated(), 0);
+
+    arena.mutate(|_, root_set| {
+        let root1 = root_set.fetch(&root1);
+        assert_eq!(*root1.0, 12);
+
+        let root2 = root_set.fetch(&root2);
+        assert_eq!(*root2.0, 27);
+        assert_eq!(*root2.1, true);
+    });
+
+    drop(root1);
+    drop(root2);
+
+    arena.collect_all();
+    arena.collect_all();
+
+    assert_eq!(arena.total_allocated(), 0);
 }
 
 #[test]

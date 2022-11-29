@@ -66,7 +66,7 @@ impl ArenaParameters {
 /// `RootProvider<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait RootProvider<'a> {
-    type Root: Collect;
+    type Root: Collect + 'a;
 }
 
 /// A convenience macro for quickly creating type that implements of `RootProvider`.

@@ -22,11 +22,11 @@ impl<'gc, 'context> MutationContext<'gc, 'context> {
         self.context.allocate(t)
     }
 
-    pub(crate) unsafe fn write_barrier<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn write_barrier(self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) {
         self.context.write_barrier(ptr)
     }
 
-    pub(crate) unsafe fn upgrade<T: 'gc + Collect>(self, ptr: NonNull<GcBox<T>>) -> bool {
+    pub(crate) unsafe fn upgrade(self, ptr: NonNull<GcBox<dyn Collect + 'gc>>) -> bool {
         self.context.upgrade(ptr)
     }
 }
@@ -39,7 +39,7 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
-    pub(crate) unsafe fn trace<T: Collect>(self, ptr: NonNull<GcBox<T>>) {
+    pub(crate) unsafe fn trace(self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         self.context.trace(ptr)
     }
 }
@@ -333,7 +333,7 @@ impl Context {
         ptr
     }
 
-    unsafe fn write_barrier<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    unsafe fn write_barrier(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
@@ -344,7 +344,7 @@ impl Context {
         }
     }
 
-    unsafe fn trace<T: Collect>(&self, ptr: NonNull<GcBox<T>>) {
+    unsafe fn trace(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) {
         let gc_box = ptr.as_ref();
         match gc_box.flags.color() {
             GcColor::Black | GcColor::Gray => {}
@@ -366,7 +366,7 @@ impl Context {
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     ///
     /// Safety: `ptr` must be a valid pointer to a GcBox<T>.
-    unsafe fn upgrade<T: Collect>(&self, ptr: NonNull<GcBox<T>>) -> bool {
+    unsafe fn upgrade(&self, ptr: NonNull<GcBox<dyn Collect + '_>>) -> bool {
         let gc_box = ptr.as_ref();
 
         // This object has already been freed, definitely not safe to upgrade.
@@ -438,9 +438,7 @@ enum Phase {
 }
 
 #[inline]
-unsafe fn static_gc_box<'gc>(
-    ptr: NonNull<GcBox<dyn Collect + 'gc>>,
-) -> NonNull<GcBox<dyn Collect>> {
+unsafe fn static_gc_box(ptr: NonNull<GcBox<dyn Collect + '_>>) -> NonNull<GcBox<dyn Collect>> {
     mem::transmute(ptr)
 }
 
