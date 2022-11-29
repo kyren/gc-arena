@@ -66,7 +66,7 @@ impl<'gc> DynamicRootSet<'gc> {
     ) -> DynamicRoot<R> {
         let rc = Rc::new(());
 
-        self.handles.borrow_mut().push(Handle {
+        self.handles.get_mut().push(Handle {
             ptr: root.ptr,
             rc: Rc::downgrade(&rc),
         });
