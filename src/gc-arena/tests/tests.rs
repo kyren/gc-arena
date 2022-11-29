@@ -256,7 +256,7 @@ fn generic_make_arena() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Test<'gc, T: 'gc + Collect, const N: usize, U: 'gc + Collect>(Gc<'gc, T>, [(); N], U);
-    make_arena!(TestArena<T, const N: usize, U>, Test<(T, T), N, Gc<'gc, U>>);
+    make_arena!(TestArena(T, const N: usize, U), Test((T, T), N, Gc<'gc, U>));
 
     fn test<const N: usize, T: 'static + Collect + Copy, U: 'static + Collect + Copy>(
         v: T,

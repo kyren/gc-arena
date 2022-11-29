@@ -97,28 +97,14 @@ impl ArenaParameters {
 /// pointers and manually ensuring that invariants are held.
 #[macro_export]
 macro_rules! make_arena {
-    ($vis:vis $arena:ident < $($rest:tt)*)               => { make_arena!(@arena $vis $arena () $($rest)*); };
-    ($vis:vis $arena:ident , $root:ident < $($rest:tt)*) => { make_arena!(@root $vis $arena () $root () $($rest)*); };
-    ($vis:vis $arena:ident , $root:ident)                => { make_arena!(@done $vis $arena () $root ()); };
-
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) $tok:tt , $($rest:tt)*)                                   => { make_arena!(@arena $vis $arena ($($arena_gen)* $tok ,) $($rest)*); };
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) $tok:tt > , $root:ident < $($rest:tt)*)                   => { make_arena!(@root $vis $arena ($($arena_gen)* $tok) $root () $($rest)*); };
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) $tok:tt > , $root:ident)                                  => { make_arena!(@done $vis $arena ($($arena_gen)* $tok) $root ()); };
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) const $var:ident : $ty:ty , $($rest:tt)*)                 => { make_arena!(@arena $vis $arena ($($arena_gen)* const $var : $ty ,) $($rest)*); };
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) const $var:ident : $ty:ty > , $root:ident < $($rest:tt)*) => { make_arena!(@root $vis $arena ($($arena_gen)* const $var : $ty) $root () $($rest)*); };
-    (@arena $vis:vis $arena:ident ($($arena_gen:tt)*) const $var:ident : $ty:ty > , $root:ident)                => { make_arena!(@done $vis $arena ($($arena_gen)* const $var : $ty) $root ()); };
-
-    (@root $vis:vis $arena:ident ($($arena_gen:tt)*) $root:ident ($($root_gen:tt)*) $ty:ty , $($rest:tt)*) => { make_arena!(@root $vis $arena ($($arena_gen)*) $root ($($root_gen)* $ty ,) $($rest)*); };
-    (@root $vis:vis $arena:ident ($($arena_gen:tt)*) $root:ident ($($root_gen:tt)*) $ty:ty >)              => { make_arena!(@done $vis $arena ($($arena_gen)*) $root ($($root_gen)* $ty)); };
-
-    (@done $vis:vis $arena:ident ($($arena_gen:tt)*) $root:ident ($($root_gen:tt)*)) => {
+    ($vis:vis $arena:ident $(( $($arena_gen:tt)* ))?, $root:ident $(( $($root_gen:tt)* ))?) => {
         // Instead of generating an impl of `RootProvider`, we use a trait object.
         // The projection `<R as RootProvider<'gc>>::Root` is used to obtain the root
         // type with the lifetime `'gc` applied
         // By using a trait object, we avoid the need to generate a new type for each
         // invocation of this macro, which would lead to name conflicts if the macro was
         // used multiple times in the same scope.
-        $vis type $arena<$($arena_gen)*> = $crate::Arena<dyn for<'gc> $crate::RootProvider<'gc, Root = $root<'gc, $($root_gen)*>>>;
+        $vis type $arena $( <$($arena_gen)*> )? = $crate::Arena<dyn for<'gc> $crate::RootProvider<'gc, Root = $root<'gc, $( $($root_gen)* )?>>>;
     };
 }
 
