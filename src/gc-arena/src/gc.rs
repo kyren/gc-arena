@@ -79,6 +79,7 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
 }
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
+    #[inline]
     pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
         GcWeak { inner: this }
     }
@@ -86,6 +87,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
     /// method must be used to ensure safe mutability. Safe to call, but only necessary from unsafe
     /// code.
+    #[inline]
     pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {
             mc.write_barrier(GcBox::erase(gc.ptr));
@@ -96,7 +98,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     pub fn mutate<'a>(mc: MutationContext<'gc, '_>, gc: &'a Self) -> &'a Mutable<T> {
         unsafe {
             mc.write_barrier(GcBox::erase(gc.ptr));
-            Mutable::assume(&*gc)
+            Mutable::assume(gc)
         }
     }
 

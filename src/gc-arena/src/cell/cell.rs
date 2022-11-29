@@ -5,7 +5,7 @@ use crate::{Collect, CollectionContext, Gc, MutationContext};
 
 use super::{CellLike, Mutable};
 
-/// A GC-aware [`Cell`](StdCell).
+/// A GC-aware version of `std`'s [`Cell`](StdCell).
 pub struct Cell<T: ?Sized>(StdCell<T>);
 
 impl<T: Debug + Copy> Debug for Cell<T> {
@@ -23,7 +23,7 @@ unsafe impl<T: Collect + ?Sized> Collect for Cell<T> {
     }
 }
 
-impl<T: Collect> CellLike for Cell<T> {
+impl<T> CellLike for Cell<T> {
     type Target = T;
 
     #[inline]
@@ -54,6 +54,18 @@ impl<T> Cell<T> {
     #[inline(always)]
     pub fn replace(this: &Mutable<Self>, val: T) -> T {
         this.0.replace(val)
+    }
+
+    #[inline(always)]
+    pub fn into_inner(self) -> T {
+        self.0.into_inner()
+    }
+}
+
+impl<T: ?Sized> Cell<T> {
+    #[inline(always)]
+    pub fn get_mut(&mut self) -> &mut T {
+        self.0.get_mut()
     }
 }
 

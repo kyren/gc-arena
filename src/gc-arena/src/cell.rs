@@ -1,29 +1,34 @@
-//! GC-aware interior mutability types. When a type that may hold [`Gc`] pointers is mutated,
-//! it may adopt new [`Gc`] pointers, and in order for this to be safe this must be accompanied
-//! by a call to [`Gc::write_barrier`]. This module provide types that wrap a given `T` in such
-//! a way that mutating the inner value is always accompanied by a call to [`Gc::write_barrier`].
+//! GC-aware interior mutability types, enforcing the required write barriers.
+//!
+//! The core of this module is the [`Mutable<T>`] type, which allows distinguishing
+//! shared references that allow interior mutability behind [`Gc`](crate::Gc)
+//! pointers from those that do not. Combined with custom cell types implementing
+//! [`Collect`](crate::Collect) and requiring `&Mutable<Self>` to perform mutation,
+//! this provides safe mutation inside GC'd object graphs.
+//!
+//! The canonical way to safely obtain a `&Mutable<T>` reference is to call
+//! [`Gc::mutate`](crate::Gc::mutate) on a [`Gc`](crate::Gc) pointer; this will emit
+//! a write barrier, notifying the garbage collected [`Arena`](crate::Arena) that this
+//! GC'd object is undergoing mutation and will need to be re-traced.
 
-use crate::Collect;
-
-#[cfg(doc)]
-use crate::Gc;
+// Must be declared first to have clean documentation on `Mutable`.
+mod mutable;
 
 mod cell;
-mod mutable;
 mod ref_cell;
 
 pub use cell::Cell;
-pub use mutable::Mutable;
+pub use mutable::{DerefNoGc, Mutable};
 pub use ref_cell::RefCell;
 
 /// Trait implemented by all GC-aware interior mutability types provided
-/// in this module.
+/// in the [`cell`](self) module.
 ///
 /// Implementing this trait allows for convenient allocation through the
-/// [`Gc::allocate_cell`] method.
-pub trait CellLike: Collect {
+/// [`Gc::allocate_cell`](crate::Gc::allocate_cell) method.
+pub trait CellLike {
     /// The type this cell wraps.
-    type Target: Collect;
+    type Target;
 
     /// Wraps a value inside this cell.
     fn wrap(value: Self::Target) -> Self;

@@ -7,7 +7,7 @@ use crate::Gc;
 
 use super::{CellLike, Mutable};
 
-/// A GC-aware [`RefCell`](StdRefCell).
+/// A GC-aware version of `std`'s [`RefCell`](StdRefCell).
 pub struct RefCell<T: ?Sized>(StdRefCell<T>);
 
 impl<T: Debug> Debug for RefCell<T> {
@@ -24,7 +24,7 @@ unsafe impl<T: Collect + ?Sized> Collect for RefCell<T> {
     }
 }
 
-impl<T: Collect> CellLike for RefCell<T> {
+impl<T> CellLike for RefCell<T> {
     type Target = T;
 
     #[inline(always)]
@@ -66,6 +66,19 @@ impl<T: ?Sized> RefCell<T> {
     #[inline(always)]
     pub fn try_write(this: &Mutable<Self>) -> Result<RefMut<'_, T>, BorrowMutError> {
         this.0.try_borrow_mut()
+    }
+
+    #[inline(always)]
+    pub fn get_mut(&mut self) -> &mut T {
+        self.0.get_mut()
+    }
+
+    #[inline(always)]
+    pub fn into_inner(self) -> T
+    where
+        T: Sized,
+    {
+        self.0.into_inner()
     }
 }
 

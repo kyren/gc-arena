@@ -393,19 +393,19 @@ impl Context {
 
         // Consider the different possible phases of the GC:
         // * In `Phase::Sleep`, the GC is not running, so we can upgrade.
-        //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
-        //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
+        //   If the newly-created `Gc` survives the current `arena.mutate`
+        //   call, then the situtation is equivalent to having copied an existing `Gc`,
         //   or having created a new allocation.
         //
         // * In `Phase::Propagate`:
-        //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
-        //   call, then it must have been stored somewhere, triggering a write barrier.
-        //   This will ensure that the new `Gc`/`GcCell` gets traced (if it's now reachable)
+        //   If the newly-created `Gc` survives the current `arena.mutate` call,
+        //   then it must have been stored somewhere, triggering a write barrier.
+        //   This will ensure that the new `Gc` gets traced (if it's now reachable)
         //   before we transition to `Phase::Sweep`.
         //
         // * In `Phase::Sweep`:
         //   If the allocation is `WhiteWeak`, then it's impossile for it to have been freshly-created
-        //   during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/GcWeakCell` is traced.
+        //   during this `Phase::Sweep`. `WhiteWeak` is only set when a white `GcWeak/GcWeakCell` is traced.
         //   A `GcWeak/GcWeakCell` must be created from an existing `Gc/GcCell` via `downgrade()`, so
         //   `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed during the last `Phase::Propagate.`
         //
@@ -416,8 +416,8 @@ impl Context {
         //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is not `WhiteWeak`
         //   there cannot have been any `GcWeak/GcWeakCell`s during the last `Phase::Propagate`, so
         //   the weak pointer must have been created during this `Phase::Sweep`.
-        //   This is only possible if the underlying allocation was freshly-created - if the allocation existed during
-        //   `Phase::Propagate` but was not traced, then it must have been unreachable,
+        //   This is only possible if the underlying allocation was freshly-created - if the allocation
+        //   existed during `Phase::Propagate` but was not traced, then it must have been unreachable,
         //   which means that the user wouldn't have been able to call `downgrade`.
         //   Therefore, we can safely upgrade, knowing that the object will not be freed
         //   during this phase, despite being white.

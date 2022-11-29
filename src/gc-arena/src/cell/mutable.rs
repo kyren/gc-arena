@@ -1,13 +1,14 @@
-use core::ops::Deref;
+use core::{mem::ManuallyDrop, ops::Deref, panic::AssertUnwindSafe, pin::Pin};
+
+use alloc::{boxed::Box, rc::Rc, sync::Arc, vec::Vec};
 
 #[cfg(doc)]
 use crate::Gc;
 
-/// A mutable value inside a GC'd object graph.
+/// An (interiorly-)mutable reference inside a GC'd object graph.
 ///
-/// This type is only used by reference, and asserts that [`Gc::write_barrier`] was
-/// called on the parent [`Gc`] pointer. This allows for further mutation without
-/// needing to emit a write barrier again.
+/// This type can only exist behind a shared reference; see the [module documentation](super)
+/// for more details.
 #[repr(transparent)]
 pub struct Mutable<T: ?Sized>(T);
 
@@ -29,8 +30,34 @@ impl<T: ?Sized> Mutable<T> {
     /// by this wrapper, unless [`Gc::write_barrier`] is invoked manually on the parent [`Gc`]
     /// pointer before the next collection is triggered.
     #[inline(always)]
-    pub unsafe fn assume(v: &T) -> &Mutable<T> {
+    pub unsafe fn assume(v: &T) -> &Self {
         // Safe thanks to #[repr(transparent)]
         core::mem::transmute(v)
     }
+
+    /// Calls the [`Deref`] impl of the wrapped reference.
+    ///
+    /// The [`DerefNoGc`] bound (which is satisfied by all the common `std` pointer types)
+    /// guarantees that this is sound.
+    #[inline(always)]
+    pub fn as_deref(&self) -> &Mutable<T::Target>
+    where
+        T: DerefNoGc,
+    {
+        unsafe { Mutable::assume(self.0.deref()) }
+    }
 }
+
+/// Marker trait asserting that the type's [`Deref`] implementation never traverses [`Gc`] pointers.
+pub unsafe trait DerefNoGc: Deref {}
+
+// A bunch of implementations for std types.
+unsafe impl<T: ?Sized> DerefNoGc for &'_ T {}
+unsafe impl<T: ?Sized> DerefNoGc for &'_ mut T {}
+unsafe impl<P: DerefNoGc> DerefNoGc for Pin<P> {}
+unsafe impl<T: ?Sized> DerefNoGc for Box<T> {}
+unsafe impl<T: ?Sized> DerefNoGc for Rc<T> {}
+unsafe impl<T: ?Sized> DerefNoGc for Arc<T> {}
+unsafe impl<T> DerefNoGc for Vec<T> {}
+unsafe impl<T> DerefNoGc for AssertUnwindSafe<T> {}
+unsafe impl<T: ?Sized> DerefNoGc for ManuallyDrop<T> {}
