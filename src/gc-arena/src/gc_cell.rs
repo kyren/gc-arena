@@ -11,7 +11,7 @@ use crate::GcWeakCell;
 /// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
 /// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
 /// `Gc::write_barrier`.
-pub struct GcCell<'gc, T: 'gc + Collect>(Gc<'gc, GcRefCell<T>>);
+pub struct GcCell<'gc, T: 'gc + Collect>(pub(crate) Gc<'gc, GcRefCell<T>>);
 
 impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
 
@@ -68,10 +68,6 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
 
     pub fn downgrade(this: GcCell<'gc, T>) -> GcWeakCell<'gc, T> {
         GcWeakCell { inner: this }
-    }
-
-    pub(crate) unsafe fn get_inner(&self) -> Gc<'gc, GcRefCell<T>> {
-        self.0
     }
 
     pub fn ptr_eq(this: GcCell<'gc, T>, other: GcCell<'gc, T>) -> bool {

@@ -24,7 +24,7 @@ impl<'gc, T: 'gc + Collect> Debug for GcWeakCell<'gc, T> {
 unsafe impl<'gc, T: 'gc + Collect> Collect for GcWeakCell<'gc, T> {
     fn trace(&self, _cc: crate::CollectionContext) {
         unsafe {
-            let gc = self.inner.get_inner().ptr.as_ref();
+            let gc = self.inner.0.ptr.as_ref();
 
             gc.flags.set_traced_weak_ref(true);
         }
@@ -33,6 +33,6 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for GcWeakCell<'gc, T> {
 
 impl<'gc, T: Collect + 'gc> GcWeakCell<'gc, T> {
     pub fn upgrade(&self, mc: MutationContext<'gc, '_>) -> Option<GcCell<'gc, T>> {
-        unsafe { mc.upgrade(self.inner.get_inner().ptr).then(|| self.inner) }
+        unsafe { mc.upgrade(self.inner.0.ptr).then(|| self.inner) }
     }
 }
