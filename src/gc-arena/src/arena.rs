@@ -63,13 +63,13 @@ impl ArenaParameters {
 /// the root [`Collect`] instance in an [`Arena`].
 ///
 /// In order to use an implementation of this trait in an [`Arena`], it must implement
-/// `RootProvider<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
+/// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait Rootable<'a> {
     type Root: Collect + 'a;
 }
 
-/// A convenience macro for quickly creating type that implements of `RootProvider`.
+/// A convenience macro for quickly creating type that implements of `Rootable`.
 ///
 /// The macro takes a single argument, which should be a generic type that references a `'gc`
 /// lifetime. When used as a root object, this `'gc` lifetime will be replaced with the branding
@@ -89,8 +89,8 @@ pub trait Rootable<'a> {
 /// # }
 /// ```
 ///
-/// The macro can also be used to create implementations of `RootProvider` that use other generic
-/// parameters, though in complex cases it may be better to implement `RootProvider` directly.
+/// The macro can also be used to create implementations of `Rootable` that use other generic
+/// parameters, though in complex cases it may be better to implement `Rootable` directly.
 ///
 /// ```
 /// # use gc_arena::{Arena, Collect, Gc, Rooted, StaticCollect};
@@ -108,13 +108,13 @@ pub trait Rootable<'a> {
 #[macro_export]
 macro_rules! Rooted {
     ($root:ty) => {
-        // Instead of generating an impl of `RootProvider`, we use a trait object. Thus, we avoid
-        // the need to generate a new type for each invocation of this macro.
+        // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
+        // need to generate a new type for each invocation of this macro.
         dyn for<'gc> $crate::Rootable<'gc, Root = $root>
     };
 }
 
-/// A helper type alias for a `RootProvider::Root` for a specific lifetime.
+/// A helper type alias for a `Rootable::Root` for a specific lifetime.
 pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
 /// A generic, garbage collected arena.
