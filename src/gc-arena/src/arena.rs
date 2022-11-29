@@ -76,7 +76,7 @@ pub trait Rootable<'a> {
 /// lifetime.
 ///
 /// ```
-/// # use gc_arena::{Arena, Collect, Gc, Rooted};
+/// # use gc_arena::{Arena, Collect, Gc, Rootable};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
@@ -85,7 +85,7 @@ pub trait Rootable<'a> {
 ///     ptr: Gc<'gc, i32>,
 /// }
 ///
-/// type MyArena = Arena<Rooted![MyRoot<'gc>]>;
+/// type MyArena = Arena<Rootable![MyRoot<'gc>]>;
 /// # }
 /// ```
 ///
@@ -93,7 +93,7 @@ pub trait Rootable<'a> {
 /// parameters, though in complex cases it may be better to implement `Rootable` directly.
 ///
 /// ```
-/// # use gc_arena::{Arena, Collect, Gc, Rooted, StaticCollect};
+/// # use gc_arena::{Arena, Collect, Gc, Rootable, StaticCollect};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
@@ -102,11 +102,11 @@ pub trait Rootable<'a> {
 ///     ptr: Gc<'gc, StaticCollect<T>>,
 /// }
 ///
-/// type MyGenericArena<T> = Arena<Rooted![MyGenericRoot<'gc, T>]>;
+/// type MyGenericArena<T> = Arena<Rootable![MyGenericRoot<'gc, T>]>;
 /// # }
 /// ```
 #[macro_export]
-macro_rules! Rooted {
+macro_rules! Rootable {
     ($root:ty) => {
         // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
         // need to generate a new type for each invocation of this macro.
