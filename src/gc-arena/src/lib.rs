@@ -22,7 +22,7 @@ mod static_collect;
 mod types;
 
 pub use self::{
-    arena::{rootless_arena, Arena, ArenaParameters, Root, RootProvider},
+    arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
     collect::Collect,
     context::{CollectionContext, MutationContext},
     dynamic_arena::{DynamicRoot, DynamicRootSet},

@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::{cell::RefCell, mem, ptr::NonNull};
 
-use crate::{types::GcBox, Collect, Gc, MutationContext, Root, RootProvider};
+use crate::{types::GcBox, Collect, Gc, MutationContext, Root, Rootable};
 
 // SAFETY: We conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY sketchy. We know
 // it is safe because:
@@ -20,7 +20,7 @@ pub struct DynamicRootSet<'gc> {
 }
 
 #[derive(Clone)]
-pub struct DynamicRoot<R: for<'gc> RootProvider<'gc> + ?Sized> {
+pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
     ptr: Gc<'static, Root<'static, R>>,
     id: *const u8,
     // We identify dropped handles by checking an `Rc` handle count.
@@ -55,7 +55,7 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
-    pub fn stash<R: for<'a> RootProvider<'a> + ?Sized>(
+    pub fn stash<R: for<'a> Rootable<'a> + ?Sized>(
         &mut self,
         root: Gc<'gc, Root<'gc, R>>,
     ) -> DynamicRoot<R> {
@@ -75,7 +75,7 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
-    pub fn fetch<R: for<'a> RootProvider<'a> + ?Sized>(
+    pub fn fetch<R: for<'a> Rootable<'a> + ?Sized>(
         &self,
         root: &DynamicRoot<R>,
     ) -> Gc<'gc, Root<'gc, R>> {

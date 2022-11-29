@@ -62,7 +62,7 @@ macro_rules! make_sequencable_arena {
             use core::any::Any;
             use core::marker::PhantomData;
 
-            use gc_arena::{ArenaParameters, Collect, GcCell, MutationContext, Root, root_provider};
+            use gc_arena::{ArenaParameters, Collect, GcCell, MutationContext, Root, Rooted};
             use gc_sequence::{Sequence, SequenceExt};
 
             use super::$root;
@@ -77,7 +77,7 @@ macro_rules! make_sequencable_arena {
                 >,
             }
 
-            type InnerArena = gc_arena::Arena<root_provider!(InnerRoot<'gc>)>;
+            type InnerArena = gc_arena::Arena<Rooted![InnerRoot<'gc>]>;
 
             $innervis struct Arena(InnerArena);
 

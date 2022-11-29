@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gc_arena::{
-    root_provider, unsafe_empty_collect, Arena, ArenaParameters, Collect, DynamicRootSet, Gc,
-    GcCell, GcWeak,
+    unsafe_empty_collect, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell, GcWeak,
+    Rooted,
 };
 
 #[test]
@@ -17,10 +17,9 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    let arena =
-        Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| TestRoot {
-            test: Gc::allocate(mc, 42),
-        });
+    let arena = Arena::<Rooted![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
+        test: Gc::allocate(mc, 42),
+    });
 
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
@@ -36,7 +35,7 @@ fn weak_allocation() {
         weak: GcWeak<'gc, i32>,
     }
 
-    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rooted![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
         let test = Gc::allocate(mc, 42);
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
@@ -83,7 +82,7 @@ fn repeated_allocation_deallocation() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rooted![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, HashMap::new()))
     });
 
@@ -130,7 +129,7 @@ fn all_dropped() {
 
     let r = RefCounter(Rc::new(()));
 
-    let arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
+    let arena = Arena::<Rooted![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, Vec::new()))
     });
 
@@ -156,7 +155,7 @@ fn all_garbage_collected() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<root_provider!(TestRoot<'gc>)>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rooted![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(GcCell::allocate(mc, Vec::new()))
     });
 
@@ -256,7 +255,7 @@ fn test_map() {
         some_complex_state: Vec<Gc<'gc, i32>>,
     }
 
-    let arena = Arena::<root_provider!(Root<'gc>)>::new(ArenaParameters::default(), |mc| Root {
+    let arena = Arena::<Rooted![Root<'gc>]>::new(ArenaParameters::default(), |mc| Root {
         some_complex_state: vec![Gc::allocate(mc, 42), Gc::allocate(mc, 69)],
     });
 
@@ -267,7 +266,7 @@ fn test_map() {
         state: Gc<'gc, i32>,
     }
 
-    let arena = arena.map_root::<root_provider!(Intermediate<'gc>)>(|_, root| {
+    let arena = arena.map_root::<Rooted![Intermediate<'gc>]>(|_, root| {
         let state = root.some_complex_state[0];
         Intermediate { root, state }
     });
@@ -278,7 +277,7 @@ fn test_map() {
     });
 
     let arena = arena
-        .try_map_root::<root_provider!(Intermediate<'gc>), ()>(|_, intermediate| {
+        .try_map_root::<Rooted![Intermediate<'gc>], ()>(|_, intermediate| {
             let state = intermediate.root.some_complex_state[1];
             Ok(Intermediate {
                 root: intermediate.root,
@@ -295,7 +294,7 @@ fn test_map() {
 
 #[test]
 fn test_dynamic_roots() {
-    let mut arena: Arena<root_provider!(DynamicRootSet<'gc>)> =
+    let mut arena: Arena<Rooted![DynamicRootSet<'gc>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
     #[derive(Collect)]
@@ -303,7 +302,7 @@ fn test_dynamic_roots() {
     struct Root1<'gc>(Gc<'gc, i32>);
 
     let root1 = arena.mutate_root(|mc, root_set| {
-        root_set.stash::<root_provider!(Root1<'gc>)>(Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
+        root_set.stash::<Rooted![Root1<'gc>]>(Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
     });
 
     #[derive(Collect)]
@@ -311,7 +310,7 @@ fn test_dynamic_roots() {
     struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
 
     let root2 = arena.mutate_root(|mc, root_set| {
-        root_set.stash::<root_provider!(Root2<'gc>)>(Gc::allocate(
+        root_set.stash::<Rooted![Root2<'gc>]>(Gc::allocate(
             mc,
             Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true)),
         ))

@@ -65,7 +65,7 @@ impl ArenaParameters {
 /// In order to use an implementation of this trait in an [`Arena`], it must implement
 /// `RootProvider<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
-pub trait RootProvider<'a> {
+pub trait Rootable<'a> {
     type Root: Collect + 'a;
 }
 
@@ -76,7 +76,7 @@ pub trait RootProvider<'a> {
 /// lifetime.
 ///
 /// ```
-/// # use gc_arena::{Arena, Collect, Gc, root_provider};
+/// # use gc_arena::{Arena, Collect, Gc, Rooted};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
@@ -85,7 +85,7 @@ pub trait RootProvider<'a> {
 ///     ptr: Gc<'gc, i32>,
 /// }
 ///
-/// type MyArena = Arena<root_provider!(MyRoot<'gc>)>;
+/// type MyArena = Arena<Rooted![MyRoot<'gc>]>;
 /// # }
 /// ```
 ///
@@ -93,7 +93,7 @@ pub trait RootProvider<'a> {
 /// parameters, though in complex cases it may be better to implement `RootProvider` directly.
 ///
 /// ```
-/// # use gc_arena::{Arena, Collect, Gc, root_provider, StaticCollect};
+/// # use gc_arena::{Arena, Collect, Gc, Rooted, StaticCollect};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
@@ -102,20 +102,20 @@ pub trait RootProvider<'a> {
 ///     ptr: Gc<'gc, StaticCollect<T>>,
 /// }
 ///
-/// type MyGenericArena<T> = Arena<root_provider!(MyGenericRoot<'gc, T>)>;
+/// type MyGenericArena<T> = Arena<Rooted![MyGenericRoot<'gc, T>]>;
 /// # }
 /// ```
 #[macro_export]
-macro_rules! root_provider {
+macro_rules! Rooted {
     ($root:ty) => {
         // Instead of generating an impl of `RootProvider`, we use a trait object. Thus, we avoid
         // the need to generate a new type for each invocation of this macro.
-        dyn for<'gc> $crate::RootProvider<'gc, Root = $root>
+        dyn for<'gc> $crate::Rootable<'gc, Root = $root>
     };
 }
 
 /// A helper type alias for a `RootProvider::Root` for a specific lifetime.
-pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
+pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
 /// A generic, garbage collected arena.
 ///
@@ -136,13 +136,13 @@ pub type Root<'a, R> = <R as RootProvider<'a>>::Root;
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R: for<'a> RootProvider<'a> + ?Sized> {
+pub struct Arena<R: for<'a> Rootable<'a> + ?Sized> {
     // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
     root: Root<'static, R>,
     context: Context,
 }
 
-impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
+impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `MutationContext` and returns the appropriate root.
     pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
@@ -210,7 +210,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn map_root<R2: for<'a> RootProvider<'a> + ?Sized>(
+    pub fn map_root<R2: for<'a> Rootable<'a> + ?Sized>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2> {
@@ -223,7 +223,7 @@ impl<R: for<'a> RootProvider<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn try_map_root<R2: for<'a> RootProvider<'a> + ?Sized, E>(
+    pub fn try_map_root<R2: for<'a> Rootable<'a> + ?Sized, E>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
     ) -> Result<Arena<R2>, E> {
