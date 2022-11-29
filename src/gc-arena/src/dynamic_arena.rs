@@ -34,18 +34,20 @@ struct Handle<'gc> {
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
-        // We cheat horribly and filter out dead handles during tracing. Since we have to go through
-        // the entire list of roots anyway, this is cheaper than filtering on e.g. stashing new
-        // roots.
-        let mut handles = self.handles.borrow_mut();
-        handles.retain(|handle| Weak::strong_count(&handle.rc) != 0);
-
         unsafe {
             self.id.trace(cc);
 
-            for handle in &*handles {
-                cc.trace(handle.ptr);
-            }
+            // We cheat horribly and filter out dead handles during tracing. Since we have to go through
+            // the entire list of roots anyway, this is cheaper than filtering on e.g. stashing new
+            // roots.
+            self.handles.borrow_mut().retain(|handle| {
+                if Weak::strong_count(&handle.rc) > 0 {
+                    cc.trace(handle.ptr);
+                    true
+                } else {
+                    false
+                }
+            });
         }
     }
 }
