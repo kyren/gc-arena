@@ -6,8 +6,7 @@ extern crate std;
 
 extern crate alloc;
 
-#[doc(hidden)]
-pub use gc_arena_derive::*;
+pub use gc_arena_derive::Collect;
 
 mod arena;
 mod collect;
