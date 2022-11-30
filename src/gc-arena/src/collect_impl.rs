@@ -160,7 +160,7 @@ unsafe impl<K, V, S> Collect for HashMap<K, V, S>
 where
     K: Eq + Hash + Collect,
     V: Collect,
-    S: BuildHasher,
+    S: BuildHasher + 'static,
 {
     #[inline]
     fn needs_trace() -> bool {
@@ -180,7 +180,7 @@ where
 unsafe impl<T, S> Collect for HashSet<T, S>
 where
     T: Eq + Hash + Collect,
-    S: BuildHasher,
+    S: BuildHasher + 'static,
 {
     #[inline]
     fn needs_trace() -> bool {
