@@ -7,3 +7,5 @@ Cargo.lock
 .dir-locals.el
 .envrc
 shell.nix
+flake.nix
+flake.lock
