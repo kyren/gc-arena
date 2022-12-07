@@ -1,4 +1,6 @@
 mod collect;
+mod helpers;
+mod mutable;
 
 synstructure::decl_derive! {
     [Collect, attributes(collect)] =>
@@ -35,4 +37,50 @@ synstructure::decl_derive! {
     /// to trace into the given field (the ideal choice where possible). Note that if the entire
     /// struct/enum is marked with `require_static` then this is unnecessary.
     collect::expand_derive
+}
+
+/// A derive macro for safe `Mutable` projections.
+///
+/// The macro will create the following static methods on the `derive`'d type:
+/// ```rust,ignore
+/// impl MyType {
+///     fn project_mut<'a>(this: &'a Mutable<Self>) -> Projection<'a>;
+///     // Only generated if your type implements `Collect`.
+///     fn mutate_fields<'a, 'gc>(
+///         mc: MutationContext<'gc, _>,
+///         this: &'a Gc<'gc, Self>,
+///     ) -> Projection<'a>;
+/// }
+/// ```
+/// Where `Projection<'a>` is an auto-generated type created as follows:
+///  - For every field marked with `#[mutable]`, the projection type will contain a `&'a Mutable<T>` reference;
+///  - For every other field, the projection type will contain a normal `&'a T` reference.
+///     - **Exception:** For struct with named fields, non-`#[mutable]` fields are skipped instead, and
+///     `Deref<Target = Self>` is implemented on the projection type.
+///
+/// By default, the projection type is unnameable, but a name can be provided as an argument to the derive
+/// macro (this is mandatory for `enum` types):
+/// ```rust,ignore
+/// #[derive(Mutable)]
+/// #[mutable(name = "MyEnumMut")]
+/// pub enum MyEnum<T> {
+///     Foo(#[mutable] T),
+///     Bar(String),
+/// }
+///
+/// pub fn project_foo<T>(e: &Mutable<MyEnum<T>>) -> Option<&Mutable<T>> {
+///     let e_mut: MyEnumMut<'_, T> = MyEnum::project_mut(e);
+///     match e_mut {
+///         MyEnumMut::Foo(v) => Some(v),
+///         MyEnumMut::Bar(_) => None,
+///     }
+/// }
+/// ```
+///
+/// The generated projection type and projection methods have the same visibility as the original type,
+/// except that `pub` is downgraded to `pub(crate)`.
+#[proc_macro_derive(Mutable, attributes(mutable, collect))]
+pub fn derive_mutable(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let input = syn::parse_macro_input!(input as syn::DeriveInput);
+    mutable::expand_derive(input).into()
 }

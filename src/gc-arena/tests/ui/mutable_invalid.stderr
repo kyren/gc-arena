@@ -1,0 +1,53 @@
+error: multiple names specified
+ --> tests/ui/mutable_invalid.rs:6:26
+  |
+6 | #[mutable(name = "Dup1", name = "Dup2")]
+  |                          ^^^^
+
+error: duplicate `#[mutable(...)]` attribute
+ --> tests/ui/mutable_invalid.rs:9:7
+  |
+9 |     #[mutable]
+  |       ^^^^^^^
+
+error: expected non-empty attribute list
+  --> tests/ui/mutable_invalid.rs:14:3
+   |
+14 | #[mutable]
+   |   ^^^^^^^
+
+error: unknown option
+  --> tests/ui/mutable_invalid.rs:16:15
+   |
+16 |     #[mutable(name = "a")]
+   |               ^^^^
+
+error: expected attribute list
+  --> tests/ui/mutable_invalid.rs:18:7
+   |
+18 |     #[mutable = "invalid"]
+   |       ^^^^^^^
+
+error: `#[derive(Mutable)]` requires at least one `#[mutable]` field
+  --> tests/ui/mutable_invalid.rs:22:10
+   |
+22 | #[derive(Mutable)]
+   |          ^^^^^^^
+   |
+   = note: this error originates in the derive macro `Mutable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `#[derive(Mutable)]` on enums requires `#[mutable(name = "...")]`
+  --> tests/ui/mutable_invalid.rs:25:10
+   |
+25 | #[derive(Mutable)]
+   |          ^^^^^^^
+   |
+   = note: this error originates in the derive macro `Mutable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error: `#[derive(Mutable)]` isn't supported on unions
+  --> tests/ui/mutable_invalid.rs:31:10
+   |
+31 | #[derive(Mutable)]
+   |          ^^^^^^^
+   |
+   = note: this error originates in the derive macro `Mutable` (in Nightly builds, run with -Z macro-backtrace for more info)
