@@ -5,25 +5,25 @@ use crate::{CollectionContext, MutationContext};
 
 use core::fmt::{self, Debug};
 
-pub struct GcWeak<'gc, T: 'gc + Collect> {
+pub struct GcWeak<'gc, T: ?Sized + 'gc> {
     pub(crate) inner: Gc<'gc, T>,
 }
 
-impl<'gc, T: Collect + 'gc> Copy for GcWeak<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc> Copy for GcWeak<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for GcWeak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Clone for GcWeak<'gc, T> {
     fn clone(&self) -> GcWeak<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: 'gc + Collect> Debug for GcWeak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "(GcWeak)")
     }
 }
 
-unsafe impl<'gc, T: 'gc + Collect> Collect for GcWeak<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
     fn trace(&self, _cc: CollectionContext) {
         unsafe {
             let gc = GcBox::erase(self.inner.ptr);
@@ -32,7 +32,7 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for GcWeak<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> GcWeak<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     pub fn upgrade(&self, mc: MutationContext<'gc, '_>) -> Option<Gc<'gc, T>> {
         unsafe {
             let ptr = GcBox::erase(self.inner.ptr);

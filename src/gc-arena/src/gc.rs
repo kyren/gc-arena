@@ -13,38 +13,38 @@ use crate::types::{GcBox, GcBoxInner, Invariant};
 /// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
-pub struct Gc<'gc, T: 'gc + Collect> {
+pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) ptr: NonNull<GcBoxInner<T>>,
     _invariant: Invariant<'gc>,
 }
 
-impl<'gc, T: 'gc + Collect + Debug> Debug for Gc<'gc, T> {
+impl<'gc, T: Debug + ?Sized + 'gc> Debug for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: 'gc + Collect> Pointer for Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Pointer for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&Gc::as_ptr(*self), fmt)
     }
 }
 
-impl<'gc, T: 'gc + Collect + Display> Display for Gc<'gc, T> {
+impl<'gc, T: Display + ?Sized + 'gc> Display for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&**self, fmt)
     }
 }
 
-impl<'gc, T: Collect + 'gc> Copy for Gc<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc> Copy for Gc<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
     fn clone(&self) -> Gc<'gc, T> {
         *self
     }
 }
 
-unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect for Gc<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
         unsafe {
             cc.trace(GcBox::erase(self.ptr));
@@ -52,7 +52,7 @@ unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
@@ -60,14 +60,16 @@ impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
+impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
         Gc {
             ptr: unsafe { mc.allocate(t) },
             _invariant: PhantomData,
         }
     }
+}
 
+impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
         GcWeak { inner: this }
     }
