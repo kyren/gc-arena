@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc_weak::GcWeak;
-use crate::types::{GcBox, GcBoxPtr, Invariant};
+use crate::types::{GcBox, GcBoxInner, Invariant};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through an `Allocator` inside an arena type,
@@ -14,7 +14,7 @@ use crate::types::{GcBox, GcBoxPtr, Invariant};
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
 pub struct Gc<'gc, T: 'gc + Collect> {
-    pub(crate) ptr: NonNull<GcBox<T>>,
+    pub(crate) ptr: NonNull<GcBoxInner<T>>,
     _invariant: Invariant<'gc>,
 }
 
@@ -47,7 +47,7 @@ impl<'gc, T: Collect + 'gc> Clone for Gc<'gc, T> {
 unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
         unsafe {
-            cc.trace(GcBoxPtr::erase(self.ptr));
+            cc.trace(GcBox::erase(self.ptr));
         }
     }
 }
@@ -77,7 +77,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     /// code.
     pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {
-            mc.write_barrier(GcBoxPtr::erase(gc.ptr));
+            mc.write_barrier(GcBox::erase(gc.ptr));
         }
     }
 

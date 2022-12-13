@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{types::GcBoxPtr, Collect, Gc, GcCell, MutationContext, Root, Rootable};
+use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -55,7 +55,7 @@ impl<'gc> DynamicRootSet<'gc> {
 
         let rc = Rc::new(inner.set_id.clone());
         inner.handles.push(Handle {
-            ptr: unsafe { GcBoxPtr::erase(root.ptr) },
+            ptr: unsafe { GcBox::erase(root.ptr) },
             rc: Rc::downgrade(&rc),
         });
 
@@ -108,6 +108,6 @@ unsafe impl<'gc> Collect for Inner {
 }
 
 struct Handle {
-    ptr: GcBoxPtr,
+    ptr: GcBox,
     rc: Weak<Rc<SetId>>,
 }

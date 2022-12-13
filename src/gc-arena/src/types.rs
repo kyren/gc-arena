@@ -29,13 +29,13 @@ pub(crate) enum GcColor {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GcBoxPtr(NonNull<GcBox<dyn Collect>>);
+pub(crate) struct GcBox(NonNull<GcBoxInner<dyn Collect>>);
 
-impl GcBoxPtr {
+impl GcBox {
     #[inline(always)]
-    pub(crate) unsafe fn erase<'gc, T: Collect + 'gc>(ptr: NonNull<GcBox<T>>) -> Self {
-        let erased: *mut GcBox<dyn Collect + 'gc> = ptr.as_ptr();
-        let erased: *mut GcBox<dyn Collect + 'static> = mem::transmute(erased);
+    pub(crate) unsafe fn erase<'gc, T: Collect + 'gc>(ptr: NonNull<GcBoxInner<T>>) -> Self {
+        let erased: *mut GcBoxInner<dyn Collect + 'gc> = ptr.as_ptr();
+        let erased: *mut GcBoxInner<dyn Collect + 'static> = mem::transmute(erased);
         Self(NonNull::new_unchecked(erased))
     }
 
@@ -45,7 +45,7 @@ impl GcBoxPtr {
     }
 
     #[inline(always)]
-    pub(crate) fn next(&self) -> &Cell<Option<GcBoxPtr>> {
+    pub(crate) fn next(&self) -> &Cell<Option<GcBox>> {
         unsafe { &self.0.as_ref().next }
     }
 
@@ -74,15 +74,15 @@ impl GcBoxPtr {
     }
 }
 
-pub(crate) struct GcBox<T: Collect + ?Sized> {
+pub(crate) struct GcBoxInner<T: Collect + ?Sized> {
     flags: GcFlags,
-    next: Cell<Option<GcBoxPtr>>,
+    next: Cell<Option<GcBox>>,
     value: mem::ManuallyDrop<T>,
 }
 
-impl<T: Collect + ?Sized> GcBox<T> {
+impl<T: Collect + ?Sized> GcBoxInner<T> {
     #[inline(always)]
-    pub(crate) fn new(flags: GcFlags, next: Option<GcBoxPtr>, t: T) -> Self
+    pub(crate) fn new(flags: GcFlags, next: Option<GcBox>, t: T) -> Self
     where
         T: Sized,
     {

@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::arena::ArenaParameters;
 use crate::collect::Collect;
-use crate::types::{GcBox, GcBoxPtr, GcColor, GcFlags, Invariant};
+use crate::types::{GcBox, GcBoxInner, GcColor, GcFlags, Invariant};
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
@@ -18,16 +18,16 @@ pub struct MutationContext<'gc, 'context> {
 }
 
 impl<'gc, 'context> MutationContext<'gc, 'context> {
-    pub(crate) unsafe fn allocate<T: 'gc + Collect>(self, t: T) -> NonNull<GcBox<T>> {
+    pub(crate) unsafe fn allocate<T: 'gc + Collect>(self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
     }
 
-    pub(crate) unsafe fn write_barrier(self, ptr: GcBoxPtr) {
-        self.context.write_barrier(ptr)
+    pub(crate) unsafe fn write_barrier(self, gc_box: GcBox) {
+        self.context.write_barrier(gc_box)
     }
 
-    pub(crate) unsafe fn upgrade(self, ptr: GcBoxPtr) -> bool {
-        self.context.upgrade(ptr)
+    pub(crate) unsafe fn upgrade(self, gc_box: GcBox) -> bool {
+        self.context.upgrade(gc_box)
     }
 }
 
@@ -39,8 +39,8 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
-    pub(crate) unsafe fn trace(self, ptr: GcBoxPtr) {
-        self.context.trace(ptr)
+    pub(crate) unsafe fn trace(self, gc_box: GcBox) {
+        self.context.trace(gc_box)
     }
 }
 
@@ -55,42 +55,42 @@ pub(crate) struct Context {
     allocation_debt: Cell<f64>,
 
     // A linked list of all allocated `GcBox`es.
-    all: Cell<Option<GcBoxPtr>>,
+    all: Cell<Option<GcBox>>,
 
     // A copy of the head of `all` at the end of `Phase::Propagate`.
     // During `Phase::Sweep`, we free all white allocations on this list.
     // Any allocations created *during* `Phase::Sweep` will be added to `all`,
     // but `sweep` will *not* be updated. This ensures that we keep allocations
     // alive until we've had a chance to trace them.
-    sweep: Cell<Option<GcBoxPtr>>,
+    sweep: Cell<Option<GcBox>>,
 
     // The most recent black object that we encountered during `Phase::Sweep`.
     // When we free objects, we update this `GcBox.next` to remove them from
     // the linked list.
-    sweep_prev: Cell<Option<GcBoxPtr>>,
+    sweep_prev: Cell<Option<GcBox>>,
 
     /// A queue of gray objects, used during `Phase::Propagate`.
     /// This holds traceable objects that have yet to be traced.
     /// When we enter `Phase::Propagate`, we push `root` to this queue.
-    gray: RefCell<Vec<GcBoxPtr>>,
+    gray: RefCell<Vec<GcBox>>,
 
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
-    gray_again: RefCell<Vec<GcBoxPtr>>,
+    gray_again: RefCell<Vec<GcBox>>,
 }
 
 impl Drop for Context {
     fn drop(&mut self) {
-        struct DropAll(Option<GcBoxPtr>);
+        struct DropAll(Option<GcBox>);
 
         impl Drop for DropAll {
             fn drop(&mut self) {
                 unsafe {
-                    if let Some(ptr) = self.0.take() {
-                        let mut drop_resume = DropAll(Some(ptr));
-                        while let Some(ptr) = drop_resume.0.take() {
-                            drop_resume.0 = ptr.next().get();
-                            free_gc_box(ptr);
+                    if let Some(gc_box) = self.0.take() {
+                        let mut drop_resume = DropAll(Some(gc_box));
+                        while let Some(gc_box) = drop_resume.0.take() {
+                            drop_resume.0 = gc_box.next().get();
+                            free_gc_box(gc_box);
                         }
                     }
                 }
@@ -175,23 +175,23 @@ impl Context {
                     // which are gray a second time have already been counted as work, so we don't
                     // double count them. Processing "gray again" objects later also gives them more
                     // time to be mutated again without triggering another write barrier.
-                    let next_gray = if let Some(ptr) = self.gray.borrow_mut().pop() {
-                        let gray_size = ptr.size_of_box() as f64;
+                    let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
+                        let gray_size = gc_box.size_of_box() as f64;
                         work_done += gray_size;
                         self.allocation_debt
                             .set((self.allocation_debt.get() - gray_size).max(0.0));
-                        Some(ptr)
-                    } else if let Some(ptr) = self.gray_again.borrow_mut().pop() {
-                        Some(ptr)
+                        Some(gc_box)
+                    } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
+                        Some(gc_box)
                     } else {
                         None
                     };
 
-                    if let Some(ptr) = next_gray {
+                    if let Some(gc_box) = next_gray {
                         // If we have an object in the gray queue, take one, trace it, and turn it
                         // black.
-                        ptr.trace_value(cc);
-                        ptr.flags().set_color(GcColor::Black);
+                        gc_box.trace_value(cc);
+                        gc_box.flags().set_color(GcColor::Black);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
@@ -213,8 +213,8 @@ impl Context {
                         let sweep_size = sweep.size_of_box();
                         let sweep_flags = sweep.flags();
 
-                        let next_ptr = sweep.next().get();
-                        self.sweep.set(next_ptr);
+                        let next_box = sweep.next().get();
+                        self.sweep.set(next_box);
 
                         // If the next object in the sweep list is white, we need to remove it from
                         // the main list and destruct it, otherwise it should be black, and we
@@ -237,12 +237,12 @@ impl Context {
                                 // If the next object in the sweep portion of the main list is white, we
                                 // need to remove it from the main object list and destruct it.
                                 if let Some(sweep_prev) = self.sweep_prev.get() {
-                                    sweep_prev.next().set(next_ptr);
+                                    sweep_prev.next().set(next_box);
                                 } else {
                                     // If `sweep_prev` is None, then the sweep pointer is also the
                                     // beginning of the main object list, so we need to adjust it.
                                     debug_assert_eq!(self.all.get(), Some(sweep));
-                                    self.all.set(next_ptr);
+                                    self.all.set(next_box);
                                 }
                                 self.total_allocated
                                     .set(self.total_allocated.get() - sweep_size);
@@ -288,8 +288,8 @@ impl Context {
         work_done
     }
 
-    unsafe fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBox<T>> {
-        let alloc_size = mem::size_of::<GcBox<T>>();
+    unsafe fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+        let alloc_size = mem::size_of::<GcBoxInner<T>>();
         self.total_allocated
             .set(self.total_allocated.get() + alloc_size);
         if self.phase.get() == Phase::Sleep && self.total_allocated.get() > self.wakeup_total.get()
@@ -312,14 +312,14 @@ impl Context {
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
-        let mut uninitialized = Box::new(mem::MaybeUninit::<GcBox<T>>::uninit());
+        let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
         core::ptr::write(
             uninitialized.as_mut_ptr(),
-            GcBox::new(flags, self.all.get(), t),
+            GcBoxInner::new(flags, self.all.get(), t),
         );
-        let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBox<T>);
+        let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>);
 
-        self.all.set(Some(GcBoxPtr::erase(ptr)));
+        self.all.set(Some(GcBox::erase(ptr)));
         if self.phase.get() == Phase::Sweep && self.sweep_prev.get().is_none() {
             self.sweep_prev.set(self.all.get());
         }
@@ -327,19 +327,19 @@ impl Context {
         ptr
     }
 
-    unsafe fn write_barrier(&self, ptr: GcBoxPtr) {
+    unsafe fn write_barrier(&self, gc_box: GcBox) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
-        let flags = ptr.flags();
+        let flags = gc_box.flags();
         if self.phase.get() == Phase::Propagate && flags.color() == GcColor::Black {
             flags.set_color(GcColor::Gray);
-            self.gray_again.borrow_mut().push(ptr);
+            self.gray_again.borrow_mut().push(gc_box);
         }
     }
 
-    unsafe fn trace(&self, ptr: GcBoxPtr) {
-        let flags = ptr.flags();
+    unsafe fn trace(&self, gc_box: GcBox) {
+        let flags = gc_box.flags();
         match flags.color() {
             GcColor::Black | GcColor::Gray => {}
             GcColor::White => {
@@ -347,7 +347,7 @@ impl Context {
                     // A white traceable object is not in the gray queue, becomes gray and enters
                     // the normal gray queue.
                     flags.set_color(GcColor::Gray);
-                    self.gray.borrow_mut().push(ptr);
+                    self.gray.borrow_mut().push(gc_box);
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
                     flags.set_color(GcColor::Black);
@@ -360,8 +360,8 @@ impl Context {
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     ///
     /// Safety: `ptr` must be a valid pointer to a GcBox<T>.
-    unsafe fn upgrade(&self, ptr: GcBoxPtr) -> bool {
-        let flags = ptr.flags();
+    unsafe fn upgrade(&self, gc_box: GcBox) -> bool {
+        let flags = gc_box.flags();
 
         // This object has already been freed, definitely not safe to upgrade.
         if !flags.is_live() {
@@ -409,12 +409,12 @@ impl Context {
     }
 }
 
-unsafe fn free_gc_box<'gc>(mut ptr: GcBoxPtr) {
-    if ptr.flags().is_live() {
+unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
+    if gc_box.flags().is_live() {
         // If the alive flag is set, that means we haven't dropped the inner value of this object,
-        ptr.drop_in_place();
+        gc_box.drop_in_place();
     }
-    ptr.dealloc();
+    gc_box.dealloc();
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
