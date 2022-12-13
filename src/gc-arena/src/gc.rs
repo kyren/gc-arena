@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 use crate::collect::Collect;
 use crate::context::{CollectionContext, MutationContext};
 use crate::gc_weak::GcWeak;
-use crate::types::{GcBox, Invariant};
+use crate::types::{GcBox, GcBoxPtr, Invariant};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through an `Allocator` inside an arena type,
@@ -47,7 +47,7 @@ impl<'gc, T: Collect + 'gc> Clone for Gc<'gc, T> {
 unsafe impl<'gc, T: 'gc + Collect> Collect for Gc<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
         unsafe {
-            cc.trace(self.ptr);
+            cc.trace(GcBoxPtr::erase(self.ptr));
         }
     }
 }
@@ -56,7 +56,7 @@ impl<'gc, T: Collect + 'gc> Deref for Gc<'gc, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr.as_ref().value.get() }
+        unsafe { &*self.ptr.as_ref().value() }
     }
 }
 
@@ -77,7 +77,7 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     /// code.
     pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
         unsafe {
-            mc.write_barrier(gc.ptr);
+            mc.write_barrier(GcBoxPtr::erase(gc.ptr));
         }
     }
 
@@ -86,6 +86,6 @@ impl<'gc, T: 'gc + Collect> Gc<'gc, T> {
     }
 
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe { gc.ptr.as_ref().value.get() }
+        unsafe { gc.ptr.as_ref().value() }
     }
 }

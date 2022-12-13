@@ -1,3 +1,4 @@
+use crate::types::GcBoxPtr;
 use crate::GcCell;
 use crate::{collect::Collect, MutationContext};
 
@@ -24,15 +25,17 @@ impl<'gc, T: 'gc + Collect> Debug for GcWeakCell<'gc, T> {
 unsafe impl<'gc, T: 'gc + Collect> Collect for GcWeakCell<'gc, T> {
     fn trace(&self, _cc: crate::CollectionContext) {
         unsafe {
-            let gc = self.inner.0.ptr.as_ref();
-
-            gc.flags.set_traced_weak_ref(true);
+            let gc = GcBoxPtr::erase(self.inner.0.ptr);
+            gc.flags().set_traced_weak_ref(true);
         }
     }
 }
 
 impl<'gc, T: Collect + 'gc> GcWeakCell<'gc, T> {
     pub fn upgrade(&self, mc: MutationContext<'gc, '_>) -> Option<GcCell<'gc, T>> {
-        unsafe { mc.upgrade(self.inner.0.ptr).then(|| self.inner) }
+        unsafe {
+            let ptr = GcBoxPtr::erase(self.inner.0.ptr);
+            mc.upgrade(ptr).then(|| self.inner)
+        }
     }
 }

@@ -2,9 +2,9 @@ use alloc::{
     rc::{Rc, Weak},
     vec::Vec,
 };
-use core::{mem, ptr::NonNull};
+use core::mem;
 
-use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
+use crate::{types::GcBoxPtr, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -16,7 +16,7 @@ use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 //      a match lets us know that this `Gc` must have originated from *this* set, so it is safe to
 //      cast it back to whatever our current `'gc` lifetime is.
 #[derive(Copy, Clone)]
-pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner<'gc>>);
+pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
@@ -55,7 +55,7 @@ impl<'gc> DynamicRootSet<'gc> {
 
         let rc = Rc::new(inner.set_id.clone());
         inner.handles.push(Handle {
-            ptr: root.ptr,
+            ptr: unsafe { GcBoxPtr::erase(root.ptr) },
             rc: Rc::downgrade(&rc),
         });
 
@@ -92,12 +92,12 @@ pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
 struct SetId {}
 
-struct Inner<'gc> {
-    handles: Vec<Handle<'gc>>,
+struct Inner {
+    handles: Vec<Handle>,
     set_id: Rc<SetId>,
 }
 
-unsafe impl<'gc> Collect for Inner<'gc> {
+unsafe impl<'gc> Collect for Inner {
     fn trace(&self, cc: crate::CollectionContext) {
         for handle in &self.handles {
             unsafe {
@@ -107,7 +107,7 @@ unsafe impl<'gc> Collect for Inner<'gc> {
     }
 }
 
-struct Handle<'gc> {
-    ptr: NonNull<GcBox<dyn Collect + 'gc>>,
+struct Handle {
+    ptr: GcBoxPtr,
     rc: Weak<Rc<SetId>>,
 }

@@ -1,7 +1,9 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
+use core::mem;
 use core::ptr::NonNull;
+
+use alloc::boxed::Box;
 
 use crate::collect::Collect;
 
@@ -26,10 +28,75 @@ pub(crate) enum GcColor {
     Black,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GcBoxPtr(NonNull<GcBox<dyn Collect>>);
+
+impl GcBoxPtr {
+    #[inline(always)]
+    pub(crate) unsafe fn erase<'gc, T: Collect + 'gc>(ptr: NonNull<GcBox<T>>) -> Self {
+        let erased: *mut GcBox<dyn Collect + 'gc> = ptr.as_ptr();
+        let erased: *mut GcBox<dyn Collect + 'static> = mem::transmute(erased);
+        Self(NonNull::new_unchecked(erased))
+    }
+
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> &GcFlags {
+        unsafe { &self.0.as_ref().flags }
+    }
+
+    #[inline(always)]
+    pub(crate) fn next(&self) -> &Cell<Option<GcBoxPtr>> {
+        unsafe { &self.0.as_ref().next }
+    }
+
+    #[inline(always)]
+    pub(crate) fn size_of_box(&self) -> usize {
+        let erased = unsafe { self.0.as_ref() };
+        mem::size_of_val(erased)
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn trace_value(&self, cc: crate::CollectionContext) {
+        self.0.as_ref().value().trace(cc)
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn drop_in_place(&mut self) {
+        // We get interior mutability "for free" thanks to the raw
+        // pointer indirection.
+        let value = &mut self.0.as_mut().value;
+        mem::ManuallyDrop::drop(value);
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn dealloc(self) {
+        let _ = Box::from_raw(self.0.as_ptr());
+    }
+}
+
 pub(crate) struct GcBox<T: Collect + ?Sized> {
-    pub(crate) flags: GcFlags,
-    pub(crate) next: Cell<Option<NonNull<GcBox<dyn Collect>>>>,
-    pub(crate) value: ManuallyDrop<UnsafeCell<T>>,
+    flags: GcFlags,
+    next: Cell<Option<GcBoxPtr>>,
+    value: mem::ManuallyDrop<T>,
+}
+
+impl<T: Collect + ?Sized> GcBox<T> {
+    #[inline(always)]
+    pub(crate) fn new(flags: GcFlags, next: Option<GcBoxPtr>, t: T) -> Self
+    where
+        T: Sized,
+    {
+        Self {
+            flags,
+            next: Cell::new(next),
+            value: mem::ManuallyDrop::new(t),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn value(&self) -> &T {
+        &*self.value
+    }
 }
 
 pub(crate) struct GcFlags(Cell<u8>);
