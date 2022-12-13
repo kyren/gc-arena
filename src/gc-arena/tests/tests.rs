@@ -364,6 +364,30 @@ fn test_dynamic_bad_set() {
 }
 
 #[test]
+fn test_unsize() {
+    use gc_arena::unsize;
+    use std::fmt::Display;
+
+    gc_arena::rootless_arena(|mc| {
+        let gc: Gc<'_, String> = Gc::allocate(mc, "Hello world!".into());
+        let gc_weak = Gc::downgrade(gc);
+
+        let dyn_gc = unsize!(gc => dyn Display);
+        let dyn_weak = unsize!(gc_weak => dyn Display);
+        assert_eq!(dyn_gc.to_string(), "Hello world!");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
+
+        let gc: GcCell<'_, i32> = GcCell::allocate(mc, 12345);
+        let gc_weak = GcCell::downgrade(gc);
+
+        let dyn_gc = unsize!(gc => dyn Display);
+        let dyn_weak = unsize!(gc_weak => dyn Display);
+        assert_eq!(dyn_gc.read().to_string(), "12345");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().read().to_string(), "12345");
+    })
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

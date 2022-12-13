@@ -15,7 +15,7 @@ use crate::types::{GcBox, GcBoxInner, Invariant};
 /// pointers will never be dangling and are always safe to access.
 pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) ptr: NonNull<GcBoxInner<T>>,
-    _invariant: Invariant<'gc>,
+    pub(crate) _invariant: Invariant<'gc>,
 }
 
 impl<'gc, T: Debug + ?Sized + 'gc> Debug for Gc<'gc, T> {
