@@ -1,11 +1,130 @@
+use core::alloc::Layout;
 use core::cell::Cell;
 use core::marker::PhantomData;
-use core::mem;
 use core::ptr::NonNull;
-
-use alloc::boxed::Box;
+use core::{mem, ptr};
 
 use crate::collect::Collect;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
+
+impl GcBox {
+    #[inline(always)]
+    pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
+        // This cast is sound because `GcBoxInner` is `repr(C)`.
+        let erased = ptr.as_ptr() as *mut GcBoxInner<()>;
+        Self(NonNull::new_unchecked(erased))
+    }
+
+    #[inline(always)]
+    fn erased_value(&self) -> *mut () {
+        unsafe {
+            let ptr = self.0.as_ptr();
+            // Don't create a reference, to keep the full provenance.
+            // Also, this gives us interior mutability "for free".
+            ptr::addr_of_mut!((*ptr).value) as *mut ()
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn flags(&self) -> &GcFlags {
+        unsafe { &self.0.as_ref().flags }
+    }
+
+    #[inline(always)]
+    pub(crate) fn next(&self) -> &Cell<Option<GcBox>> {
+        unsafe { &self.0.as_ref().next }
+    }
+
+    #[inline(always)]
+    pub(crate) fn size_of_box(&self) -> usize {
+        let inner = unsafe { self.0.as_ref() };
+        inner.vtable.box_layout.size()
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn trace_value(&self, cc: crate::CollectionContext) {
+        let vtable = self.0.as_ref().vtable;
+        (vtable.trace_value)(*self, cc)
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn drop_in_place(&mut self) {
+        let vtable = self.0.as_ref().vtable;
+        (vtable.drop_value)(*self)
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn dealloc(self) {
+        let vtable = self.0.as_ref().vtable;
+        let ptr = self.0.as_ptr() as *mut u8;
+        alloc::alloc::dealloc(ptr, vtable.box_layout);
+    }
+}
+
+#[repr(C)]
+pub(crate) struct GcBoxInner<T: ?Sized> {
+    flags: GcFlags,
+    next: Cell<Option<GcBox>>,
+    vtable: &'static CollectVtable,
+    value: mem::ManuallyDrop<T>,
+}
+
+impl<T: ?Sized> GcBoxInner<T> {
+    #[inline(always)]
+    pub(crate) fn new(flags: GcFlags, next: Option<GcBox>, t: T) -> Self
+    where
+        T: Collect + Sized,
+    {
+        // Helper trait to allow borrowing a 'static reference.
+        trait HasCollectVtable {
+            const VTABLE: CollectVtable;
+        }
+
+        impl<T: Collect> HasCollectVtable for T {
+            const VTABLE: CollectVtable = CollectVtable::vtable_for::<T>();
+        }
+
+        Self {
+            flags,
+            next: Cell::new(next),
+            vtable: &<T as HasCollectVtable>::VTABLE,
+            value: mem::ManuallyDrop::new(t),
+        }
+    }
+
+    #[inline(always)]
+    pub(crate) fn value(&self) -> &T {
+        &*self.value
+    }
+}
+
+struct CollectVtable {
+    box_layout: Layout,
+    drop_value: unsafe fn(GcBox),
+    trace_value: unsafe fn(GcBox, crate::CollectionContext<'_>),
+}
+
+impl CollectVtable {
+    #[inline(always)]
+    const fn vtable_for<T: Collect>() -> Self {
+        Self {
+            box_layout: Layout::new::<GcBoxInner<T>>(),
+            drop_value: Self::erased_drop_shim::<T>,
+            trace_value: Self::erased_trace_shim::<T>,
+        }
+    }
+
+    unsafe fn erased_drop_shim<T>(erased: GcBox) {
+        ptr::drop_in_place(erased.erased_value() as *mut T)
+    }
+
+    unsafe fn erased_trace_shim<T: Collect>(erased: GcBox, cc: crate::CollectionContext<'_>) {
+        let val = &*(erased.erased_value() as *mut T);
+        val.trace(cc)
+    }
+}
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum GcColor {
@@ -26,77 +145,6 @@ pub(crate) enum GcColor {
     /// during `Phase::Sweep`. At the end of `Phase::Sweep`, all black
     /// objects will be reset to white.
     Black,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GcBox(NonNull<GcBoxInner<dyn Collect>>);
-
-impl GcBox {
-    #[inline(always)]
-    pub(crate) unsafe fn erase<'gc, T: Collect + 'gc>(ptr: NonNull<GcBoxInner<T>>) -> Self {
-        let erased: *mut GcBoxInner<dyn Collect + 'gc> = ptr.as_ptr();
-        let erased: *mut GcBoxInner<dyn Collect + 'static> = mem::transmute(erased);
-        Self(NonNull::new_unchecked(erased))
-    }
-
-    #[inline(always)]
-    pub(crate) fn flags(&self) -> &GcFlags {
-        unsafe { &self.0.as_ref().flags }
-    }
-
-    #[inline(always)]
-    pub(crate) fn next(&self) -> &Cell<Option<GcBox>> {
-        unsafe { &self.0.as_ref().next }
-    }
-
-    #[inline(always)]
-    pub(crate) fn size_of_box(&self) -> usize {
-        let erased = unsafe { self.0.as_ref() };
-        mem::size_of_val(erased)
-    }
-
-    #[inline(always)]
-    pub(crate) unsafe fn trace_value(&self, cc: crate::CollectionContext) {
-        self.0.as_ref().value().trace(cc)
-    }
-
-    #[inline(always)]
-    pub(crate) unsafe fn drop_in_place(&mut self) {
-        // We get interior mutability "for free" thanks to the raw
-        // pointer indirection.
-        let value = &mut self.0.as_mut().value;
-        mem::ManuallyDrop::drop(value);
-    }
-
-    #[inline(always)]
-    pub(crate) unsafe fn dealloc(self) {
-        let _ = Box::from_raw(self.0.as_ptr());
-    }
-}
-
-pub(crate) struct GcBoxInner<T: Collect + ?Sized> {
-    flags: GcFlags,
-    next: Cell<Option<GcBox>>,
-    value: mem::ManuallyDrop<T>,
-}
-
-impl<T: Collect + ?Sized> GcBoxInner<T> {
-    #[inline(always)]
-    pub(crate) fn new(flags: GcFlags, next: Option<GcBox>, t: T) -> Self
-    where
-        T: Sized,
-    {
-        Self {
-            flags,
-            next: Cell::new(next),
-            value: mem::ManuallyDrop::new(t),
-        }
-    }
-
-    #[inline(always)]
-    pub(crate) fn value(&self) -> &T {
-        &*self.value
-    }
 }
 
 pub(crate) struct GcFlags(Cell<u8>);
