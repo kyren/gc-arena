@@ -20,6 +20,11 @@ mod gc_weak_cell;
 mod no_drop;
 mod static_collect;
 mod types;
+mod unsize;
+
+// Not public API.
+#[doc(hidden)]
+pub use unsize::__CoercePtrInternal;
 
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},

@@ -11,17 +11,17 @@ use crate::GcWeakCell;
 /// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
 /// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
 /// `Gc::write_barrier`.
-pub struct GcCell<'gc, T: 'gc + Collect>(pub(crate) Gc<'gc, GcRefCell<T>>);
+pub struct GcCell<'gc, T: ?Sized + 'gc>(pub(crate) Gc<'gc, GcRefCell<T>>);
 
-impl<'gc, T: Collect + 'gc> Copy for GcCell<'gc, T> {}
+impl<'gc, T: ?Sized + 'gc> Copy for GcCell<'gc, T> {}
 
-impl<'gc, T: Collect + 'gc> Clone for GcCell<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Clone for GcCell<'gc, T> {
     fn clone(&self) -> GcCell<'gc, T> {
         *self
     }
 }
 
-impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
+impl<'gc, T: Debug + ?Sized + 'gc> Debug for GcCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.try_read() {
             Ok(borrow) => fmt.debug_struct("GcCell").field("value", &borrow).finish(),
@@ -44,19 +44,19 @@ impl<'gc, T: 'gc + Collect + Debug> Debug for GcCell<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc + Collect> Pointer for GcCell<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Pointer for GcCell<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&self.as_ptr(), fmt)
     }
 }
 
-unsafe impl<'gc, T: 'gc + Collect> Collect for GcCell<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcCell<'gc, T> {
     fn trace(&self, cc: CollectionContext) {
         self.0.trace(cc)
     }
 }
 
-impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
+impl<'gc, T: Collect + 'gc> GcCell<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
         GcCell(Gc::allocate(
             mc,
@@ -65,7 +65,9 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
             },
         ))
     }
+}
 
+impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     pub fn downgrade(this: GcCell<'gc, T>) -> GcWeakCell<'gc, T> {
         GcWeakCell { inner: this }
     }
@@ -130,11 +132,11 @@ impl<'gc, T: 'gc + Collect> GcCell<'gc, T> {
     }
 }
 
-pub(crate) struct GcRefCell<T: Collect> {
+pub(crate) struct GcRefCell<T: ?Sized> {
     cell: RefCell<T>,
 }
 
-unsafe impl<'gc, T: Collect + 'gc> Collect for GcRefCell<T> {
+unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for GcRefCell<T> {
     fn trace(&self, cc: CollectionContext) {
         self.cell.borrow().trace(cc);
     }

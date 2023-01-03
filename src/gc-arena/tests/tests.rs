@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gc_arena::{
-    unsafe_empty_collect, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell, GcWeak,
-    Rootable,
+    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell,
+    GcWeak, Rootable,
 };
 
 #[test]
@@ -67,6 +67,43 @@ fn weak_allocation() {
         });
         arena.collect_debt();
     }
+}
+
+#[test]
+fn dyn_sized_allocation() {
+    #[derive(Clone)]
+    struct RefCounter(Rc<()>);
+    unsafe_empty_collect!(RefCounter);
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        slice: Gc<'gc, [Gc<'gc, RefCounter>]>,
+    }
+
+    const SIZE: usize = 10;
+
+    let counter = RefCounter(Rc::new(()));
+
+    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+        let array: [_; SIZE] = core::array::from_fn(|_| Gc::allocate(mc, counter.clone()));
+        let slice = unsize!(Gc::allocate(mc, array) => [_]);
+        TestRoot { slice }
+    });
+
+    arena.collect_all();
+
+    // Check that no counter was dropped.
+    assert_eq!(Rc::strong_count(&counter.0), SIZE + 1);
+
+    // Drop all the RefCounters.
+    arena.mutate_root(|mc, root| {
+        root.slice = unsize!(Gc::allocate(mc, []) => [_]);
+    });
+    arena.collect_all();
+
+    // Check that all counters were dropped.
+    assert_eq!(Rc::strong_count(&counter.0), 1);
 }
 
 #[cfg(feature = "std")]
@@ -361,6 +398,29 @@ fn test_dynamic_bad_set() {
     arena2.mutate(|_, root| {
         root.fetch(&dyn_root);
     });
+}
+
+#[test]
+fn test_unsize() {
+    use std::fmt::Display;
+
+    gc_arena::rootless_arena(|mc| {
+        let gc: Gc<'_, String> = Gc::allocate(mc, "Hello world!".into());
+        let gc_weak = Gc::downgrade(gc);
+
+        let dyn_gc = unsize!(gc => dyn Display);
+        let dyn_weak = unsize!(gc_weak => dyn Display);
+        assert_eq!(dyn_gc.to_string(), "Hello world!");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
+
+        let gc: GcCell<'_, i32> = GcCell::allocate(mc, 12345);
+        let gc_weak = GcCell::downgrade(gc);
+
+        let dyn_gc = unsize!(gc => dyn Display);
+        let dyn_weak = unsize!(gc_weak => dyn Display);
+        assert_eq!(dyn_gc.read().to_string(), "12345");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().read().to_string(), "12345");
+    })
 }
 
 #[test]
