@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gc_arena::{
-    unsafe_empty_collect, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell, GcWeak,
-    Rootable,
+    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell,
+    GcWeak, Rootable,
 };
 
 #[test]
@@ -67,6 +67,43 @@ fn weak_allocation() {
         });
         arena.collect_debt();
     }
+}
+
+#[test]
+fn dyn_sized_allocation() {
+    #[derive(Clone)]
+    struct RefCounter(Rc<()>);
+    unsafe_empty_collect!(RefCounter);
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        slice: Gc<'gc, [Gc<'gc, RefCounter>]>,
+    }
+
+    const SIZE: usize = 10;
+
+    let counter = RefCounter(Rc::new(()));
+
+    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+        let array: [_; SIZE] = core::array::from_fn(|_| Gc::allocate(mc, counter.clone()));
+        let slice = unsize!(Gc::allocate(mc, array) => [_]);
+        TestRoot { slice }
+    });
+
+    arena.collect_all();
+
+    // Check that no counter was dropped.
+    assert_eq!(Rc::strong_count(&counter.0), SIZE + 1);
+
+    // Drop all the RefCounters.
+    arena.mutate_root(|mc, root| {
+        root.slice = unsize!(Gc::allocate(mc, []) => [_]);
+    });
+    arena.collect_all();
+
+    // Check that all counters were dropped.
+    assert_eq!(Rc::strong_count(&counter.0), 1);
 }
 
 #[cfg(feature = "std")]
@@ -365,7 +402,6 @@ fn test_dynamic_bad_set() {
 
 #[test]
 fn test_unsize() {
-    use gc_arena::unsize;
     use std::fmt::Display;
 
     gc_arena::rootless_arena(|mc| {
