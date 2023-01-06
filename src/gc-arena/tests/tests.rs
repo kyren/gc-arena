@@ -211,6 +211,66 @@ fn all_garbage_collected() {
 }
 
 #[test]
+fn test_layouts() {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    static PTR: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+    #[derive(Collect)]
+    #[collect(require_static)]
+    struct Wrapper<T: 'static>(T);
+
+    impl<T> Drop for Wrapper<T> {
+        fn drop(&mut self) {
+            let ptr = self as *const Self;
+            PTR.store(ptr as *mut (), Ordering::SeqCst);
+        }
+    }
+
+    macro_rules! test_layout {
+        (size=$size:literal, align=$align:literal) => {{
+            #[repr(align($align))]
+            struct Aligned([u8; $size]);
+
+            let array: [u8; $size] = core::array::from_fn(|i| i as u8);
+
+            let ptr = gc_arena::rootless_arena(|mc| {
+                let gc = Gc::allocate(mc, Wrapper(Aligned(array)));
+                assert_eq!(array, gc.0 .0);
+                Gc::as_ptr(gc) as *mut ()
+            });
+
+            let dropped_ptr = PTR.load(Ordering::SeqCst);
+            assert_eq!(ptr, dropped_ptr, "size={}, align={}", $size, $align);
+        }};
+    }
+
+    test_layout!(size = 0, align = 1);
+    test_layout!(size = 1, align = 1);
+    test_layout!(size = 2, align = 1);
+
+    test_layout!(size = 0, align = 2);
+    test_layout!(size = 2, align = 2);
+    test_layout!(size = 4, align = 2);
+
+    test_layout!(size = 0, align = 4);
+    test_layout!(size = 4, align = 4);
+    test_layout!(size = 8, align = 4);
+
+    test_layout!(size = 0, align = 8);
+    test_layout!(size = 8, align = 8);
+    test_layout!(size = 16, align = 8);
+
+    test_layout!(size = 0, align = 16);
+    test_layout!(size = 16, align = 16);
+    test_layout!(size = 32, align = 16);
+
+    test_layout!(size = 0, align = 32);
+    test_layout!(size = 32, align = 32);
+    test_layout!(size = 64, align = 32);
+}
+
+#[test]
 fn derive_collect() {
     #[allow(unused)]
     #[derive(Collect)]
