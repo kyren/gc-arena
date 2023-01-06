@@ -25,14 +25,16 @@ impl GcBox {
         Self(NonNull::new_unchecked(erased))
     }
 
-    /// Gets an erased pointer to the value stored inside this box.
+    /// Gets a pointer to the value stored inside this box.
+    /// `T` must be the same type that was used with `erase`, so that
+    /// we can correctly compute the field offset.
     #[inline(always)]
-    fn erased_value(&self) -> *mut () {
+    fn unerased_value<T>(&self) -> *mut T {
         unsafe {
-            let ptr = self.0.as_ptr();
+            let ptr = self.0.as_ptr() as *mut GcBoxInner<T>;
             // Don't create a reference, to keep the full provenance.
             // Also, this gives us interior mutability "for free".
-            ptr::addr_of_mut!((*ptr).value) as *mut ()
+            ptr::addr_of_mut!((*ptr).value) as *mut T
         }
     }
 
@@ -153,10 +155,10 @@ impl CollectVtable {
         Self {
             box_layout: Layout::new::<GcBoxInner<T>>(),
             drop_value: |erased| unsafe {
-                ptr::drop_in_place(erased.erased_value() as *mut T);
+                ptr::drop_in_place(erased.unerased_value::<T>());
             },
             trace_value: |erased, cc| unsafe {
-                let val = &*(erased.erased_value() as *mut T);
+                let val = &*(erased.unerased_value::<T>());
                 val.trace(cc)
             },
         }
