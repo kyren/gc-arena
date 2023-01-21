@@ -47,6 +47,10 @@ jobs:
           command: |
             cargo +nightly miri test --workspace --tests --all-features -- --skip ui
       - run:
+          name: Run clippy
+          command: |
+            cargo clippy --workspace --all-features
+      - run:
           name: Run all tests under sanitizers
           command: |
             RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui

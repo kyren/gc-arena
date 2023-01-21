@@ -56,7 +56,7 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr.as_ref().value() }
+        unsafe { self.ptr.as_ref().value() }
     }
 }
 
