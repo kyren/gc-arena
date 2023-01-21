@@ -1,0 +1,5 @@
+error: no rules expected the token `<`
+  --> tests/ui/bad_gc_mutate_maro_call.rs:25:23
+   |
+25 |     gc_arena::reroot!(<Data<'gc> as MyTrait>::MyGat, root.0, |mut data| {})
+   |                       ^ no rules expected this token in macro call

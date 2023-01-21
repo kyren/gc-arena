@@ -1,11 +1,11 @@
 error[E0521]: borrowed data escapes outside of closure
-  --> tests/ui/bad_gc_mutate.rs:29:13
+  --> tests/ui/bad_gc_mutate.rs:30:13
    |
-27 |         let outer_ptr = root.0.read().gc_ptr_1;
+28 |         let outer_ptr = root.0.read().gc_ptr_1;
    |             --------- `outer_ptr` declared here, outside of the closure body
-28 |         gc_arena::reroot!(Data, root.0, |mut data| {
+29 |         gc_arena::reroot!(Data, root.0, |mut data| {
    |                                          -------- `data` is a reference that is only valid in the closure body
-29 |             data.gc_ptr_2 = outer_ptr;
+30 |             data.gc_ptr_2 = outer_ptr;
    |             ^^^^^^^^^^^^^^^^^^^^^^^^^ `data` escapes the closure body here
    |
    = note: requirement occurs because of the type `Gc<'_, bool>`, which makes the generic argument `'_` invariant
@@ -13,13 +13,13 @@ error[E0521]: borrowed data escapes outside of closure
    = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance
 
 error: lifetime may not live long enough
-  --> tests/ui/bad_gc_mutate.rs:33:13
+  --> tests/ui/bad_gc_mutate.rs:36:13
    |
-32 |         let _exfiltrated = gc_arena::reroot!(Data, root.0, |data| {
+35 |         let _exfiltrated = gc_arena::reroot!(Data, root.0, |data| {
    |                                                             ----- return type of closure is Option<Gc<'2, String>>
    |                                                             |
    |                                                             has type `RefMut<'1, Data<'1>>`
-33 |             data.removable_pointer
+36 |             data.removable_pointer
    |             ^^^^^^^^^^^^^^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
    |
    = note: requirement occurs because of the type `Gc<'_, String>`, which makes the generic argument `'_` invariant
@@ -27,14 +27,14 @@ error: lifetime may not live long enough
    = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance
 
 error[E0521]: borrowed data escapes outside of closure
-  --> tests/ui/bad_gc_mutate.rs:37:30
+  --> tests/ui/bad_gc_mutate.rs:42:30
    |
 26 |     arena.mutate(|mc, root| {
    |                   -- `mc` declared here, outside of the closure body
 ...
-36 |         gc_arena::reroot!(Data, root.0, |mut data| {
+41 |         gc_arena::reroot!(Data, root.0, |mut data| {
    |                                          -------- `data` is a reference that is only valid in the closure body
-37 |             let new_gc_ptr = Gc::allocate(mc, true);
+42 |             let new_gc_ptr = Gc::allocate(mc, true);
    |                              ^^^^^^^^^^^^^^^^^^^^^^ `data` escapes the closure body here
    |
    = note: requirement occurs because of the type `MutationContext<'_, '_>`, which makes the generic argument `'_` invariant
@@ -45,15 +45,16 @@ error[E0597]: `arena` does not live long enough
   --> tests/ui/bad_gc_mutate.rs:26:5
    |
 26 | /     arena.mutate(|mc, root| {
-27 | |         let outer_ptr = root.0.read().gc_ptr_1;
-28 | |         gc_arena::reroot!(Data, root.0, |mut data| {
-29 | |             data.gc_ptr_2 = outer_ptr;
+27 | |         // Test that we cannot store pointers from outside the closure in the GcCell
+28 | |         let outer_ptr = root.0.read().gc_ptr_1;
+29 | |         gc_arena::reroot!(Data, root.0, |mut data| {
 ...  |
-39 | |         });
-40 | |     });
+44 | |         });
+45 | |     });
    | |      ^
    | |      |
    | |______borrowed value does not live long enough
    |        argument requires that `arena` is borrowed for `'static`
-41 |   }
+46 |
+47 |   }
    |   - `arena` dropped here while still borrowed

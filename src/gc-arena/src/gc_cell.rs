@@ -183,6 +183,24 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
 /// }
 #[macro_export]
 macro_rules! reroot {
+    // Note - this needs to be `$ty:ident` instead of `$ty:path`
+    // to prevent smuggling in a lifetime parameter.
+    // For example, we neeed to reject passing in a $ty of `<MyData<'gc> as MyTrait>::MyGAT`,
+    // where MyGAT is a GAT with a lifetime parameter. The impl of MyTrait for MyData
+    // could use the 'gc from `MyData<'gc>` in the type provided for the GAT, like this:
+    //
+    // ```rust
+    // impl<'gc> MyTrait for MyData<'gc> {
+    //    type MyGAT<'a> = Gc<'gc, String>;
+    // }
+    // ``
+    //
+    // When the macro appends `<'a>` to obtain `<MyData<'gc> as MyTrait>::MyGAT<'a>`,
+    // this will resolve to `Gc<'gc, string>` due to the 'gc from `MyData<'gc>`.
+    // This is unsound, as we need to replace all `'gc` lifetimes with `'a` lifetimes
+    // (the sound tyoe would be `Gc<'a, string>`).
+    // Using `$ty:ident` prevents this from happening - the user cannot provide a path,
+    // so the only lifetime paramter available to substitute is `'a`.
     ($ty:ident, $cell:expr, $closure:expr) => {{
         fn erase<'gc, T, F: for<'a> FnOnce(core::cell::RefMut<'a, $ty<'a>>) -> T>(
             val: $crate::GcCell<'gc, $ty<'gc>>,
