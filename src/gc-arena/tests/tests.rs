@@ -155,6 +155,74 @@ fn repeated_allocation_deallocation() {
 }
 
 #[test]
+fn reroot() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc>(GcCell<'gc, Data<'gc>>);
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Data<'gc> {
+        gc_ptr_1: Gc<'gc, bool>,
+        gc_ptr_2: Gc<'gc, bool>,
+        removable_pointer: Option<Gc<'gc, String>>,
+        non_gc: Box<i32>,
+        other_data: &'static str,
+    }
+
+    let arena = Arena::<Rootable![Root<'gc>]>::new(ArenaParameters::default(), |mc| {
+        Root(GcCell::allocate(
+            mc,
+            Data {
+                gc_ptr_1: Gc::allocate(mc, true),
+                gc_ptr_2: Gc::allocate(mc, false),
+                removable_pointer: Some(Gc::allocate(mc, String::from("My string"))),
+                non_gc: Box::new(42),
+                other_data: "My other string",
+            },
+        ))
+    });
+
+    arena.mutate(|mc, root| {
+        let outer_data = root.0.write(mc);
+        assert_eq!(*outer_data.non_gc, 42);
+        assert_eq!(*outer_data.gc_ptr_1, true);
+        assert_eq!(*outer_data.gc_ptr_2, false);
+        assert_eq!(
+            outer_data.removable_pointer.as_deref(),
+            Some(&"My string".to_string())
+        );
+        drop(outer_data);
+
+        let other_data = gc_arena::reroot!(Data, root.0, |mut data| {
+            assert_eq!(*data.non_gc, 42);
+            assert_eq!(*data.gc_ptr_1, true);
+            assert_eq!(*data.gc_ptr_2, false);
+            assert_eq!(
+                data.removable_pointer.as_deref(),
+                Some(&"My string".to_string())
+            );
+
+            let data_inner: &mut Data = &mut data;
+
+            std::mem::swap(&mut data_inner.gc_ptr_1, &mut data_inner.gc_ptr_2);
+            data.removable_pointer = None;
+            data.non_gc = Box::new(20);
+            data.other_data
+        });
+
+        assert_eq!(other_data, "My other string");
+
+        let outer_data = root.0.write(mc);
+
+        assert_eq!(*outer_data.non_gc, 20);
+        assert_eq!(*outer_data.gc_ptr_1, false);
+        assert_eq!(*outer_data.gc_ptr_2, true);
+        assert!(outer_data.removable_pointer.is_none());
+    });
+}
+
+#[test]
 fn all_dropped() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);

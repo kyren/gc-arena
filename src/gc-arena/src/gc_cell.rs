@@ -132,6 +132,70 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     }
 }
 
+/// Provides mutable access to the contents of a `GcCell` without requiring a `MutationContext`,
+/// and without triggering `Gc::write_barrier`.
+///
+/// Your closure will not receive a type with the original `'gc` lifetime - instead, it
+/// will receive a type with a fresh `'a` lifetime.
+/// This prevents you from storing data with the 'gc' lifetime (whether pre-existing or allocated
+/// within the closure) in the `GcCell` contents, since the lifetimes will not match.
+/// As a result, no previously-unreachable data can become reachable as a result of calling `reroot!`,
+/// which removes the need for a write barrier.
+///
+/// However, you may freely *remove* Gc pointers from the `GcCell` contents
+/// (removing items from `Vec`s, settings `Option`s to `None`, etc.).
+/// This can result in preivously-reachable data becoming unreachable,
+/// but it cannot result in previously-unreachable data becoming reachable.
+/// As a result, `Arena::collect` may unnecessarily keep unreachable data alive for
+/// another collection cycle, but it will never prematurely free reachable data.
+///
+/// Example:
+///
+/// ```rust
+///
+/// use gc_arena::{Gc, GcCell, Arena, Rootable, ArenaParameters, Collect, MutationContext};
+/// use std::cell::RefMut;
+///
+/// #[derive(Collect)]
+/// #[collect(no_drop)]
+/// struct MyRoot<'gc>(GcCell<'gc, MyData<'gc>>);
+///
+/// #[derive(Collect)]
+/// #[collect(no_drop)]
+/// struct MyData<'gc> {
+///    my_ptr: Gc<'gc, String>,
+///    other_data: String
+/// }
+///
+/// fn allocate() {
+///     let mut arena = Arena::<Rootable![MyRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+///         MyRoot(GcCell::allocate(mc, MyData {
+///             my_ptr: Gc::allocate(mc, "Hello".to_string()),
+///             other_data: "Starting".to_string()
+///         }))
+///     });
+///
+///     arena.mutate(|mc, root| {
+///        gc_arena::reroot!(MyData, root.0, |mut data: RefMut<'_, MyData<'_>>| {
+///           data.other_data = "Other".to_string();
+///        });
+///     });
+/// }
+#[macro_export]
+macro_rules! reroot {
+    ($ty:ident, $cell:expr, $closure:expr) => {{
+        fn erase<'gc, T, F: for<'a> FnOnce(core::cell::RefMut<'a, $ty<'a>>) -> T>(
+            val: $crate::GcCell<'gc, $ty<'gc>>,
+            f: F,
+        ) -> T {
+            let val: core::cell::RefMut<'_, $ty<'gc>> = unsafe { val.borrow_mut() };
+            let val: core::cell::RefMut<'_, $ty<'_>> = unsafe { core::mem::transmute(val) };
+            f(val)
+        }
+        erase($cell, $closure)
+    }};
+}
+
 pub(crate) struct GcRefCell<T: ?Sized> {
     cell: RefCell<T>,
 }
