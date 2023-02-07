@@ -39,4 +39,12 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
             mc.upgrade(ptr).then(|| self.inner)
         }
     }
+
+    pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
+        this.as_ptr() == other.as_ptr()
+    }
+
+    pub fn as_ptr(self) -> *const T {
+        Gc::as_ptr(self.inner)
+    }
 }
