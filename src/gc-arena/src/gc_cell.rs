@@ -81,11 +81,11 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     }
 
     #[track_caller]
-    pub fn read<'a>(&'a self) -> Ref<'a, T> {
+    pub fn read(&self) -> Ref<'_, T> {
         self.0.cell.borrow()
     }
 
-    pub fn try_read<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
+    pub fn try_read(&self) -> Result<Ref<'_, T>, BorrowError> {
         self.0.cell.try_borrow()
     }
 
@@ -107,19 +107,21 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
 
     /// Call `RefCell::borrow_mut` on the inner `RefCell` *without* the write barrier.
     ///
-    /// SAFETY: In order to maintain the invariants of the garbage collector, no new `Gc` pointers
+    /// # Safety
+    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
     /// may be adopted by this type as a result of the interior mutability afforded here, unless the
     /// write barrier is invoked manually before collection is triggered.
     #[track_caller]
-    pub unsafe fn borrow_mut<'a>(&'a self) -> RefMut<'a, T> {
+    pub unsafe fn borrow_mut(&self) -> RefMut<'_, T> {
         self.0.cell.borrow_mut()
     }
 
     /// Call `RefCell::try_borrow_mut` on the inner `RefCell` *without* the write barrier.
     ///
-    /// SAFETY: The safety requirements of this method are exactly the same as
+    /// # Safety
+    /// The safety requirements of this method are exactly the same as
     /// [`GcCell::borrow_mut`].
-    pub unsafe fn try_borrow_mut<'a>(&'a self) -> Result<RefMut<'a, T>, BorrowMutError> {
+    pub unsafe fn try_borrow_mut(&self) -> Result<RefMut<'_, T>, BorrowMutError> {
         self.0.cell.try_borrow_mut()
     }
 

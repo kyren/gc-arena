@@ -130,7 +130,7 @@ impl<T: ?Sized> GcBoxInner<T> {
 
     #[inline(always)]
     pub(crate) fn value(&self) -> &T {
-        &*self.value
+        &self.value
     }
 }
 

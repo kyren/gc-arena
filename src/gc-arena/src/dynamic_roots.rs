@@ -86,6 +86,7 @@ pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
     ptr: Gc<'static, Root<'static, R>>,
     // We identify dropped handles by checking an `Rc` handle count. We store a clone of the
     // `Rc<SetId>` so that we ensure the `Rc<SetId>` lives as long as any extant handle.
+    #[allow(clippy::redundant_allocation)]
     rc: Rc<Rc<SetId>>,
 }
 
@@ -97,7 +98,7 @@ struct Inner {
     set_id: Rc<SetId>,
 }
 
-unsafe impl<'gc> Collect for Inner {
+unsafe impl Collect for Inner {
     fn trace(&self, cc: crate::CollectionContext) {
         for handle in &self.handles {
             unsafe {

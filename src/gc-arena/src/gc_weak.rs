@@ -36,7 +36,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     pub fn upgrade(&self, mc: MutationContext<'gc, '_>) -> Option<Gc<'gc, T>> {
         unsafe {
             let ptr = GcBox::erase(self.inner.ptr);
-            mc.upgrade(ptr).then(|| self.inner)
+            mc.upgrade(ptr).then_some(self.inner)
         }
     }
 

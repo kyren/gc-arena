@@ -29,54 +29,51 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let mut override_bound = None;
 
     for attr in &s.ast().attrs {
-        match attr.parse_meta() {
-            Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                if path.is_ident("collect") {
-                    if mode.is_some() {
-                        panic!("multiple `#[collect(...)]` attributes found on the same item. consider combining them.");
-                    }
+        if let Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) = attr.parse_meta() {
+            if path.is_ident("collect") {
+                if mode.is_some() {
+                    panic!("multiple `#[collect(...)]` attributes found on the same item. consider combining them.");
+                }
 
-                    for nested in nested {
-                        match nested {
-                            syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
-                                if mode.is_some() {
-                                    usage_error!("multiple modes specified");
-                                }
-
-                                if path.is_ident("require_static") {
-                                    mode = Some(Mode::RequireStatic);
-                                } else if path.is_ident("no_drop") {
-                                    mode = Some(Mode::NoDrop);
-                                } else if path.is_ident("unsafe_drop") {
-                                    mode = Some(Mode::UnsafeDrop);
-                                } else {
-                                    usage_error!("unknown option")
-                                }
+                for nested in nested {
+                    match nested {
+                        syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
+                            if mode.is_some() {
+                                usage_error!("multiple modes specified");
                             }
-                            syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
-                                if override_bound.is_some() {
-                                    usage_error!("multiple bounds specified");
-                                }
 
-                                if value.path.is_ident("bound") {
-                                    match value.lit {
-                                        syn::Lit::Str(x) => override_bound = Some(x),
-                                        _ => usage_error!("bound must be str"),
-                                    }
-                                } else {
-                                    usage_error!("unknown option");
-                                }
+                            if path.is_ident("require_static") {
+                                mode = Some(Mode::RequireStatic);
+                            } else if path.is_ident("no_drop") {
+                                mode = Some(Mode::NoDrop);
+                            } else if path.is_ident("unsafe_drop") {
+                                mode = Some(Mode::UnsafeDrop);
+                            } else {
+                                usage_error!("unknown option")
                             }
-                            _ => usage_error!("unknown option"),
                         }
-                    }
+                        syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
+                            if override_bound.is_some() {
+                                usage_error!("multiple bounds specified");
+                            }
 
-                    if mode.is_none() {
-                        usage_error!("missing mode");
+                            if value.path.is_ident("bound") {
+                                match value.lit {
+                                    syn::Lit::Str(x) => override_bound = Some(x),
+                                    _ => usage_error!("bound must be str"),
+                                }
+                            } else {
+                                usage_error!("unknown option");
+                            }
+                        }
+                        _ => usage_error!("unknown option"),
                     }
                 }
+
+                if mode.is_none() {
+                    usage_error!("missing mode");
+                }
             }
-            _ => {}
         }
     }
 
@@ -122,43 +119,38 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             let mut static_binding = false;
             let mut seen_collect = false;
             for attr in &b.ast().attrs {
-                match attr.parse_meta() {
-                    Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                        if path.is_ident("collect") {
-                            if seen_collect {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        path.span(),
-                                        "Cannot specify multiple `#[collect]` attributes!",
-                                    )
-                                    .to_compile_error(),
-                                );
-                            }
-                            seen_collect = true;
+                if let Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) = attr.parse_meta() {
+                    if path.is_ident("collect") {
+                        if seen_collect {
+                            errors.push(
+                                syn::parse::Error::new(
+                                    path.span(),
+                                    "Cannot specify multiple `#[collect]` attributes!",
+                                )
+                                .to_compile_error(),
+                            );
+                        }
+                        seen_collect = true;
 
-                            let mut valid = false;
-                            if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) =
-                                nested.first()
-                            {
-                                if path.is_ident("require_static") {
-                                    static_binding = true;
-                                    static_bindings.push(b.ast().ty.clone());
-                                    valid = true;
-                                }
-                            }
-
-                            if !valid {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        nested.span(),
-                                        "Only `#[collect(require_static)]` is supported on a field",
-                                    )
-                                    .to_compile_error(),
-                                );
+                        let mut valid = false;
+                        if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) = nested.first() {
+                            if path.is_ident("require_static") {
+                                static_binding = true;
+                                static_bindings.push(b.ast().ty.clone());
+                                valid = true;
                             }
                         }
+
+                        if !valid {
+                            errors.push(
+                                syn::parse::Error::new(
+                                    nested.span(),
+                                    "Only `#[collect(require_static)]` is supported on a field",
+                                )
+                                .to_compile_error(),
+                            );
+                        }
                     }
-                    _ => {}
                 }
             }
             !static_binding
@@ -173,19 +165,18 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         if let syn::Data::Enum(..) = s.ast().data {
             for v in s.variants() {
                 for attr in v.ast().attrs {
-                    match attr.parse_meta() {
-                        Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                            if path.is_ident("collect") {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        nested.span(),
-                                        "`#[collect]` is not suppported on enum variants",
-                                    )
-                                    .to_compile_error(),
-                                );
-                            }
+                    if let Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) =
+                        attr.parse_meta()
+                    {
+                        if path.is_ident("collect") {
+                            errors.push(
+                                syn::parse::Error::new(
+                                    nested.span(),
+                                    "`#[collect]` is not suppported on enum variants",
+                                )
+                                .to_compile_error(),
+                            );
                         }
-                        _ => {}
                     }
                 }
             }

@@ -22,7 +22,7 @@ fn simple_allocation() {
     });
 
     arena.mutate(|_mc, root| {
-        assert_eq!(*((*root).test), 42);
+        assert_eq!(*(root.test), 42);
     });
 }
 

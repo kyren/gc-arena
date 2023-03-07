@@ -120,6 +120,7 @@ impl Context {
 
     // Creates a MutationContext with an unbounded 'gc lifetime.
     #[inline]
+    #[allow(clippy::needless_lifetimes)]
     pub(crate) unsafe fn mutation_context<'gc, 'context>(
         &'context self,
     ) -> MutationContext<'gc, 'context> {
@@ -184,10 +185,8 @@ impl Context {
                         self.allocation_debt
                             .set((self.allocation_debt.get() - gray_size).max(0.0));
                         Some(gc_box)
-                    } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
-                        Some(gc_box)
                     } else {
-                        None
+                        self.gray_again.borrow_mut().pop()
                     };
 
                     if let Some(gc_box) = next_gray {
@@ -419,7 +418,7 @@ impl Context {
 }
 
 // SAFETY: the gc_box must never be accessed after calling this function.
-unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
+unsafe fn free_gc_box(mut gc_box: GcBox) {
     if gc_box.flags().is_live() {
         // If the alive flag is set, that means we haven't dropped the inner value of this object,
         gc_box.drop_in_place();
