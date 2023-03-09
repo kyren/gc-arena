@@ -56,7 +56,7 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr.as_ref().value() }
+        unsafe { &self.ptr.as_ref().value }
     }
 }
 
@@ -88,6 +88,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe { gc.ptr.as_ref().value() }
+        let inner = unsafe { gc.ptr.as_ref() };
+        core::ptr::addr_of!(inner.value) as *const T
     }
 }
