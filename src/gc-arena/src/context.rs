@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::arena::ArenaParameters;
 use crate::collect::Collect;
-use crate::types::{GcBox, GcBoxInner, GcColor, GcFlags, Invariant};
+use crate::types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant};
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
@@ -88,7 +88,7 @@ impl Drop for Context {
                 if let Some(gc_box) = self.0.take() {
                     let mut drop_resume = DropAll(Some(gc_box));
                     while let Some(gc_box) = drop_resume.0.take() {
-                        drop_resume.0 = gc_box.next().get();
+                        drop_resume.0 = gc_box.header().next();
                         // SAFETY: the context owns its GC'd objects
                         unsafe { free_gc_box(gc_box) }
                     }
@@ -184,7 +184,7 @@ impl Context {
                     // double count them. Processing "gray again" objects later also gives them more
                     // time to be mutated again without triggering another write barrier.
                     let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
-                        let gray_size = gc_box.size_of_box() as f64;
+                        let gray_size = gc_box.header().size_of_box() as f64;
                         work_done += gray_size;
                         self.allocation_debt
                             .set((self.allocation_debt.get() - gray_size).max(0.0));
@@ -200,7 +200,7 @@ impl Context {
                         // black.
                         // SAFETY: we know gray objects are always live.
                         unsafe { gc_box.trace_value(cc) }
-                        gc_box.flags().set_color(GcColor::Black);
+                        gc_box.header().set_color(GcColor::Black);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
@@ -219,25 +219,25 @@ impl Context {
                 }
                 Phase::Sweep => {
                     if let Some(mut sweep) = self.sweep.get() {
-                        let sweep_size = sweep.size_of_box();
-                        let sweep_flags = sweep.flags();
+                        let sweep_header = sweep.header();
+                        let sweep_size = sweep_header.size_of_box();
 
-                        let next_box = sweep.next().get();
+                        let next_box = sweep_header.next();
                         self.sweep.set(next_box);
 
                         // If the next object in the sweep list is white, we need to remove it from
                         // the main list and destruct it, otherwise it should be black, and we
                         // simply turn it white again.
-                        if sweep_flags.color() == GcColor::White {
-                            if sweep_flags.traced_weak_ref() {
+                        if sweep_header.color() == GcColor::White {
+                            if sweep_header.traced_weak_ref() {
                                 // Keep the `GcBox` as part of the linked list if we traced a weak pointer
                                 // to it. The weak pointer still needs access to the `GcBox` to be able to
                                 // check if the object is still alive. We can only deallocate the `GcBox`,
                                 // once there are no weak pointers left.
                                 self.sweep_prev.set(Some(sweep));
-                                sweep_flags.set_traced_weak_ref(false);
-                                if sweep_flags.is_live() {
-                                    sweep_flags.set_live(false);
+                                sweep_header.set_traced_weak_ref(false);
+                                if sweep_header.is_live() {
+                                    sweep_header.set_live(false);
                                     // SAFETY: Since this object is white, that means there are no more strong pointers
                                     // to this object, only weak pointers, so we can safely drop its contents.
                                     unsafe { sweep.drop_in_place() }
@@ -246,7 +246,7 @@ impl Context {
                                 // If the next object in the sweep portion of the main list is white, we
                                 // need to remove it from the main object list and destruct it.
                                 if let Some(sweep_prev) = self.sweep_prev.get() {
-                                    sweep_prev.next().set(next_box);
+                                    sweep_prev.header().set_next(next_box);
                                 } else {
                                     // If `sweep_prev` is None, then the sweep pointer is also the
                                     // beginning of the main object list, so we need to adjust it.
@@ -269,12 +269,12 @@ impl Context {
                             // this part of the main list, they should be added to the beginning of
                             // the list before the sweep pointer, so it should not be possible for
                             // us to encounter them here.
-                            debug_assert_eq!(sweep_flags.color(), GcColor::Black);
+                            debug_assert_eq!(sweep_header.color(), GcColor::Black);
                             self.sweep_prev.set(Some(sweep));
                             self.remembered_size
                                 .set(self.remembered_size.get() + sweep_size);
-                            sweep_flags.set_traced_weak_ref(false);
-                            sweep_flags.set_color(GcColor::White);
+                            sweep_header.set_traced_weak_ref(false);
+                            sweep_header.set_color(GcColor::White);
                         }
                     } else {
                         // We are done sweeping, so enter the sleeping phase.
@@ -301,7 +301,11 @@ impl Context {
     }
 
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        let alloc_size = mem::size_of::<GcBoxInner<T>>();
+        let header = GcBoxHeader::new::<T>(self.all.get());
+        header.set_live(true);
+        header.set_needs_trace(T::needs_trace());
+
+        let alloc_size = header.size_of_box();
         self.total_allocated
             .set(self.total_allocated.get() + alloc_size);
         if self.phase.get() == Phase::Sleep && self.total_allocated.get() > self.wakeup_total.get()
@@ -317,19 +321,12 @@ impl Context {
             );
         }
 
-        let flags = GcFlags::new();
-        flags.set_live(true);
-        flags.set_needs_trace(T::needs_trace());
-
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
         let (gc_box, ptr) = unsafe {
             let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
-            core::ptr::write(
-                uninitialized.as_mut_ptr(),
-                GcBoxInner::new(flags, self.all.get(), t),
-            );
+            core::ptr::write(uninitialized.as_mut_ptr(), GcBoxInner::new(header, t));
             let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>);
             (GcBox::erase(ptr), ptr)
         };
@@ -346,27 +343,27 @@ impl Context {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
-        let flags = gc_box.flags();
-        if self.phase.get() == Phase::Propagate && flags.color() == GcColor::Black {
-            flags.set_color(GcColor::Gray);
+        let header = gc_box.header();
+        if self.phase.get() == Phase::Propagate && header.color() == GcColor::Black {
+            header.set_color(GcColor::Gray);
             self.gray_again.borrow_mut().push(gc_box);
         }
     }
 
     // SAFETY: the `GcBox` must contain a live object.
     unsafe fn trace(&self, gc_box: GcBox) {
-        let flags = gc_box.flags();
-        match flags.color() {
+        let header = gc_box.header();
+        match header.color() {
             GcColor::Black | GcColor::Gray => {}
             GcColor::White => {
-                if flags.needs_trace() {
+                if header.needs_trace() {
                     // A white traceable object is not in the gray queue, becomes gray and enters
                     // the normal gray queue.
-                    flags.set_color(GcColor::Gray);
+                    header.set_color(GcColor::Gray);
                     self.gray.borrow_mut().push(gc_box);
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
-                    flags.set_color(GcColor::Black);
+                    header.set_color(GcColor::Black);
                 }
             }
         }
@@ -375,10 +372,10 @@ impl Context {
     /// Determines whether or not a Gc pointer is safe to be upgraded.
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     fn upgrade(&self, gc_box: GcBox) -> bool {
-        let flags = gc_box.flags();
+        let header = gc_box.header();
 
         // This object has already been freed, definitely not safe to upgrade.
-        if !flags.is_live() {
+        if !header.is_live() {
             return false;
         }
 
@@ -414,8 +411,8 @@ impl Context {
         //   Therefore, we can safely upgrade, knowing that the object will not be freed
         //   during this phase, despite being white.
         if self.phase.get() == Phase::Sweep
-            && flags.color() == GcColor::White
-            && flags.traced_weak_ref()
+            && header.color() == GcColor::White
+            && header.traced_weak_ref()
         {
             return false;
         }
@@ -425,7 +422,7 @@ impl Context {
 
 // SAFETY: the gc_box must never be accessed after calling this function.
 unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
-    if gc_box.flags().is_live() {
+    if gc_box.header().is_live() {
         // If the alive flag is set, that means we haven't dropped the inner value of this object,
         gc_box.drop_in_place();
     }
