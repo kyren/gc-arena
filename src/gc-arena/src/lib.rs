@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(miri, feature(strict_provenance))]
 
 #[cfg(feature = "std")]
 extern crate std;
