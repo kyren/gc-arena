@@ -301,7 +301,8 @@ impl Context {
     }
 
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        let header = GcBoxHeader::new::<T>(self.all.get());
+        let header = GcBoxHeader::new::<T>();
+        header.set_next(self.all.get());
         header.set_live(true);
         header.set_needs_trace(T::needs_trace());
 
