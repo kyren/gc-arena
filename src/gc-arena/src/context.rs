@@ -42,6 +42,10 @@ impl<'context> CollectionContext<'context> {
     pub(crate) unsafe fn trace(self, gc_box: GcBox) {
         self.context.trace(gc_box)
     }
+
+    pub(crate) fn trace_weak(&self, gc_box: GcBox) {
+        self.context.trace_weak(gc_box)
+    }
 }
 
 pub(crate) struct Context {
@@ -220,31 +224,14 @@ impl Context {
                 Phase::Sweep => {
                     if let Some(mut sweep) = self.sweep.get() {
                         let sweep_header = sweep.header();
-                        let sweep_size = sweep_header.size_of_box();
 
                         let next_box = sweep_header.next();
                         self.sweep.set(next_box);
 
-                        // If the next object in the sweep list is white, we need to remove it from
-                        // the main list and destruct it, otherwise it should be black, and we
-                        // simply turn it white again.
-                        if sweep_header.color() == GcColor::White {
-                            if sweep_header.traced_weak_ref() {
-                                // Keep the `GcBox` as part of the linked list if we traced a weak pointer
-                                // to it. The weak pointer still needs access to the `GcBox` to be able to
-                                // check if the object is still alive. We can only deallocate the `GcBox`,
-                                // once there are no weak pointers left.
-                                self.sweep_prev.set(Some(sweep));
-                                sweep_header.set_traced_weak_ref(false);
-                                if sweep_header.is_live() {
-                                    sweep_header.set_live(false);
-                                    // SAFETY: Since this object is white, that means there are no more strong pointers
-                                    // to this object, only weak pointers, so we can safely drop its contents.
-                                    unsafe { sweep.drop_in_place() }
-                                }
-                            } else {
-                                // If the next object in the sweep portion of the main list is white, we
-                                // need to remove it from the main object list and destruct it.
+                        match sweep_header.color() {
+                            // If the next object in the sweep portion of the main list is white, we
+                            // need to remove it from the main object list and destruct it.
+                            GcColor::White => {
                                 if let Some(sweep_prev) = self.sweep_prev.get() {
                                     sweep_prev.header().set_next(next_box);
                                 } else {
@@ -253,6 +240,7 @@ impl Context {
                                     debug_assert_eq!(self.all.get(), Some(sweep));
                                     self.all.set(next_box);
                                 }
+                                let sweep_size = sweep_header.size_of_box();
                                 self.total_allocated
                                     .set(self.total_allocated.get() - sweep_size);
                                 work_done += sweep_size as f64;
@@ -263,18 +251,34 @@ impl Context {
                                 // meaning it cannot have either strong or weak pointers, so we can drop the whole object.
                                 unsafe { free_gc_box(sweep) }
                             }
-                        } else {
+                            // Keep the `GcBox` as part of the linked list if we traced a weak pointer
+                            // to it. The weak pointer still needs access to the `GcBox` to be able to
+                            // check if the object is still alive. We can only deallocate the `GcBox`,
+                            // once there are no weak pointers left.
+                            GcColor::WhiteWeak => {
+                                self.sweep_prev.set(Some(sweep));
+                                sweep_header.set_color(GcColor::White);
+                                if sweep_header.is_live() {
+                                    sweep_header.set_live(false);
+                                    // SAFETY: Since this object is white, that means there are no more strong pointers
+                                    // to this object, only weak pointers, so we can safely drop its contents.
+                                    unsafe { sweep.drop_in_place() }
+                                }
+                            }
                             // If the next object in the sweep portion of the main list is black, we
-                            // need to keep it but turn it back white. No gray objects should be in
-                            // this part of the main list, they should be added to the beginning of
-                            // the list before the sweep pointer, so it should not be possible for
-                            // us to encounter them here.
-                            debug_assert_eq!(sweep_header.color(), GcColor::Black);
-                            self.sweep_prev.set(Some(sweep));
-                            self.remembered_size
-                                .set(self.remembered_size.get() + sweep_size);
-                            sweep_header.set_traced_weak_ref(false);
-                            sweep_header.set_color(GcColor::White);
+                            // need to keep it but turn it back white.
+                            GcColor::Black => {
+                                self.sweep_prev.set(Some(sweep));
+                                self.remembered_size
+                                    .set(self.remembered_size.get() + sweep_header.size_of_box());
+                                sweep_header.set_color(GcColor::White);
+                            }
+                            // No gray objects should be in this part of the main list, they should be
+                            // added to the beginning of the list before the sweep pointer, so it should
+                            // not be possible for us to encounter them here.
+                            GcColor::Gray => {
+                                debug_assert!(false, "unexpected gray object in sweep list")
+                            }
                         }
                     } else {
                         // We are done sweeping, so enter the sleeping phase.
@@ -356,7 +360,7 @@ impl Context {
         let header = gc_box.header();
         match header.color() {
             GcColor::Black | GcColor::Gray => {}
-            GcColor::White => {
+            GcColor::White | GcColor::WhiteWeak => {
                 if header.needs_trace() {
                     // A white traceable object is not in the gray queue, becomes gray and enters
                     // the normal gray queue.
@@ -367,6 +371,13 @@ impl Context {
                     header.set_color(GcColor::Black);
                 }
             }
+        }
+    }
+
+    fn trace_weak(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        if header.color() == GcColor::White {
+            header.set_color(GcColor::WhiteWeak);
         }
     }
 
@@ -393,17 +404,16 @@ impl Context {
         //   before we transition to `Phase::Sweep`.
         //
         // * In `Phase::Sweep`:
-        //   If the allocation is white and has the `traced_weak_ref()` flag set, then it's impossile
-        //   for it to have been freshly-created during this `Phase::Sweep`. `traced_weak_ref` is only
-        //   set when a `GcWeak/GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from
-        //   an existing `Gc/GcCell` via `downgrade()`, so `traced_weak_ref() == true` means that a
-        //   `GcWeak` / `GcWeakCell` existed during the last `Phase::Propagate.`
+        //   If the allocation is `WhiteWeak`, then it's impossile for it to have been freshly-created
+        //   during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/GcWeakCell` is traced.
+        //   A `GcWeak/GcWeakCell` must be created from an existing `Gc/GcCell` via `downgrade()`, so
+        //   `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed during the last `Phase::Propagate.`
         //
-        //   Therefore, a white object with `traced_weak_ref() == true` is guaranteed to be deallocated
-        //   during this `Phase::Sweep`, and we must not upgrade it.
+        //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this `Phase::Sweep`,
+        // and we must not upgrade it.
         //
-        //   Conversely, it's always safe to upgrade a white object with `traced_weak_ref() == false`.
-        //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since `traced_weak_ref` is false,
+        //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
+        //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is not `WhiteWeak`
         //   there cannot have been any `GcWeak/GcWeakCell`s during the last `Phase::Propagate`, so
         //   the weak pointer must have been created during this `Phase::Sweep`.
         //   This is only possible if the underlying allocation was freshly-created - if the allocation existed during
@@ -411,10 +421,7 @@ impl Context {
         //   which means that the user wouldn't have been able to call `downgrade`.
         //   Therefore, we can safely upgrade, knowing that the object will not be freed
         //   during this phase, despite being white.
-        if self.phase.get() == Phase::Sweep
-            && header.color() == GcColor::White
-            && header.traced_weak_ref()
-        {
+        if self.phase.get() == Phase::Sweep && header.color() == GcColor::WhiteWeak {
             return false;
         }
         true

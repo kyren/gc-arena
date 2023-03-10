@@ -24,10 +24,9 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
 }
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
-    fn trace(&self, _cc: CollectionContext) {
+    fn trace(&self, cc: CollectionContext) {
         unsafe {
-            let gc = GcBox::erase(self.inner.ptr);
-            gc.header().set_traced_weak_ref(true);
+            cc.trace_weak(GcBox::erase(self.inner.ptr));
         }
     }
 }

@@ -23,10 +23,9 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeakCell<'gc, T> {
 }
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeakCell<'gc, T> {
-    fn trace(&self, _cc: crate::CollectionContext) {
+    fn trace(&self, cc: crate::CollectionContext) {
         unsafe {
-            let gc = GcBox::erase(self.inner.0.ptr);
-            gc.header().set_traced_weak_ref(true);
+            cc.trace_weak(GcBox::erase(self.inner.0.ptr));
         }
     }
 }
