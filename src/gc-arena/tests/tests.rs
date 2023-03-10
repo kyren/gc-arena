@@ -484,6 +484,26 @@ fn test_unsize() {
 }
 
 #[test]
+fn test_collect_overflow() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 256]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
+        test: Gc::allocate(mc, [0; 256]),
+    });
+
+    for _ in 0..1024 {
+        arena.collect_all();
+        assert!(arena.total_allocated() < 1024); // these should all stay bounded
+        assert!(arena.remembered_size() < 1024);
+        assert!(arena.allocation_debt() < 1024.0);
+    }
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

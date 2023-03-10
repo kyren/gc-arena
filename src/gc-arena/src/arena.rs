@@ -241,6 +241,11 @@ impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
         self.context.total_allocated()
     }
 
+    #[inline]
+    pub fn remembered_size(&self) -> usize {
+        self.context.remembered_size()
+    }
+
     /// When the garbage collector is not sleeping, all allocated objects cause the arena to
     /// accumulate "allocation debt". This debt is then be used to time incremental garbage
     /// collection based on the tuning parameters set in `ArenaParameters`. The allocation debt is
