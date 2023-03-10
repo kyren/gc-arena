@@ -491,9 +491,10 @@ fn test_collect_overflow() {
         test: Gc<'gc, [u8; 256]>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
-        test: Gc::allocate(mc, [0; 256]),
-    });
+    let mut arena =
+        Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
+            test: Gc::allocate(mc, [0; 256]),
+        });
 
     for _ in 0..1024 {
         arena.collect_all();

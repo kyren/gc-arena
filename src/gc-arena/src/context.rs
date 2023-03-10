@@ -282,14 +282,13 @@ impl Context {
                         self.phase.set(Phase::Sleep);
 
                         // Do not let debt or remembered size accumulate across cycles.
-                        // when we enter sleep, zero them out.
+                        // When we enter sleep, zero them out.
                         self.allocation_debt.set(0.0);
                         let remembered_size = self.remembered_size.replace(0);
 
-                        let sleep = f64_to_usize(
-                            remembered_size as f64 * self.parameters.pause_factor,
-                        )
-                        .min(self.parameters.min_sleep);
+                        let sleep =
+                            f64_to_usize(remembered_size as f64 * self.parameters.pause_factor)
+                                .min(self.parameters.min_sleep);
 
                         self.wakeup_total.set(self.total_allocated.get() + sleep);
                     }
