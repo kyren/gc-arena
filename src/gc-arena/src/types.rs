@@ -75,15 +75,13 @@ impl GcBox {
 }
 
 pub(crate) struct GcBoxHeader {
-    /// The (nullable) next element in the global linked list of allocated objects.
-    ///
-    /// The lower bit of the pointer is used to store the `needs_trace` flag.
-    tagged_next: Cell<*const GcBoxInner<()>>,
+    /// The next element in the global linked list of allocated objects.
+    next: Cell<Option<GcBox>>,
     /// A custom virtual function table for handling type-specific operations.
     ///
-    /// The lower bits of the pointer are used to store GC flags (except `needs_trace`):
+    /// The lower bits of the pointer are used to store GC flags:
     /// - bits 0 & 1 for the current `GcColor`;
-    /// - bit 2 for the `traced_weak_ref` flag;
+    /// - bit 2 for the `needs_trace` flag;
     /// - bit 3 for the `is_live` flag.
     tagged_vtable: Cell<*const CollectVtable>,
 }
@@ -102,7 +100,7 @@ impl GcBoxHeader {
 
         let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
         Self {
-            tagged_next: Cell::new(core::ptr::null()),
+            next: Cell::new(None),
             tagged_vtable: Cell::new(vtable as *const _),
         }
     }
@@ -120,20 +118,13 @@ impl GcBoxHeader {
     /// Gets the next element in the global linked list of allocated objects.
     #[inline(always)]
     pub(crate) fn next(&self) -> Option<GcBox> {
-        let ptr = tagged_ptr::untag(self.tagged_next.get());
-        NonNull::new(ptr as *mut _).map(GcBox)
+        self.next.get()
     }
 
     /// Sets the next element in the global linked list of allocated objects.
     #[inline(always)]
     pub(crate) fn set_next(&self, next: Option<GcBox>) {
-        let ptr = match next {
-            Some(n) => n.0.as_ptr() as *const _,
-            None => core::ptr::null(),
-        };
-
-        self.tagged_next
-            .set(tagged_ptr::replace_ptr(self.tagged_next.get(), ptr));
+        self.next.set(next)
     }
 
     /// Returns the (shallow) size occupied by this box in memory.
@@ -146,12 +137,9 @@ impl GcBoxHeader {
     pub(crate) fn color(&self) -> GcColor {
         match tagged_ptr::get(self.tagged_vtable.get(), 0x3) {
             0x0 => GcColor::White,
-            0x1 => GcColor::Gray,
-            0x2 => GcColor::Black,
-            // this is needed for the compiler to codegen a simple AND.
-            // SAFETY: only possible extra value is 0x3,
-            // and the only place where we set these bits is in set_color
-            _ => unsafe { core::hint::unreachable_unchecked() },
+            0x1 => GcColor::WhiteWeak,
+            0x2 => GcColor::Gray,
+            _ => GcColor::Black,
         }
     }
 
@@ -162,21 +150,14 @@ impl GcBoxHeader {
             0x3,
             match color {
                 GcColor::White => 0x0,
-                GcColor::Gray => 0x1,
-                GcColor::Black => 0x2,
+                GcColor::WhiteWeak => 0x1,
+                GcColor::Gray => 0x2,
+                GcColor::Black => 0x3,
             },
         );
     }
     #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
-        tagged_ptr::get(self.tagged_next.get(), 0x1) != 0x0
-    }
-
-    /// This is `true` if we've traced a weak pointer during to this `GcBox`
-    /// during the most recent `Phase::Propagate`. This is reset back to
-    /// `false` during `Phase::Sweep`.
-    #[inline]
-    pub(crate) fn traced_weak_ref(&self) -> bool {
         tagged_ptr::get(self.tagged_vtable.get(), 0x4) != 0x0
     }
 
@@ -193,12 +174,7 @@ impl GcBoxHeader {
 
     #[inline]
     pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        tagged_ptr::set_bool(&self.tagged_next, 0x1, needs_trace);
-    }
-
-    #[inline]
-    pub(crate) fn set_traced_weak_ref(&self, traced_weak_ref: bool) {
-        tagged_ptr::set_bool(&self.tagged_vtable, 0x4, traced_weak_ref);
+        tagged_ptr::set_bool(&self.tagged_vtable, 0x4, needs_trace);
     }
 
     #[inline]
@@ -271,6 +247,11 @@ pub(crate) enum GcColor {
     /// Objects allocated during `Phase::Sweep` will be white, but will
     /// not be freed.
     White,
+    /// Like White, but for objects weakly reachable from a Black object.
+    ///
+    /// These objects may drop their contents during `Phase::Sweep`, but must
+    /// stay allocated so that weak references can check the alive status.
+    WhiteWeak,
     /// An object reachable from a Black object, but that has not
     /// yet been traced using `Collect::trace`. We also mark black
     /// objects as gray during `Phase::Propagate` in response to a
@@ -302,17 +283,6 @@ mod tagged_ptr {
             let ptr = (tagged_ptr as *const u8).wrapping_sub(tag);
             return ptr as *const T;
         }
-    }
-
-    #[inline(always)]
-    pub(super) fn replace_ptr<T>(tagged_ptr: *const T, new_ptr: *const T) -> *const T {
-        let mask = core::mem::align_of::<T>() - 1;
-        #[cfg(miri)]
-        let tag = tagged_ptr.addr() & mask;
-        #[cfg(not(miri))]
-        let tag = tagged_ptr as usize & mask;
-        let ptr = (new_ptr as *const u8).wrapping_add(tag);
-        ptr as *const T
     }
 
     #[inline(always)]
