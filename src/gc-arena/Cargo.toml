@@ -14,6 +14,7 @@ std = []
 
 [dependencies]
 gc-arena-derive = { path = "../gc-arena-derive", version = "0.2.2"}
+sptr = "0.3.2"
 
 [dev-dependencies]
 rand = "0.8"
