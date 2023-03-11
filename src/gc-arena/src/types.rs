@@ -135,7 +135,7 @@ impl GcBoxHeader {
 
     #[inline]
     pub(crate) fn color(&self) -> GcColor {
-        match tagged_ptr::get(self.tagged_vtable.get(), 0x3) {
+        match tagged_ptr::get::<0x3, _>(self.tagged_vtable.get()) {
             0x0 => GcColor::White,
             0x1 => GcColor::WhiteWeak,
             0x2 => GcColor::Gray,
@@ -145,9 +145,8 @@ impl GcBoxHeader {
 
     #[inline]
     pub(crate) fn set_color(&self, color: GcColor) {
-        tagged_ptr::set(
+        tagged_ptr::set::<0x3, _>(
             &self.tagged_vtable,
-            0x3,
             match color {
                 GcColor::White => 0x0,
                 GcColor::WhiteWeak => 0x1,
@@ -158,7 +157,7 @@ impl GcBoxHeader {
     }
     #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
-        tagged_ptr::get(self.tagged_vtable.get(), 0x4) != 0x0
+        tagged_ptr::get::<0x4, _>(self.tagged_vtable.get()) != 0x0
     }
 
     /// Determines whether or not we've dropped the `dyn Collect` value
@@ -169,17 +168,17 @@ impl GcBoxHeader {
     /// (since we've already done it).
     #[inline]
     pub(crate) fn is_live(&self) -> bool {
-        tagged_ptr::get(self.tagged_vtable.get(), 0x8) != 0x0
+        tagged_ptr::get::<0x8, _>(self.tagged_vtable.get()) != 0x0
     }
 
     #[inline]
     pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        tagged_ptr::set_bool(&self.tagged_vtable, 0x4, needs_trace);
+        tagged_ptr::set_bool::<0x4, _>(&self.tagged_vtable, needs_trace);
     }
 
     #[inline]
     pub(crate) fn set_live(&self, alive: bool) {
-        tagged_ptr::set_bool(&self.tagged_vtable, 0x8, alive);
+        tagged_ptr::set_bool::<0x8, _>(&self.tagged_vtable, alive);
     }
 }
 
@@ -276,6 +275,22 @@ mod tagged_ptr {
 
     use core::cell::Cell;
 
+    trait ValidMask<const MASK: usize> {
+        const CHECK: ();
+    }
+
+    impl<T, const MASK: usize> ValidMask<MASK> for T {
+        const CHECK: () = assert!(MASK < core::mem::align_of::<T>());
+    }
+
+    /// Checks that `$mask` can be used to tag a pointer to `$type`.
+    /// If this isn't true, this macro will cause a post-monomorphization error.
+    macro_rules! check_mask {
+        ($type:ty, $mask:expr) => {
+            let _ = <$type as ValidMask<MASK>>::CHECK;
+        };
+    }
+
     #[inline(always)]
     pub(super) fn untag<T>(tagged_ptr: *const T) -> *const T {
         let mask = core::mem::align_of::<T>() - 1;
@@ -283,21 +298,24 @@ mod tagged_ptr {
     }
 
     #[inline(always)]
-    pub(super) fn get<T>(tagged_ptr: *const T, mask: usize) -> usize {
-        tagged_ptr.addr() & mask
+    pub(super) fn get<const MASK: usize, T>(tagged_ptr: *const T) -> usize {
+        check_mask!(T, MASK);
+        tagged_ptr.addr() & MASK
     }
 
     #[inline(always)]
-    pub(super) fn set<T>(pcell: &Cell<*const T>, mask: usize, tag: usize) {
+    pub(super) fn set<const MASK: usize, T>(pcell: &Cell<*const T>, tag: usize) {
+        check_mask!(T, MASK);
         let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !mask) | tag);
+        let ptr = ptr.map_addr(|addr| (addr & !MASK) | (tag & MASK));
         pcell.set(ptr)
     }
 
     #[inline(always)]
-    pub(super) fn set_bool<T>(pcell: &Cell<*const T>, mask: usize, value: bool) {
+    pub(super) fn set_bool<const MASK: usize, T>(pcell: &Cell<*const T>, value: bool) {
+        check_mask!(T, MASK);
         let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !mask) | if value { mask } else { 0 });
+        let ptr = ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 });
         pcell.set(ptr)
     }
 }
