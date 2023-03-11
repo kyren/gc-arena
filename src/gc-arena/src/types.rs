@@ -269,55 +269,35 @@ pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
 
 /// Utility functions for tagging and untagging pointers.
 mod tagged_ptr {
+    #![cfg_attr(not(miri), allow(unstable_name_collisions))]
+
+    #[cfg(not(miri))]
+    use sptr::Strict as _;
+
     use core::cell::Cell;
 
     #[inline(always)]
     pub(super) fn untag<T>(tagged_ptr: *const T) -> *const T {
         let mask = core::mem::align_of::<T>() - 1;
-        #[cfg(miri)]
-        return tagged_ptr.map_addr(|addr| addr & !mask);
-        #[cfg(not(miri))]
-        {
-            let addr = tagged_ptr as usize;
-            let tag = addr & mask;
-            let ptr = (tagged_ptr as *const u8).wrapping_sub(tag);
-            return ptr as *const T;
-        }
+        tagged_ptr.map_addr(|addr| addr & !mask)
     }
 
     #[inline(always)]
     pub(super) fn get<T>(tagged_ptr: *const T, mask: usize) -> usize {
-        #[cfg(miri)]
-        let addr = tagged_ptr.addr();
-        #[cfg(not(miri))]
-        let addr = tagged_ptr as usize;
-        addr & mask
-    }
-
-    #[inline(always)]
-    fn map_addr<T>(ptr: *const T, map: impl FnOnce(usize) -> usize) -> *const T {
-        #[cfg(miri)]
-        return ptr.map_addr(map);
-        #[cfg(not(miri))]
-        {
-            let addr = ptr as usize;
-            let ptr = ptr as *const u8;
-            let ptr = ptr.wrapping_sub(addr).wrapping_add(map(addr));
-            return ptr as *const T;
-        }
+        tagged_ptr.addr() & mask
     }
 
     #[inline(always)]
     pub(super) fn set<T>(pcell: &Cell<*const T>, mask: usize, tag: usize) {
         let ptr = pcell.get();
-        let ptr = map_addr(ptr, |addr| (addr & !mask) | tag);
+        let ptr = ptr.map_addr(|addr| (addr & !mask) | tag);
         pcell.set(ptr)
     }
 
     #[inline(always)]
     pub(super) fn set_bool<T>(pcell: &Cell<*const T>, mask: usize, value: bool) {
         let ptr = pcell.get();
-        let ptr = map_addr(ptr, |addr| (addr & !mask) | if value { mask } else { 0 });
+        let ptr = ptr.map_addr(|addr| (addr & !mask) | if value { mask } else { 0 });
         pcell.set(ptr)
     }
 }
