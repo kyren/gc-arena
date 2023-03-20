@@ -39,6 +39,14 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         }
     }
 
+    /// Returns whether the value referenced by this `GcWeak` has been dropped.
+    ///
+    /// Note that calling `upgrade` may still fail even when this method returns `false`.
+    pub fn is_dropped(self) -> bool {
+        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
+        !ptr.header().is_live()
+    }
+
     pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
         this.as_ptr() == other.as_ptr()
     }
