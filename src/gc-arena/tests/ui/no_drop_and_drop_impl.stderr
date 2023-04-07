@@ -1,4 +1,4 @@
-error[E0119]: conflicting implementations of trait `gc_arena::MustNotImplDrop` for type `Foo`
+error[E0119]: conflicting implementations of trait `MustNotImplDrop` for type `Foo`
  --> $DIR/no_drop_and_drop_impl.rs:3:10
   |
 3 | #[derive(Collect)]
