@@ -112,37 +112,26 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         // `static_bindings`, which will be added to the genererated `Collect` impl. The presence of
         // the bound guarantees that the field cannot hold any `Gc` pointers, so it's safe to ignore
         // that field in `needs_trace` and `trace`
-        s.filter(|b| {
-            let mut static_binding = false;
-            let mut seen_collect = false;
-            for attr in &b.ast().attrs {
-                if !attr.path().is_ident("collect") {
-                    continue;
-                }
-
-                if seen_collect {
-                    errors.push(syn::parse::Error::new_spanned(
-                        attr.path(),
-                        "Cannot specify multiple `#[collect]` attributes!",
-                    ));
-                } else {
-                    seen_collect = true;
-
-                    let result = attr.parse_nested_meta(|meta| {
-                        if meta.input.is_empty() && meta.path.is_ident("require_static") {
-                            static_binding = true;
-                            static_bindings.push(b.ast().ty.clone());
-                            Ok(())
-                        } else {
-                            Err(meta
-                                .error("Only `#[collect(require_static)]` is supported on a field"))
-                        }
-                    });
-
-                    errors.extend(result.err());
-                }
+        s.filter(|b| match find_collect_meta(&b.ast().attrs) {
+            Ok(Some(attr)) => {
+                let mut static_binding = false;
+                let result = attr.parse_nested_meta(|meta| {
+                    if meta.input.is_empty() && meta.path.is_ident("require_static") {
+                        static_binding = true;
+                        static_bindings.push(b.ast().ty.clone());
+                        Ok(())
+                    } else {
+                        Err(meta.error("Only `#[collect(require_static)]` is supported on a field"))
+                    }
+                });
+                errors.extend(result.err());
+                !static_binding
             }
-            !static_binding
+            Ok(None) => true,
+            Err(err) => {
+                errors.push(err);
+                true
+            }
         });
 
         for static_binding in static_bindings {
