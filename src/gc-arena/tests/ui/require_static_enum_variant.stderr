@@ -1,5 +1,5 @@
 error: `#[collect]` is not suppported on enum variants
- --> $DIR/require_static_enum_variant.rs:6:15
+ --> $DIR/require_static_enum_variant.rs:6:7
   |
 6 |     #[collect(require_static)]
-  |               ^^^^^^^^^^^^^^
+  |       ^^^^^^^

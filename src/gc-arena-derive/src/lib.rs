@@ -3,86 +3,80 @@ use quote::{quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use synstructure::{decl_derive, AddBounds};
 
-fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
-    // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
-    // necessarily safe for `Collect` types. This derive macro has three available modes to ensure
-    // that this is safe:
-    //   1) Require that the type be 'static with `#[collect(require_static)]`.
-    //   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
-    //   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
-    //      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
-    #[derive(PartialEq)]
-    enum Mode {
-        RequireStatic,
-        NoDrop,
-        UnsafeDrop,
-    }
-
-    macro_rules! usage_error {
-        ($($t:tt)*) => {{
-            let msg = format!($($t)*);
-            panic!("{}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`.", msg);
-        }}
-    }
-
-    let mut mode = None;
-    let mut override_bound = None;
-
-    for attr in &s.ast().attrs {
-        match attr.parse_meta() {
-            Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                if path.is_ident("collect") {
-                    if mode.is_some() {
-                        panic!("multiple `#[collect(...)]` attributes found on the same item. consider combining them.");
-                    }
-
-                    for nested in nested {
-                        match nested {
-                            syn::NestedMeta::Meta(syn::Meta::Path(path)) => {
-                                if mode.is_some() {
-                                    usage_error!("multiple modes specified");
-                                }
-
-                                if path.is_ident("require_static") {
-                                    mode = Some(Mode::RequireStatic);
-                                } else if path.is_ident("no_drop") {
-                                    mode = Some(Mode::NoDrop);
-                                } else if path.is_ident("unsafe_drop") {
-                                    mode = Some(Mode::UnsafeDrop);
-                                } else {
-                                    usage_error!("unknown option")
-                                }
-                            }
-                            syn::NestedMeta::Meta(syn::Meta::NameValue(value)) => {
-                                if override_bound.is_some() {
-                                    usage_error!("multiple bounds specified");
-                                }
-
-                                if value.path.is_ident("bound") {
-                                    match value.lit {
-                                        syn::Lit::Str(x) => override_bound = Some(x),
-                                        _ => usage_error!("bound must be str"),
-                                    }
-                                } else {
-                                    usage_error!("unknown option");
-                                }
-                            }
-                            _ => usage_error!("unknown option"),
-                        }
-                    }
-
-                    if mode.is_none() {
-                        usage_error!("missing mode");
-                    }
-                }
-            }
-            _ => {}
+fn find_collect_meta(attrs: &[syn::Attribute]) -> syn::Result<Option<&syn::Attribute>> {
+    let mut found = None;
+    for attr in attrs {
+        if attr.path().is_ident("collect") && found.replace(attr).is_some() {
+            return Err(syn::parse::Error::new_spanned(
+                attr.path(),
+                "Cannot specify multiple `#[collect]` attributes! Consider merging them.",
+            ));
         }
     }
 
-    let mode = mode.unwrap_or_else(|| {
-        usage_error!("deriving `Collect` requires a `#[collect(...)]` attribute")
-    });
+    Ok(found)
+}
+
+fn usage_error(meta: &syn::meta::ParseNestedMeta, msg: &str) -> syn::parse::Error {
+    meta.error(format_args!("{msg}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`."))
+}
+
+// Deriving `Collect` must be done with care, because an implementation of `Drop` is not
+// necessarily safe for `Collect` types. This derive macro has three available modes to ensure
+// that this is safe:
+//   1) Require that the type be 'static with `#[collect(require_static)]`.
+//   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
+//   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
+//      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
+#[derive(PartialEq)]
+enum Mode {
+    RequireStatic,
+    NoDrop,
+    UnsafeDrop,
+}
+
+fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
+    let mut mode = None;
+    let mut override_bound = None;
+
+    let result = match find_collect_meta(&s.ast().attrs) {
+        Ok(Some(attr)) => attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("bound") {
+                if override_bound.is_some() {
+                    return Err(usage_error(&meta, "multiple bounds specified"));
+                }
+
+                let lit: syn::LitStr = meta.value()?.parse()?;
+                override_bound = Some(lit);
+                return Ok(());
+            }
+
+            meta.input.parse::<syn::parse::Nothing>()?;
+
+            if mode.is_some() {
+                return Err(usage_error(&meta, "multiple modes specified"));
+            } else if meta.path.is_ident("require_static") {
+                mode = Some(Mode::RequireStatic);
+            } else if meta.path.is_ident("no_drop") {
+                mode = Some(Mode::NoDrop);
+            } else if meta.path.is_ident("unsafe_drop") {
+                mode = Some(Mode::UnsafeDrop);
+            } else {
+                return Err(usage_error(&meta, "unknown option"));
+            }
+            Ok(())
+        }),
+        Ok(None) => Ok(()),
+        Err(err) => Err(err),
+    };
+
+    if let Err(err) = result {
+        return err.to_compile_error();
+    }
+
+    let Some(mode) = mode else {
+        panic!("{}", "deriving `Collect` requires a `#[collect(...)]` attribute");
+    };
 
     let where_clause = if mode == Mode::RequireStatic {
         quote!(where Self: 'static)
@@ -122,43 +116,30 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             let mut static_binding = false;
             let mut seen_collect = false;
             for attr in &b.ast().attrs {
-                match attr.parse_meta() {
-                    Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                        if path.is_ident("collect") {
-                            if seen_collect {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        path.span(),
-                                        "Cannot specify multiple `#[collect]` attributes!",
-                                    )
-                                    .to_compile_error(),
-                                );
-                            }
-                            seen_collect = true;
+                if !attr.path().is_ident("collect") {
+                    continue;
+                }
 
-                            let mut valid = false;
-                            if let Some(syn::NestedMeta::Meta(syn::Meta::Path(path))) =
-                                nested.first()
-                            {
-                                if path.is_ident("require_static") {
-                                    static_binding = true;
-                                    static_bindings.push(b.ast().ty.clone());
-                                    valid = true;
-                                }
-                            }
+                if seen_collect {
+                    errors.push(syn::parse::Error::new_spanned(
+                        attr.path(),
+                        "Cannot specify multiple `#[collect]` attributes!",
+                    ));
+                } else {
+                    seen_collect = true;
 
-                            if !valid {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        nested.span(),
-                                        "Only `#[collect(require_static)]` is supported on a field",
-                                    )
-                                    .to_compile_error(),
-                                );
-                            }
+                    let result = attr.parse_nested_meta(|meta| {
+                        if meta.input.is_empty() && meta.path.is_ident("require_static") {
+                            static_binding = true;
+                            static_bindings.push(b.ast().ty.clone());
+                            Ok(())
+                        } else {
+                            Err(meta
+                                .error("Only `#[collect(require_static)]` is supported on a field"))
                         }
-                    }
-                    _ => {}
+                    });
+
+                    errors.extend(result.err());
                 }
             }
             !static_binding
@@ -173,19 +154,11 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         if let syn::Data::Enum(..) = s.ast().data {
             for v in s.variants() {
                 for attr in v.ast().attrs {
-                    match attr.parse_meta() {
-                        Ok(syn::Meta::List(syn::MetaList { path, nested, .. })) => {
-                            if path.is_ident("collect") {
-                                errors.push(
-                                    syn::parse::Error::new(
-                                        nested.span(),
-                                        "`#[collect]` is not suppported on enum variants",
-                                    )
-                                    .to_compile_error(),
-                                );
-                            }
-                        }
-                        _ => {}
+                    if attr.path().is_ident("collect") {
+                        errors.push(syn::parse::Error::new_spanned(
+                            attr.path(),
+                            "`#[collect]` is not suppported on enum variants",
+                        ));
                     }
                 }
             }
@@ -253,6 +226,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         quote!()
     };
 
+    let errors = errors.into_iter().map(|e| e.to_compile_error());
     quote! {
         #collect_impl
         #drop_impl
