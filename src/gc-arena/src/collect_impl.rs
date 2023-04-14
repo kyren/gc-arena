@@ -62,6 +62,17 @@ static_collect!(isize);
 static_collect!(f32);
 static_collect!(f64);
 static_collect!(String);
+static_collect!(str);
+static_collect!(alloc::ffi::CString);
+static_collect!(core::ffi::CStr);
+#[cfg(feature = "std")]
+static_collect!(std::path::Path);
+#[cfg(feature = "std")]
+static_collect!(std::path::PathBuf);
+#[cfg(feature = "std")]
+static_collect!(std::ffi::OsStr);
+#[cfg(feature = "std")]
+static_collect!(std::ffi::OsString);
 
 unsafe impl<'a, T: ?Sized> Collect for &'a T {
     #[inline]
@@ -84,7 +95,7 @@ unsafe impl<T: ?Sized + Collect> Collect for Box<T> {
     }
 }
 
-unsafe impl<T: Collect> Collect for Box<[T]> {
+unsafe impl<T: Collect> Collect for [T] {
     #[inline]
     fn needs_trace() -> bool {
         T::needs_trace()
