@@ -479,7 +479,10 @@ mod test {
         assert_eq!(f64_to_usize(f64::MAX), usize::MAX);
     }
 
-    #[cfg(feature = "std")]
+    // This tests loss of precision, which only happens when `usize::MAX`
+    // is large enough. when `usize` is `u32`, it's small enough that we
+    // don't lose precision, so only run this test on 64-bit platforms.
+    #[cfg(all(feature = "std", target_pointer_width = "64"))]
     #[test]
     fn test_clamp_f64_precision() {
         fn std_impl(input: f64) -> usize {
