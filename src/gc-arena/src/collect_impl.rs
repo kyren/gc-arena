@@ -74,14 +74,7 @@ static_collect!(std::ffi::OsStr);
 #[cfg(feature = "std")]
 static_collect!(std::ffi::OsString);
 
-unsafe impl<'a, T: ?Sized> Collect for &'a T {
-    #[inline]
-    fn needs_trace() -> bool {
-        false
-    }
-}
-
-unsafe impl<'a, T: ?Sized> Collect for &'a mut T {
+unsafe impl<T: ?Sized> Collect for &'static T {
     #[inline]
     fn needs_trace() -> bool {
         false
