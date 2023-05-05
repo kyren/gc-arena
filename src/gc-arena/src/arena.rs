@@ -107,10 +107,13 @@ pub trait Rootable<'a> {
 /// ```
 #[macro_export]
 macro_rules! Rootable {
-    ($root:ty) => {
+    ($gc:lifetime => $root:ty) => {
         // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
         // need to generate a new type for each invocation of this macro.
-        dyn for<'gc> $crate::Rootable<'gc, Root = $root>
+        dyn for<$gc> $crate::Rootable<$gc, Root = $root>
+    };
+    ($root:ty) => {
+        Rootable!['gc => $root]
     };
 }
 
