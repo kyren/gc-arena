@@ -82,9 +82,16 @@ impl<'gc> DynamicRootSet<'gc> {
     }
 }
 
-#[derive(Clone)]
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
     handle: Rc<Handle<Root<'static, R>>>,
+}
+
+impl<R: for<'gc> Rootable<'gc> + ?Sized> Clone for DynamicRoot<R> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle.clone(),
+        }
+    }
 }
 
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
