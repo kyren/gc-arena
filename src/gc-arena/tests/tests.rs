@@ -415,6 +415,10 @@ fn test_dynamic_roots() {
         )
     });
 
+    let root3 = arena.mutate(|mc, root_set| {
+        root_set.stash::<Rootable![[u8]]>(mc, unsize!(Gc::allocate(mc, [1, 2, 3]) => [u8]))
+    });
+
     arena.collect_all();
     arena.collect_all();
 
@@ -427,10 +431,14 @@ fn test_dynamic_roots() {
         let root2 = root_set.fetch(&root2);
         assert_eq!(*root2.0, 27);
         assert_eq!(*root2.1, true);
+
+        let root3 = root_set.fetch::<Rootable![[u8]]>(&root3);
+        assert_eq!(*root3, [1, 2, 3]);
     });
 
     drop(root1);
     drop(root2);
+    drop(root3);
 
     arena.collect_all();
     arena.collect_all();
