@@ -94,6 +94,23 @@ impl<R: for<'gc> Rootable<'gc> + ?Sized> Clone for DynamicRoot<R> {
     }
 }
 
+impl<R: for<'gc> Rootable<'gc> + ?Sized> DynamicRoot<R> {
+    // Get a pointer to the held object.
+    //
+    // The pointer will never be dangling, as the `DynamicRoot` is the owner of the held type, but
+    // using the object behind this pointer is extremely dangerous.
+    //
+    // Firstly, the 'gc lifetime returned here is unbound, so it is meaningless and can allow
+    // improper mixing of objects across arenas.
+    //
+    // Secondly, though the pointer to the object *itself* will not be dangling, any garbage
+    // collected pointers the object holds will already be freed if the arena backing this root has
+    // been dropped.
+    pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
+        unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.handle.root) as *const _ }
+    }
+}
+
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
 struct SetId {}
 
