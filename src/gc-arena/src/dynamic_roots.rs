@@ -104,7 +104,7 @@ impl<R: for<'gc> Rootable<'gc> + ?Sized> DynamicRoot<R> {
     // improper mixing of objects across arenas.
     //
     // Secondly, though the pointer to the object *itself* will not be dangling, any garbage
-    // collected pointers the object holds will already be freed if the arena backing this root has
+    // collected pointers the object holds *will* be dangling if the arena backing this root has
     // been dropped.
     pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
         unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.handle.root) as *const _ }
