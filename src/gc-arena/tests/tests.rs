@@ -396,23 +396,16 @@ fn test_dynamic_roots() {
 
     let initial_size = arena.total_allocated();
 
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct Root1<'gc>(Gc<'gc, i32>);
-
-    let root1 = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Root1<'gc>]>(mc, Gc::allocate(mc, Root1(Gc::allocate(mc, 12))))
-    });
+    let root1 = arena
+        .mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'gc, i32>]>(mc, Gc::allocate(mc, 12)));
 
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
 
     let root2 = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Root2<'gc>]>(
-            mc,
-            Gc::allocate(mc, Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true))),
-        )
+        root_set
+            .stash::<Rootable![Root2<'gc>]>(mc, Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true)))
     });
 
     arena.collect_all();
@@ -421,8 +414,8 @@ fn test_dynamic_roots() {
     assert!(arena.total_allocated() > initial_size);
 
     arena.mutate(|_, root_set| {
-        let root1 = root_set.fetch(&root1);
-        assert_eq!(*root1.0, 12);
+        let root1 = *root_set.fetch(&root1);
+        assert_eq!(*root1, 12);
 
         let root2 = root_set.fetch(&root2);
         assert_eq!(*root2.0, 27);
@@ -451,9 +444,8 @@ fn test_dynamic_bad_set() {
     #[collect(no_drop)]
     struct Root<'gc>(Gc<'gc, i32>);
 
-    let dyn_root = arena1.mutate(|mc, root| {
-        root.stash::<Rootable![Root<'gc>]>(mc, Gc::allocate(mc, Root(Gc::allocate(mc, 44))))
-    });
+    let dyn_root = arena1
+        .mutate(|mc, root| root.stash::<Rootable![Root<'gc>]>(mc, Root(Gc::allocate(mc, 44))));
 
     arena2.mutate(|_, root| {
         root.fetch(&dyn_root);

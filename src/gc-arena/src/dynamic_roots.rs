@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
+use crate::{Collect, GcCell, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -16,7 +16,7 @@ use crate::{types::GcBox, Collect, Gc, GcCell, MutationContext, Root, Rootable};
 //      a match lets us know that this `Gc` must have originated from *this* set, so it is safe to
 //      cast it back to whatever our current `'gc` lifetime is.
 #[derive(Copy, Clone)]
-pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner>);
+pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner<'gc>>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
@@ -28,7 +28,7 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
             self.0
                 .borrow_mut()
                 .handles
-                .retain(|handle| Weak::strong_count(&handle.rc) > 0);
+                .retain(|handle| Weak::strong_count(&handle) > 0);
         }
 
         self.0.trace(cc);
@@ -49,65 +49,89 @@ impl<'gc> DynamicRootSet<'gc> {
     pub fn stash<R: for<'a> Rootable<'a> + ?Sized>(
         &self,
         mc: MutationContext<'gc, '_>,
-        root: Gc<'gc, Root<'gc, R>>,
+        root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
         let mut inner = self.0.write(mc);
 
-        let rc = Rc::new(inner.set_id.clone());
-        inner.handles.push(Handle {
-            ptr: unsafe { GcBox::erase(root.ptr) },
-            rc: Rc::downgrade(&rc),
+        let handle = Rc::new(Handle {
+            set_id: inner.set_id.clone(),
+            root,
         });
 
+        let weak_handle: Weak<Handle<dyn Collect>> = Rc::<Handle<Root<'gc, R>>>::downgrade(&handle);
+        inner.handles.push(weak_handle);
+
         DynamicRoot {
-            ptr: unsafe {
-                mem::transmute::<Gc<'gc, Root<'gc, R>>, Gc<'static, Root<'static, R>>>(root)
+            handle: unsafe {
+                mem::transmute::<Rc<Handle<Root<'gc, R>>>, Rc<Handle<Root<'static, R>>>>(handle)
             },
-            rc,
         }
     }
 
-    pub fn fetch<R: for<'a> Rootable<'a> + ?Sized>(
+    pub fn fetch<'a, R: for<'b> Rootable<'b> + ?Sized>(
         &self,
-        root: &DynamicRoot<R>,
-    ) -> Gc<'gc, Root<'gc, R>> {
+        root: &'a DynamicRoot<R>,
+    ) -> &'a Root<'gc, R> {
         assert_eq!(
             Rc::as_ptr(&self.0.read().set_id),
-            Rc::as_ptr(root.rc.as_ref()),
+            Rc::as_ptr(&root.handle.set_id),
             "provided `DynamicRoot` does not originate from this `DynamicRootSet`",
         );
 
-        unsafe { mem::transmute::<Gc<'static, Root<'static, R>>, Gc<'gc, Root<'gc, R>>>(root.ptr) }
+        unsafe { mem::transmute::<&'a Root<'static, R>, &'a Root<'gc, R>>(&root.handle.root) }
     }
 }
 
-#[derive(Clone)]
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
-    ptr: Gc<'static, Root<'static, R>>,
-    // We identify dropped handles by checking an `Rc` handle count. We store a clone of the
-    // `Rc<SetId>` so that we ensure the `Rc<SetId>` lives as long as any extant handle.
-    rc: Rc<Rc<SetId>>,
+    handle: Rc<Handle<Root<'static, R>>>,
+}
+
+impl<R: for<'gc> Rootable<'gc> + ?Sized> Clone for DynamicRoot<R> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle.clone(),
+        }
+    }
+}
+
+impl<R: for<'gc> Rootable<'gc> + ?Sized> DynamicRoot<R> {
+    // Get a pointer to the held object.
+    //
+    // The pointer will never be dangling, as the `DynamicRoot` is the owner of the held type, but
+    // using the object behind this pointer is extremely dangerous.
+    //
+    // Firstly, the 'gc lifetime returned here is unbound, so it is meaningless and can allow
+    // improper mixing of objects across arenas.
+    //
+    // Secondly, though the pointer to the object *itself* will not be dangling, any garbage
+    // collected pointers the object holds *will* be dangling if the arena backing this root has
+    // been dropped.
+    pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
+        unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.handle.root) as *const _ }
+    }
 }
 
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
 struct SetId {}
 
-struct Inner {
-    handles: Vec<Handle>,
+struct Inner<'gc> {
+    handles: Vec<Weak<Handle<dyn Collect + 'gc>>>,
     set_id: Rc<SetId>,
 }
 
-unsafe impl<'gc> Collect for Inner {
+unsafe impl<'gc> Collect for Inner<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
         for handle in &self.handles {
-            unsafe {
-                cc.trace(handle.ptr);
+            if let Some(handle) = handle.upgrade() {
+                handle.root.trace(cc);
             }
         }
     }
 }
 
-struct Handle {
-    ptr: GcBox,
-    rc: Weak<Rc<SetId>>,
+struct Handle<T: ?Sized> {
+    // Store a clone of `Rc<SetId>` so that we ensure the `Rc<SetId>` lives as long as any extant
+    // handle.
+    set_id: Rc<SetId>,
+    root: T,
 }
