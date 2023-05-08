@@ -72,12 +72,14 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
             _invariant: PhantomData,
         }
     }
+}
 
+impl<'gc, T: 'gc> Gc<'gc, T> {
     /// Cast the internal pointer to a different type.
     ///
     /// SAFETY:
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
-    pub unsafe fn cast<U>(this: Gc<'gc, T>) -> Gc<'gc, U> {
+    pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
         Gc {
             ptr: NonNull::cast(this.ptr),
             _invariant: PhantomData,

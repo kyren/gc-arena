@@ -56,12 +56,12 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> GcWeak<'gc, T> {
+impl<'gc, T: 'gc> GcWeak<'gc, T> {
     /// Cast the internal pointer to a different type.
     ///
     /// SAFETY:
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
-    pub unsafe fn cast<U>(this: GcWeak<'gc, T>) -> GcWeak<'gc, U> {
+    pub unsafe fn cast<U: 'gc>(this: GcWeak<'gc, T>) -> GcWeak<'gc, U> {
         GcWeak {
             inner: Gc::cast::<U>(this.inner),
         }
