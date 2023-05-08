@@ -10,6 +10,7 @@ extern crate alloc;
 pub use gc_arena_derive::*;
 
 mod arena;
+mod cell;
 mod collect;
 mod collect_impl;
 mod context;
@@ -29,6 +30,7 @@ pub use unsize::__CoercePtrInternal;
 
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
+    cell::{CollectCell, CollectRefCell},
     collect::Collect,
     context::{CollectionContext, MutationContext},
     dynamic_roots::{DynamicRoot, DynamicRootSet},

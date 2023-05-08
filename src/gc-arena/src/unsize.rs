@@ -1,9 +1,10 @@
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 
-use crate::gc_cell::GcRefCell;
-use crate::types::GcBoxInner;
-use crate::{Gc, GcCell, GcWeak, GcWeakCell};
+use crate::{
+    types::GcBoxInner,
+    {CollectRefCell, Gc, GcCell, GcWeak, GcWeakCell},
+};
 
 /// Unsizes a [`Gc`] pointer (also works with [`GcWeak`], [`GcCell`] and [`GcWeakCell`]).
 ///
@@ -102,7 +103,7 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcCell<'gc, U>> for GcCell<'g
     {
         GcCell(
             self.0
-                .__coerce_unchecked(|p| coerce(p as *mut T) as *mut GcRefCell<U>),
+                .__coerce_unchecked(|p| coerce(p as *mut T) as *mut CollectRefCell<U>),
         )
     }
 }

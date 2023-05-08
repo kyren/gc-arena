@@ -1,17 +1,20 @@
-use core::cell::{BorrowError, BorrowMutError, Ref, RefCell, RefMut};
+use core::cell::{BorrowError, BorrowMutError, Ref, RefMut};
 use core::fmt::{self, Debug, Pointer};
 
-use crate::collect::Collect;
-use crate::context::{CollectionContext, MutationContext};
-use crate::gc::Gc;
-use crate::GcWeakCell;
+use crate::{
+    cell::CollectRefCell,
+    collect::Collect,
+    context::{CollectionContext, MutationContext},
+    gc::Gc,
+    GcWeakCell,
+};
 
 /// A garbage collected pointer to a type T that may be safely mutated.  When a type that may hold
 /// `Gc` pointers is mutated, it may adopt new `Gc` pointers, and in order for this to be safe this
 /// must be accompanied by a call to `Gc::write_barrier`.  This type wraps the given `T` in a
 /// `RefCell` in such a way that writing to the `RefCell` is always accompanied by a call to
 /// `Gc::write_barrier`.
-pub struct GcCell<'gc, T: ?Sized + 'gc>(pub(crate) Gc<'gc, GcRefCell<T>>);
+pub struct GcCell<'gc, T: ?Sized + 'gc>(pub(crate) Gc<'gc, CollectRefCell<T>>);
 
 impl<'gc, T: ?Sized + 'gc> Copy for GcCell<'gc, T> {}
 
@@ -58,12 +61,7 @@ unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcCell<'gc, T> {
 
 impl<'gc, T: Collect + 'gc> GcCell<'gc, T> {
     pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> GcCell<'gc, T> {
-        GcCell(Gc::allocate(
-            mc,
-            GcRefCell {
-                cell: RefCell::new(t),
-            },
-        ))
+        GcCell(Gc::allocate(mc, CollectRefCell::new(t)))
     }
 }
 
@@ -73,36 +71,44 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     }
 
     pub fn ptr_eq(this: GcCell<'gc, T>, other: GcCell<'gc, T>) -> bool {
-        this.as_ptr() == other.as_ptr()
+        this.0.as_ptr() == other.as_ptr()
     }
 
     pub fn as_ptr(self) -> *mut T {
-        self.0.cell.as_ptr()
+        self.0.as_ptr()
     }
 
     #[track_caller]
     pub fn read<'a>(&'a self) -> Ref<'a, T> {
-        self.0.cell.borrow()
+        self.0.borrow()
     }
 
     pub fn try_read<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
-        self.0.cell.try_borrow()
+        self.0.try_borrow()
     }
 
     #[track_caller]
     pub fn write<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
-        let b = self.0.cell.borrow_mut();
-        Gc::write_barrier(mc, self.0);
-        b
+        // SAFETY: We make sure to issue a write barrier to the held pointer, in case new white
+        // objects are adopted as the result of this mutation.
+        unsafe {
+            let b = self.0.borrow_mut();
+            Gc::write_barrier(mc, self.0);
+            b
+        }
     }
 
     pub fn try_write<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, T>, BorrowMutError> {
-        let mb = self.0.cell.try_borrow_mut()?;
-        Gc::write_barrier(mc, self.0);
-        Ok(mb)
+        // SAFETY: We make sure to issue a write barrier to the held pointer, in case new white
+        // objects are adopted as the result of this mutation.
+        unsafe {
+            let mb = self.0.try_borrow_mut()?;
+            Gc::write_barrier(mc, self.0);
+            Ok(mb)
+        }
     }
 
     /// Call `RefCell::borrow_mut` on the inner `RefCell` *without* the write barrier.
@@ -112,7 +118,7 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     /// write barrier is invoked manually before collection is triggered.
     #[track_caller]
     pub unsafe fn borrow_mut<'a>(&'a self) -> RefMut<'a, T> {
-        self.0.cell.borrow_mut()
+        self.0.borrow_mut()
     }
 
     /// Call `RefCell::try_borrow_mut` on the inner `RefCell` *without* the write barrier.
@@ -120,7 +126,7 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     /// SAFETY: The safety requirements of this method are exactly the same as
     /// [`GcCell::borrow_mut`].
     pub unsafe fn try_borrow_mut<'a>(&'a self) -> Result<RefMut<'a, T>, BorrowMutError> {
-        self.0.cell.try_borrow_mut()
+        self.0.try_borrow_mut()
     }
 
     /// Manually call the write barrier.
@@ -129,15 +135,5 @@ impl<'gc, T: ?Sized + 'gc> GcCell<'gc, T> {
     /// pointer. Safe to call, but only necessary from unsafe code.
     pub fn write_barrier(&self, mc: MutationContext<'gc, '_>) {
         Gc::write_barrier(mc, self.0);
-    }
-}
-
-pub(crate) struct GcRefCell<T: ?Sized> {
-    cell: RefCell<T>,
-}
-
-unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for GcRefCell<T> {
-    fn trace(&self, cc: CollectionContext) {
-        self.cell.borrow().trace(cc);
     }
 }
