@@ -1,8 +1,7 @@
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
     unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell,
@@ -69,6 +68,7 @@ fn weak_allocation() {
     }
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn dyn_sized_allocation() {
     #[derive(Clone)]
@@ -494,6 +494,45 @@ fn test_collect_overflow() {
         assert!(arena.remembered_size() < 1024);
         assert!(arena.allocation_debt() < 1024.0);
     }
+}
+
+#[test]
+fn cast() {
+    use core::cell::Cell;
+
+    #[derive(Collect)]
+    #[collect(require_static)]
+    #[repr(C)]
+    struct A {
+        header: Cell<u8>,
+        footer: u8,
+    }
+
+    #[derive(Collect)]
+    #[collect(require_static)]
+    #[repr(C)]
+    struct B {
+        header: Cell<u8>,
+    }
+
+    gc_arena::rootless_arena(|mc| {
+        let a = Gc::allocate(
+            mc,
+            A {
+                header: Cell::new(0b01010101),
+                footer: 0b10101010,
+            },
+        );
+
+        unsafe {
+            let b = Gc::cast::<B>(a);
+            assert_eq!(b.header.get(), 0b01010101);
+            b.header.set(0b11111111);
+        }
+
+        assert_eq!(a.header.get(), 0b11111111);
+        assert_eq!(a.footer, 0b10101010);
+    });
 }
 
 #[test]

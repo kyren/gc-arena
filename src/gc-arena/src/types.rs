@@ -218,6 +218,7 @@ impl CollectVtable {
 /// A typed GC'd value, together with its metadata.
 /// This type is never manipulated directly by the GC algorithm, allowing
 /// user-facing `Gc`s to freely cast their pointer to it.
+#[repr(C)]
 pub(crate) struct GcBoxInner<T: ?Sized> {
     header: GcBoxHeader,
     /// The typed value stored in this `GcBox`.
