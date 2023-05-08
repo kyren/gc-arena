@@ -536,6 +536,26 @@ fn cast() {
 }
 
 #[test]
+fn ptr_magic() {
+    gc_arena::rootless_arena(|mc| {
+        #[derive(Debug, Eq, PartialEq, Collect)]
+        #[collect(require_static)]
+        struct S(u8, u32, u64);
+
+        let a = Gc::allocate(mc, S(3, 4, 5));
+
+        let aptr = Gc::as_ptr(a);
+
+        unsafe {
+            assert_eq!(*aptr, S(3, 4, 5));
+
+            let b = Gc::from_ptr(aptr);
+            assert_eq!(*b, S(3, 4, 5));
+        }
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

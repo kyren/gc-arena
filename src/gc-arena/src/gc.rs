@@ -1,12 +1,17 @@
-use core::fmt::{self, Debug, Display, Pointer};
-use core::marker::PhantomData;
-use core::ops::Deref;
-use core::ptr::NonNull;
+use core::{
+    fmt::{self, Debug, Display, Pointer},
+    marker::PhantomData,
+    mem,
+    ops::Deref,
+    ptr::{self, NonNull},
+};
 
-use crate::collect::Collect;
-use crate::context::{CollectionContext, MutationContext};
-use crate::gc_weak::GcWeak;
-use crate::types::{GcBox, GcBoxInner, Invariant};
+use crate::{
+    collect::Collect,
+    context::{CollectionContext, MutationContext},
+    gc_weak::GcWeak,
+    types::{GcBox, GcBoxInner, Invariant},
+};
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
 /// pointer. You can only allocate `Gc` pointers through an `Allocator` inside an arena type,
@@ -78,6 +83,28 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
             _invariant: PhantomData,
         }
     }
+
+    /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
+    ///
+    /// SAFETY:
+    /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
+    /// have been collected yet.
+    pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
+        let header_offset = {
+            let base = mem::MaybeUninit::<GcBoxInner<T>>::uninit();
+            let base_ptr = base.as_ptr();
+            let val_ptr = ptr::addr_of!((*base_ptr).value);
+            (base_ptr as isize) - (val_ptr as isize)
+        };
+        let ptr = (ptr as *mut T)
+            .cast::<u8>()
+            .offset(header_offset)
+            .cast::<GcBoxInner<T>>();
+        Gc {
+            ptr: NonNull::new_unchecked(ptr),
+            _invariant: PhantomData,
+        }
+    }
 }
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
@@ -99,7 +126,9 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        let inner = unsafe { gc.ptr.as_ref() };
-        core::ptr::addr_of!(inner.value) as *const T
+        unsafe {
+            let inner = gc.ptr.as_ptr();
+            core::ptr::addr_of!((*inner).value) as *const T
+        }
     }
 }

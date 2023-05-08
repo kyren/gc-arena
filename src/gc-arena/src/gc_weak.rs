@@ -66,4 +66,16 @@ impl<'gc, T: Collect + 'gc> GcWeak<'gc, T> {
             inner: Gc::cast::<U>(this.inner),
         }
     }
+
+    /// Retrieve a `GcWeak` from a raw pointer obtained from `GcWeak::as_ptr`
+    ///
+    /// SAFETY:
+    /// The provided pointer must have been obtained from `GcWeak::as_ptr` or `Gc::as_ptr`, and
+    /// the pointer must not have been *fully* collected yet (it may be a dropped but live weak
+    /// pointer).
+    pub unsafe fn from_ptr(ptr: *const T) -> GcWeak<'gc, T> {
+        GcWeak {
+            inner: Gc::from_ptr(ptr),
+        }
+    }
 }
