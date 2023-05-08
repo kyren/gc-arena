@@ -137,7 +137,7 @@ impl<T: ?Sized> CollectRefCell<T> {
         self.cell.borrow_mut()
     }
 
-    /// Call `RefCell::try_borrow_mut` on the inner `RefCell` *without* the write barrier.
+    /// Call `RefCell::try_borrow_mut` on the inner `RefCell`.
     ///
     /// SAFETY: See [`CollectRefCell`]
     pub unsafe fn try_borrow_mut<'a>(&'a self) -> Result<RefMut<'a, T>, BorrowMutError> {
