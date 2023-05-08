@@ -39,7 +39,7 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
-    pub(crate) unsafe fn trace(self, gc_box: GcBox) {
+    pub(crate) fn trace(self, gc_box: GcBox) {
         self.context.trace(gc_box)
     }
 
@@ -355,8 +355,7 @@ impl Context {
         }
     }
 
-    // SAFETY: the `GcBox` must contain a live object.
-    unsafe fn trace(&self, gc_box: GcBox) {
+    fn trace(&self, gc_box: GcBox) {
         let header = gc_box.header();
         match header.color() {
             GcColor::Black | GcColor::Gray => {}
@@ -410,7 +409,7 @@ impl Context {
         //   `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed during the last `Phase::Propagate.`
         //
         //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this `Phase::Sweep`,
-        // and we must not upgrade it.
+        //   and we must not upgrade it.
         //
         //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
         //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is not `WhiteWeak`
