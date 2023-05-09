@@ -46,6 +46,21 @@ impl<T> Lock<T> {
     pub fn new(t: T) -> Lock<T> {
         Self { cell: Cell::new(t) }
     }
+
+    pub fn get(&self) -> T where T: Copy {
+        self.cell.get()
+    }
+
+    pub fn into_inner(self) -> T {
+        self.cell.into_inner()
+    }
+
+    pub fn take(&self) -> T where T: Default {
+        // Despite mutating the contained value, this doesn't need a write barrier,
+        // as, thanks to lifetime parametricity, a `Default::default()` cannot ever
+        // safely obtain a `MutationContext` or other external `Gc` pointers.
+        self.cell.take()
+    }
 }
 
 impl<T: ?Sized> Lock<T> {
@@ -62,11 +77,9 @@ impl<T: ?Sized> Lock<T> {
     pub unsafe fn as_cell(&self) -> &Cell<T> {
         &self.cell
     }
-}
 
-impl<T: Copy> Lock<T> {
-    pub fn get(&self) -> T {
-        self.cell.get()
+    pub fn get_mut(&mut self) -> &mut T {
+        self.cell.get_mut()
     }
 }
 
@@ -194,6 +207,17 @@ impl<T> RefLock<T> {
             cell: RefCell::new(t),
         }
     }
+
+    pub fn into_inner(self) -> T {
+        self.cell.into_inner()
+    }
+
+    pub fn take(&self) -> T where T: Default {
+        // Despite mutating the contained value, this doesn't need a write barrier,
+        // as, thanks to lifetime parametricity, a `Default::default()` cannot ever
+        // safely obtain a `MutationContext` or other external `Gc` pointers.
+        self.cell.take()
+    }
 }
 
 impl<T: ?Sized> RefLock<T> {
@@ -218,6 +242,10 @@ impl<T: ?Sized> RefLock<T> {
     /// manually before collection is triggered.
     pub unsafe fn as_ref_cell(&self) -> &RefCell<T> {
         &self.cell
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        self.cell.get_mut()
     }
 }
 
