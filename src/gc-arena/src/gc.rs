@@ -66,7 +66,7 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
 }
 
 impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
-    pub fn allocate(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
+    pub fn new(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
         Gc {
             ptr: mc.allocate(t),
             _invariant: PhantomData,
