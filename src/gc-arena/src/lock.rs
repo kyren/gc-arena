@@ -59,7 +59,23 @@ impl<T: Copy> Lock<T> {
 
 unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     fn trace(&self, cc: CollectionContext) {
-        self.cell.get().trace(cc);
+        // We must be careful here and guard against pathalogical behavior.
+        //
+        // Since `Cell` returns a copy of `T`, we can only call `T::trace` on a copy of `T`.
+        //
+        // Technically, `Collect::trace` could modify this `T` value, so in order to be correct,
+        // we make sure to set the cell back to exactly the value whe called `T::trace` on before
+        // returning.
+        struct Guard<'a, T: Copy>(&'a Cell<T>, T);
+
+        impl<'a, T: Copy> Drop for Guard<'a, T> {
+            fn drop(&mut self) {
+                self.0.set(self.1);
+            }
+        }
+
+        let guard = Guard(&self.cell, self.cell.get());
+        T::trace(&guard.1, cc)
     }
 }
 
