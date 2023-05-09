@@ -1,5 +1,5 @@
 use core::{
-    cell::{BorrowError, Cell, Ref, RefCell},
+    cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
     fmt,
 };
 
@@ -76,6 +76,16 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
         // It could be fixed now, but since it is not even testable because it is currently
         // *impossible*, I did not bother. One day this may need to be implemented!
         T::trace(&self.get(), cc);
+    }
+}
+
+impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
+    pub fn get(&self) -> T {
+        self.cell.get()
+    }
+
+    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
+        self.write_cell(mc).set(t);
     }
 }
 
@@ -161,6 +171,27 @@ unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
 }
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
+    #[track_caller]
+    pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
+        RefLock::borrow(self)
+    }
+
+    #[track_caller]
+    pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
+        RefLock::try_borrow(self)
+    }
+
+    pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
+        self.write_ref_cell(mc).borrow_mut()
+    }
+
+    pub fn try_borrow_mut<'a>(
+        &'a self,
+        mc: MutationContext<'gc, '_>,
+    ) -> Result<RefMut<'a, T>, BorrowMutError> {
+        self.write_ref_cell(mc).try_borrow_mut()
+    }
+
     /// Access the inner `RefCell` type safely by ensuring that the write barrier is called.
     pub fn write_ref_cell(&self, mc: MutationContext<'gc, '_>) -> &RefCell<T> {
         Gc::write_barrier(mc, *self);
