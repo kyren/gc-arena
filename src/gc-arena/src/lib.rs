@@ -16,7 +16,7 @@ mod context;
 mod dynamic_roots;
 mod gc;
 mod gc_weak;
-mod lock;
+pub mod lock;
 mod no_drop;
 mod static_collect;
 mod types;
@@ -33,7 +33,6 @@ pub use self::{
     dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     gc_weak::GcWeak,
-    lock::{Lock, RefLock},
     no_drop::MustNotImplDrop,
     static_collect::StaticCollect,
 };

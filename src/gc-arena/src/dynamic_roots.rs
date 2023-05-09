@@ -4,7 +4,8 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{Collect, Gc, MutationContext, RefLock, Root, Rootable};
+use crate::lock::RefLock;
+use crate::{Collect, Gc, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:

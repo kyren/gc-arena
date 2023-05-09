@@ -1,3 +1,5 @@
+//! GC-aware interior mutability types.
+
 use core::{
     cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
     fmt,

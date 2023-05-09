@@ -3,9 +3,10 @@ use rand::distributions::Distribution;
 #[cfg(feature = "std")]
 use std::{collections::HashMap, rc::Rc};
 
+use gc_arena::lock::RefLock;
 use gc_arena::{
     unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcWeak,
-    RefLock, Rootable,
+    Rootable,
 };
 
 #[test]
