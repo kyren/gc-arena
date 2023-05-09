@@ -4,7 +4,7 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{Collect, GcCell, MutationContext, Root, Rootable};
+use crate::{Collect, CollectRefCell, Gc, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -16,7 +16,7 @@ use crate::{Collect, GcCell, MutationContext, Root, Rootable};
 //      a match lets us know that this `Gc` must have originated from *this* set, so it is safe to
 //      cast it back to whatever our current `'gc` lifetime is.
 #[derive(Copy, Clone)]
-pub struct DynamicRootSet<'gc>(GcCell<'gc, Inner<'gc>>);
+pub struct DynamicRootSet<'gc>(Gc<'gc, CollectRefCell<Inner<'gc>>>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
     fn trace(&self, cc: crate::CollectionContext) {
@@ -25,8 +25,7 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
             // We cheat horribly and filter out dead handles during tracing. Since we have to go
             // through the entire list of roots anyway, this is cheaper than filtering on e.g.
             // stashing new roots.
-            self.0
-                .borrow_mut()
+            CollectRefCell::borrow_mut(&*self.0)
                 .handles
                 .retain(|handle| Weak::strong_count(&handle) > 0);
         }
@@ -37,12 +36,12 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
 
 impl<'gc> DynamicRootSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Self {
-        DynamicRootSet(GcCell::allocate(
+        DynamicRootSet(Gc::allocate(
             mc,
-            Inner {
+            CollectRefCell::new(Inner {
                 handles: Vec::new(),
                 set_id: Rc::new(SetId {}),
-            },
+            }),
         ))
     }
 
@@ -51,7 +50,7 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: MutationContext<'gc, '_>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
-        let mut inner = self.0.write(mc);
+        let mut inner = self.0.borrow_mut(mc);
 
         let handle = Rc::new(Handle {
             set_id: inner.set_id.clone(),
@@ -73,7 +72,7 @@ impl<'gc> DynamicRootSet<'gc> {
         root: &'a DynamicRoot<R>,
     ) -> &'a Root<'gc, R> {
         assert_eq!(
-            Rc::as_ptr(&self.0.read().set_id),
+            Rc::as_ptr(&self.0.borrow().set_id),
             Rc::as_ptr(&root.handle.set_id),
             "provided `DynamicRoot` does not originate from this `DynamicRootSet`",
         );

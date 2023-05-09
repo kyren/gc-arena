@@ -1,9 +1,9 @@
 use core::{
     cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
-    fmt::{self, Debug},
+    fmt,
 };
 
-use crate::{Collect, CollectionContext};
+use crate::{Collect, CollectionContext, Gc, MutationContext};
 
 /// A `Cell` type that is `Collect`.
 ///
@@ -14,11 +14,14 @@ use crate::{Collect, CollectionContext};
 /// may be adopted by this type as a result of any method that affords interior mutability, unless
 /// the write barrier for the containing `Gc` pointer is invoked manually before collection is
 /// triggered.
+///
+/// If the `CollectCell` is directly held in a `Gc` pointer, safe versions of these mutating methods
+/// are provided, since they can ensure that the write barrier is called on the containing pointer.
 pub struct CollectCell<T: ?Sized> {
     cell: Cell<T>,
 }
 
-impl<T: Copy + Debug> fmt::Debug for CollectCell<T> {
+impl<T: Copy + fmt::Debug> fmt::Debug for CollectCell<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("CollectCell").field(&self.cell).finish()
     }
@@ -70,6 +73,20 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for CollectCell<T> {
     }
 }
 
+impl<'gc, T: 'gc> Gc<'gc, CollectCell<T>> {
+    /// Call `Cell::set` on the inner `Cell` safely.
+    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
+        Gc::write_barrier(mc, *self);
+        unsafe { CollectCell::set(&*self, t) }
+    }
+
+    /// Call `Cell::replace` on the inner `Cell` safely.
+    pub fn replace(&self, mc: MutationContext<'gc, '_>, t: T) -> T {
+        Gc::write_barrier(mc, *self);
+        unsafe { CollectCell::replace(&*self, t) }
+    }
+}
+
 /// A `RefCell` type that is `Collect`.
 ///
 /// This does not trigger a write barrier on writes, so the only methods that allow writing to the
@@ -79,12 +96,16 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for CollectCell<T> {
 /// may be adopted by this type as a result of any method that affords interior mutability, unless
 /// the write barrier for the containing `Gc` pointer is invoked manually before collection is
 /// triggered.
+///
+/// If the `CollectRefCell` is directly held in a `Gc` pointer, safe versions of these mutating
+/// methods are provided, since they can ensure that the write barrier is called on the containing
+/// pointer.
 #[derive(Clone)]
 pub struct CollectRefCell<T: ?Sized> {
     cell: RefCell<T>,
 }
 
-impl<T: Debug + ?Sized> Debug for CollectRefCell<T> {
+impl<T: fmt::Debug + ?Sized> fmt::Debug for CollectRefCell<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self.try_borrow() {
             Ok(borrow) => fmt.debug_tuple("CollectRefCell").field(&borrow).finish(),
@@ -93,7 +114,7 @@ impl<T: Debug + ?Sized> Debug for CollectRefCell<T> {
                 // here. Show a placeholder instead.
                 struct BorrowedPlaceholder;
 
-                impl Debug for BorrowedPlaceholder {
+                impl fmt::Debug for BorrowedPlaceholder {
                     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                         f.write_str("<borrowed>")
                     }
@@ -148,5 +169,23 @@ impl<T: ?Sized> CollectRefCell<T> {
 unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for CollectRefCell<T> {
     fn trace(&self, cc: CollectionContext) {
         self.cell.borrow().trace(cc);
+    }
+}
+
+impl<'gc, T: ?Sized + 'gc> Gc<'gc, CollectRefCell<T>> {
+    /// Call `RefCell::borrow_mut` on the inner `RefCell` safely.
+    #[track_caller]
+    pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
+        Gc::write_barrier(mc, *self);
+        self.cell.borrow_mut()
+    }
+
+    /// Call `RefCell::try_borrow_mut` on the inner `RefCell` safely.
+    pub fn try_borrow_mut<'a>(
+        &'a self,
+        mc: MutationContext<'gc, '_>,
+    ) -> Result<RefMut<'a, T>, BorrowMutError> {
+        Gc::write_barrier(mc, *self);
+        self.cell.try_borrow_mut()
     }
 }

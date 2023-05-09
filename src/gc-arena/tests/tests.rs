@@ -4,8 +4,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcCell,
-    GcWeak, Rootable,
+    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, CollectRefCell, DynamicRootSet,
+    Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -30,7 +30,7 @@ fn weak_allocation() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: GcCell<'gc, Option<Gc<'gc, i32>>>,
+        test: Gc<'gc, CollectRefCell<Option<Gc<'gc, i32>>>>,
         weak: GcWeak<'gc, i32>,
     }
 
@@ -39,7 +39,7 @@ fn weak_allocation() {
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
         TestRoot {
-            test: GcCell::allocate(mc, Some(test)),
+            test: Gc::allocate(mc, CollectRefCell::new(Some(test))),
             weak,
         }
     });
@@ -48,10 +48,10 @@ fn weak_allocation() {
         assert!(root
             .weak
             .upgrade(mc)
-            .map(|gc| Gc::ptr_eq(gc, root.test.read().unwrap()))
+            .map(|gc| Gc::ptr_eq(gc, root.test.borrow().unwrap()))
             .unwrap_or(false));
 
-        *root.test.write(mc) = None;
+        *root.test.borrow_mut(mc) = None;
     });
     let mut done = false;
     while !done {
@@ -115,12 +115,12 @@ fn repeated_allocation_deallocation() {
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct TestRoot<'gc>(GcCell<'gc, HashMap<i32, Gc<'gc, (i32, RefCounter)>>>);
+    struct TestRoot<'gc>(Gc<'gc, CollectRefCell<HashMap<i32, Gc<'gc, (i32, RefCounter)>>>>);
 
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, HashMap::new()))
+        TestRoot(Gc::allocate(mc, CollectRefCell::new(HashMap::new())))
     });
 
     let key_range = rand::distributions::Uniform::from(0..10000);
@@ -128,7 +128,7 @@ fn repeated_allocation_deallocation() {
 
     for _ in 0..40 {
         arena.mutate(|mc, root| {
-            let mut map = root.0.write(mc);
+            let mut map = root.0.borrow_mut(mc);
             for _ in 0..50 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.insert(i, Gc::allocate(mc, (i, r.clone()))) {
@@ -150,7 +150,7 @@ fn repeated_allocation_deallocation() {
     arena.collect_all();
     arena.collect_all();
 
-    let live_size = arena.mutate(|_, root| root.0.read().len());
+    let live_size = arena.mutate(|_, root| root.0.borrow().len());
     assert_eq!(Rc::strong_count(&r.0), live_size + 1);
 }
 
@@ -162,16 +162,16 @@ fn all_dropped() {
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
+    struct TestRoot<'gc>(Gc<'gc, CollectRefCell<Vec<Gc<'gc, RefCounter>>>>);
 
     let r = RefCounter(Rc::new(()));
 
     let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(Gc::allocate(mc, CollectRefCell::new(Vec::new())))
     });
 
     arena.mutate(|mc, root| {
-        let mut v = root.0.write(mc);
+        let mut v = root.0.borrow_mut(mc);
         for _ in 0..100 {
             v.push(Gc::allocate(mc, r.clone()));
         }
@@ -188,22 +188,22 @@ fn all_garbage_collected() {
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct TestRoot<'gc>(GcCell<'gc, Vec<Gc<'gc, RefCounter>>>);
+    struct TestRoot<'gc>(Gc<'gc, CollectRefCell<Vec<Gc<'gc, RefCounter>>>>);
 
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(GcCell::allocate(mc, Vec::new()))
+        TestRoot(Gc::allocate(mc, CollectRefCell::new(Vec::new())))
     });
 
     arena.mutate(|mc, root| {
-        let mut v = root.0.write(mc);
+        let mut v = root.0.borrow_mut(mc);
         for _ in 0..100 {
             v.push(Gc::allocate(mc, r.clone()));
         }
     });
     arena.mutate(|mc, root| {
-        root.0.write(mc).clear();
+        root.0.borrow_mut(mc).clear();
     });
     arena.collect_all();
     arena.collect_all();
@@ -465,13 +465,13 @@ fn test_unsize() {
         assert_eq!(dyn_gc.to_string(), "Hello world!");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
 
-        let gc: GcCell<'_, i32> = GcCell::allocate(mc, 12345);
-        let gc_weak = GcCell::downgrade(gc);
+        let gc: Gc<'_, CollectRefCell<i32>> = Gc::allocate(mc, CollectRefCell::new(12345));
+        let gc_weak = Gc::downgrade(gc);
 
-        let dyn_gc = unsize!(gc => dyn Display);
-        let dyn_weak = unsize!(gc_weak => dyn Display);
-        assert_eq!(dyn_gc.read().to_string(), "12345");
-        assert_eq!(dyn_weak.upgrade(mc).unwrap().read().to_string(), "12345");
+        let dyn_gc = unsize!(gc => CollectRefCell<dyn Display>);
+        let dyn_weak = unsize!(gc_weak => CollectRefCell<dyn Display>);
+        assert_eq!(dyn_gc.borrow().to_string(), "12345");
+        assert_eq!(dyn_weak.upgrade(mc).unwrap().borrow().to_string(), "12345");
     })
 }
 

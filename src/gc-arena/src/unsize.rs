@@ -3,10 +3,10 @@ use core::ptr::NonNull;
 
 use crate::{
     types::GcBoxInner,
-    {CollectRefCell, Gc, GcCell, GcWeak, GcWeakCell},
+    {Gc, GcWeak},
 };
 
-/// Unsizes a [`Gc`] pointer (also works with [`GcWeak`], [`GcCell`] and [`GcWeakCell`]).
+/// Unsizes a [`Gc`] or [`GcWeak`] pointer.
 ///
 /// This macro is a `gc_arena`-specific replacement for the nightly-only `CoerceUnsized` trait.
 ///
@@ -92,22 +92,6 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
     }
 }
 
-unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcCell<'gc, U>> for GcCell<'gc, T> {
-    type FromPtr = T;
-    type ToPtr = U;
-
-    #[inline(always)]
-    unsafe fn __coerce_unchecked<F>(self, coerce: F) -> GcCell<'gc, U>
-    where
-        F: FnOnce(*mut T) -> *mut U,
-    {
-        GcCell(
-            self.0
-                .__coerce_unchecked(|p| coerce(p as *mut T) as *mut CollectRefCell<U>),
-        )
-    }
-}
-
 unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'gc, T> {
     type FromPtr = T;
     type ToPtr = U;
@@ -119,19 +103,5 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'g
     {
         let inner = self.inner.__coerce_unchecked(coerce);
         GcWeak { inner }
-    }
-}
-
-unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcWeakCell<'gc, U>> for GcWeakCell<'gc, T> {
-    type FromPtr = T;
-    type ToPtr = U;
-
-    #[inline(always)]
-    unsafe fn __coerce_unchecked<F>(self, coerce: F) -> GcWeakCell<'gc, U>
-    where
-        F: FnOnce(*mut T) -> *mut U,
-    {
-        let inner = self.inner.__coerce_unchecked(coerce);
-        GcWeakCell { inner }
     }
 }

@@ -16,9 +16,7 @@ mod collect_impl;
 mod context;
 mod dynamic_roots;
 mod gc;
-mod gc_cell;
 mod gc_weak;
-mod gc_weak_cell;
 mod no_drop;
 mod static_collect;
 mod types;
@@ -35,9 +33,7 @@ pub use self::{
     context::{CollectionContext, MutationContext},
     dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
-    gc_cell::GcCell,
     gc_weak::GcWeak,
-    gc_weak_cell::GcWeakCell,
     no_drop::MustNotImplDrop,
     static_collect::StaticCollect,
 };
