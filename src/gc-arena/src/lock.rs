@@ -176,11 +176,11 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
         RefLock::borrow(self)
     }
 
-    #[track_caller]
     pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
         RefLock::try_borrow(self)
     }
 
+    #[track_caller]
     pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
         self.write_ref_cell(mc).borrow_mut()
     }
