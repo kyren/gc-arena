@@ -38,7 +38,7 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
 
 impl<'gc> DynamicRootSet<'gc> {
     pub fn new(mc: MutationContext<'gc, '_>) -> Self {
-        DynamicRootSet(Gc::allocate(
+        DynamicRootSet(Gc::new(
             mc,
             RefLock::new(Inner {
                 handles: Vec::new(),

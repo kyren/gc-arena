@@ -19,16 +19,16 @@ use crate::{
 /// # gc_arena::rootless_arena(|mc| {
 /// // Unsizing arrays to slices.
 /// let mut slice;
-/// slice = unsize!(Gc::allocate(mc, [1, 2]) => [u8]);
+/// slice = unsize!(Gc::new(mc, [1, 2]) => [u8]);
 /// assert_eq!(slice.len(), 2);
-/// slice = unsize!(Gc::allocate(mc, [42; 4]) => [u8]);
+/// slice = unsize!(Gc::new(mc, [42; 4]) => [u8]);
 /// assert_eq!(slice.len(), 4);
 ///
 /// // Unsizing values to trait objects.
 /// let mut display;
-/// display = unsize!(Gc::allocate(mc, "Hello world!".to_owned()) => dyn Display);
+/// display = unsize!(Gc::new(mc, "Hello world!".to_owned()) => dyn Display);
 /// assert_eq!(display.to_string(), "Hello world!");
-/// display = unsize!(Gc::allocate(mc, 123456) => dyn Display);
+/// display = unsize!(Gc::new(mc, 123456) => dyn Display);
 /// assert_eq!(display.to_string(), "123456");
 /// # })
 /// # }
@@ -42,7 +42,7 @@ use crate::{
 /// # fn main() {
 /// # gc_arena::rootless_arena(|mc| {
 /// // Error: `Option<char>` doesn't implement `Error`.
-/// let _ = unsize!(Gc::allocate(mc, Some('💥')) => dyn Error);
+/// let _ = unsize!(Gc::new(mc, Some('💥')) => dyn Error);
 /// # })
 /// # }
 /// ```

@@ -17,7 +17,7 @@ fn simple_allocation() {
     }
 
     let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
-        test: Gc::allocate(mc, 42),
+        test: Gc::new(mc, 42),
     });
 
     arena.mutate(|_mc, root| {
@@ -35,11 +35,11 @@ fn weak_allocation() {
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        let test = Gc::allocate(mc, 42);
+        let test = Gc::new(mc, 42);
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
         TestRoot {
-            test: Gc::allocate(mc, RefLock::new(Some(test))),
+            test: Gc::new(mc, RefLock::new(Some(test))),
             weak,
         }
     });
@@ -57,7 +57,7 @@ fn weak_allocation() {
     while !done {
         arena.mutate(|mc, root| {
             // keep allocating objects to ensure the GC is triggered
-            Gc::allocate(mc, 0);
+            Gc::new(mc, 0);
             if let Some(gc) = root.weak.upgrade(mc) {
                 assert_eq!(*gc, 42);
             } else {
@@ -86,8 +86,8 @@ fn dyn_sized_allocation() {
     let counter = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        let array: [_; SIZE] = core::array::from_fn(|_| Gc::allocate(mc, counter.clone()));
-        let slice = unsize!(Gc::allocate(mc, array) => [_]);
+        let array: [_; SIZE] = core::array::from_fn(|_| Gc::new(mc, counter.clone()));
+        let slice = unsize!(Gc::new(mc, array) => [_]);
         TestRoot { slice }
     });
 
@@ -98,7 +98,7 @@ fn dyn_sized_allocation() {
 
     // Drop all the RefCounters.
     arena.mutate_root(|mc, root| {
-        root.slice = unsize!(Gc::allocate(mc, []) => [_]);
+        root.slice = unsize!(Gc::new(mc, []) => [_]);
     });
     arena.collect_all();
 
@@ -120,7 +120,7 @@ fn repeated_allocation_deallocation() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(Gc::allocate(mc, RefLock::new(HashMap::new())))
+        TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
     let key_range = rand::distributions::Uniform::from(0..10000);
@@ -131,7 +131,7 @@ fn repeated_allocation_deallocation() {
             let mut map = root.0.write_ref_cell(mc).borrow_mut();
             for _ in 0..50 {
                 let i = key_range.sample(&mut rng);
-                if let Some(old) = map.insert(i, Gc::allocate(mc, (i, r.clone()))) {
+                if let Some(old) = map.insert(i, Gc::new(mc, (i, r.clone()))) {
                     assert_eq!(old.0, i);
                 }
             }
@@ -167,13 +167,13 @@ fn all_dropped() {
     let r = RefCounter(Rc::new(()));
 
     let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(Gc::allocate(mc, RefLock::new(Vec::new())))
+        TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
     });
 
     arena.mutate(|mc, root| {
         let mut v = root.0.write_ref_cell(mc).borrow_mut();
         for _ in 0..100 {
-            v.push(Gc::allocate(mc, r.clone()));
+            v.push(Gc::new(mc, r.clone()));
         }
     });
     drop(arena);
@@ -193,13 +193,13 @@ fn all_garbage_collected() {
     let r = RefCounter(Rc::new(()));
 
     let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(Gc::allocate(mc, RefLock::new(Vec::new())))
+        TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
     });
 
     arena.mutate(|mc, root| {
         let mut v = root.0.write_ref_cell(mc).borrow_mut();
         for _ in 0..100 {
-            v.push(Gc::allocate(mc, r.clone()));
+            v.push(Gc::new(mc, r.clone()));
         }
     });
     arena.mutate(|mc, root| {
@@ -235,7 +235,7 @@ fn test_layouts() {
             let array: [u8; $size] = core::array::from_fn(|i| i as u8);
 
             let ptr = gc_arena::rootless_arena(|mc| {
-                let gc = Gc::allocate(mc, Wrapper(Aligned(array)));
+                let gc = Gc::new(mc, Wrapper(Aligned(array)));
                 assert_eq!(array, gc.0 .0);
                 Gc::as_ptr(gc) as *mut ()
             });
@@ -353,7 +353,7 @@ fn test_map() {
     }
 
     let arena = Arena::<Rootable![Root<'gc>]>::new(ArenaParameters::default(), |mc| Root {
-        some_complex_state: vec![Gc::allocate(mc, 42), Gc::allocate(mc, 69)],
+        some_complex_state: vec![Gc::new(mc, 42), Gc::new(mc, 69)],
     });
 
     #[derive(Collect)]
@@ -396,16 +396,15 @@ fn test_dynamic_roots() {
 
     let initial_size = arena.total_allocated();
 
-    let root1 = arena
-        .mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'gc, i32>]>(mc, Gc::allocate(mc, 12)));
+    let root1 =
+        arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'gc, i32>]>(mc, Gc::new(mc, 12)));
 
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
 
     let root2 = arena.mutate(|mc, root_set| {
-        root_set
-            .stash::<Rootable![Root2<'gc>]>(mc, Root2(Gc::allocate(mc, 27), Gc::allocate(mc, true)))
+        root_set.stash::<Rootable![Root2<'gc>]>(mc, Root2(Gc::new(mc, 27), Gc::new(mc, true)))
     });
 
     arena.collect_all();
@@ -444,8 +443,8 @@ fn test_dynamic_bad_set() {
     #[collect(no_drop)]
     struct Root<'gc>(Gc<'gc, i32>);
 
-    let dyn_root = arena1
-        .mutate(|mc, root| root.stash::<Rootable![Root<'gc>]>(mc, Root(Gc::allocate(mc, 44))));
+    let dyn_root =
+        arena1.mutate(|mc, root| root.stash::<Rootable![Root<'gc>]>(mc, Root(Gc::new(mc, 44))));
 
     arena2.mutate(|_, root| {
         root.fetch(&dyn_root);
@@ -457,7 +456,7 @@ fn test_unsize() {
     use std::fmt::Display;
 
     gc_arena::rootless_arena(|mc| {
-        let gc: Gc<'_, String> = Gc::allocate(mc, "Hello world!".into());
+        let gc: Gc<'_, String> = Gc::new(mc, "Hello world!".into());
         let gc_weak = Gc::downgrade(gc);
 
         let dyn_gc = unsize!(gc => dyn Display);
@@ -465,7 +464,7 @@ fn test_unsize() {
         assert_eq!(dyn_gc.to_string(), "Hello world!");
         assert_eq!(dyn_weak.upgrade(mc).unwrap().to_string(), "Hello world!");
 
-        let gc: Gc<'_, RefLock<i32>> = Gc::allocate(mc, RefLock::new(12345));
+        let gc: Gc<'_, RefLock<i32>> = Gc::new(mc, RefLock::new(12345));
         let gc_weak = Gc::downgrade(gc);
 
         let dyn_gc = unsize!(gc => RefLock<dyn Display>);
@@ -485,7 +484,7 @@ fn test_collect_overflow() {
 
     let mut arena =
         Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
-            test: Gc::allocate(mc, [0; 256]),
+            test: Gc::new(mc, [0; 256]),
         });
 
     for _ in 0..1024 {
@@ -516,7 +515,7 @@ fn cast() {
     }
 
     gc_arena::rootless_arena(|mc| {
-        let a = Gc::allocate(
+        let a = Gc::new(
             mc,
             A {
                 header: Cell::new(0b01010101),
@@ -542,7 +541,7 @@ fn ptr_magic() {
         #[collect(require_static)]
         struct S(u8, u32, u64);
 
-        let a = Gc::allocate(mc, S(3, 4, 5));
+        let a = Gc::new(mc, S(3, 4, 5));
 
         let aptr = Gc::as_ptr(a);
 
