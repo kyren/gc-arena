@@ -59,23 +59,23 @@ impl<T: Copy> Lock<T> {
 
 unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     fn trace(&self, cc: CollectionContext) {
-        // We must be careful here and guard against pathalogical behavior.
+        // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
-        // Since `Cell` returns a copy of `T`, we can only call `T::trace` on a copy of `T`.
+        // This is theoretically a correctness issue, because technically `T` could have interior
+        // mutability and modify the copy, and this modification would be lost.
         //
-        // Technically, `Collect::trace` could modify this `T` value, so in order to be correct,
-        // we make sure to set the cell back to exactly the value whe called `T::trace` on before
-        // returning.
-        struct Guard<'a, T: Copy>(&'a Cell<T>, T);
-
-        impl<'a, T: Copy> Drop for Guard<'a, T> {
-            fn drop(&mut self) {
-                self.0.set(self.1);
-            }
-        }
-
-        let guard = Guard(&self.cell, self.cell.get());
-        T::trace(&guard.1, cc)
+        // However, currently there is not a type in rust that allows for interior mutability that
+        // is also `Copy`, so this *currently* impossible to even observe.
+        //
+        // I am assured that this requirement is technially "only" a lint, and could be relaxed in
+        // the future. If this requirement is ever relaxed in some way, fixing this is relatively
+        // easy, by setting the value of the cell to the copy we make, after tracing (via a drop
+        // guard in case of panics). Additionally, this is not a safety issue, only a correctness
+        // issue, the changes will "just" be lost after this call returns.
+        //
+        // It could be fixed now, but since it is not even testable because it is currently
+        // *impossible*, I did not bother. One day this may need to be implemented!
+        T::trace(&self.get(), cc);
     }
 }
 
