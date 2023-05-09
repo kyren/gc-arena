@@ -26,7 +26,7 @@ pub trait Unlock {
 
 /// A wrapper around a `Cell` that implements `Collect`.
 ///
-/// Only provides safe read access to the RefCell, full write access requires unsafety.
+/// Only provides safe read access to the `Cell`, full write access requires unsafety.
 ///
 /// If the `Lock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
 /// on `Gc` can ensure that the write barrier is called.
@@ -42,15 +42,15 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     }
 }
 
-impl<T: ?Sized> Lock<T> {
-    pub fn as_ptr(&self) -> *mut T {
-        self.cell.as_ptr()
-    }
-}
-
 impl<T> Lock<T> {
     pub fn new(t: T) -> Lock<T> {
         Self { cell: Cell::new(t) }
+    }
+}
+
+impl<T: ?Sized> Lock<T> {
+    pub fn as_ptr(&self) -> *mut T {
+        self.cell.as_ptr()
     }
 
     /// Access the inner `Cell` value.
@@ -155,7 +155,7 @@ impl<T: Ord + Copy> Ord for Lock<T> {
 
 /// A wrapper around a `RefCell` that implements `Collect`.
 ///
-/// Only provides safe read access to the RefCell, full write access requires unsafety.
+/// Only provides safe read access to the `RefCell`, full write access requires unsafety.
 ///
 /// If the `RefLock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
 /// on `Gc` can ensure that the write barrier is called.
@@ -167,10 +167,11 @@ pub struct RefLock<T: ?Sized> {
 
 impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut fmt = fmt.debug_tuple("RefLock");
         match self.try_borrow() {
-            Ok(borrow) => fmt.debug_tuple("RefLock").field(&borrow).finish(),
+            Ok(borrow) => fmt.field(&borrow),
             Err(_) => {
-                // The GcCell is mutably borrowed so we can't look at its value
+                // The RefLock is mutably borrowed so we can't look at its value
                 // here. Show a placeholder instead.
                 struct BorrowedPlaceholder;
 
@@ -180,11 +181,10 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
                     }
                 }
 
-                fmt.debug_tuple("GcCell")
-                    .field(&BorrowedPlaceholder)
-                    .finish()
+                fmt.field(&BorrowedPlaceholder)
             }
         }
+        .finish()
     }
 }
 
