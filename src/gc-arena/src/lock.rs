@@ -2,6 +2,7 @@
 
 use core::{
     cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cmp::Ordering,
     fmt,
 };
 
@@ -29,6 +30,8 @@ pub trait Unlock {
 ///
 /// If the `Lock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
 /// on `Gc` can ensure that the write barrier is called.
+#[repr(transparent)]
+#[derive(Default)]
 pub struct Lock<T: ?Sized> {
     cell: Cell<T>,
 }
@@ -36,14 +39,6 @@ pub struct Lock<T: ?Sized> {
 impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Lock").field(&self.cell).finish()
-    }
-}
-
-impl<T: Copy> Clone for Lock<T> {
-    fn clone(&self) -> Self {
-        Self {
-            cell: self.cell.clone(),
-        }
     }
 }
 
@@ -72,6 +67,16 @@ impl<T> Lock<T> {
 impl<T: Copy> Lock<T> {
     pub fn get(&self) -> T {
         self.cell.get()
+    }
+}
+
+impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
+    pub fn get(&self) -> T {
+        self.cell.get()
+    }
+
+    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
+        self.unlock(mc).set(t);
     }
 }
 
@@ -105,13 +110,46 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     }
 }
 
-impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
-    pub fn get(&self) -> T {
-        self.cell.get()
+impl<T> From<T> for Lock<T> {
+    fn from(t: T) -> Self {
+        Self::new(t)
     }
+}
 
-    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
-        self.unlock(mc).set(t);
+impl<T> From<Cell<T>> for Lock<T> {
+    fn from(cell: Cell<T>) -> Self {
+        Self { cell }
+    }
+}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Copy> Clone for Lock<T> {
+    fn clone(&self) -> Self {
+        Self::new(self.get())
+    }
+}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: PartialEq + Copy> PartialEq for Lock<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Eq + Copy> Eq for Lock<T> {}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: PartialOrd + Copy> PartialOrd for Lock<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.get().partial_cmp(&other.get())
+    }
+}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Ord + Copy> Ord for Lock<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.get().cmp(&other.get())
     }
 }
 
@@ -121,7 +159,8 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
 ///
 /// If the `RefLock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
 /// on `Gc` can ensure that the write barrier is called.
-#[derive(Clone)]
+#[repr(transparent)]
+#[derive(Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
 pub struct RefLock<T: ?Sized> {
     cell: RefCell<T>,
 }
@@ -182,20 +221,6 @@ impl<T: ?Sized> RefLock<T> {
     }
 }
 
-impl<T: ?Sized> Unlock for RefLock<T> {
-    type Unlocked = RefCell<T>;
-
-    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
-        &self.cell
-    }
-}
-
-unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
-    fn trace(&self, cc: CollectionContext) {
-        self.cell.borrow().trace(cc);
-    }
-}
-
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     #[track_caller]
     pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
@@ -216,5 +241,31 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, T>, BorrowMutError> {
         self.unlock(mc).try_borrow_mut()
+    }
+}
+
+impl<T> From<T> for RefLock<T> {
+    fn from(t: T) -> Self {
+        Self::new(t)
+    }
+}
+
+impl<T> From<RefCell<T>> for RefLock<T> {
+    fn from(cell: RefCell<T>) -> Self {
+        Self { cell }
+    }
+}
+
+impl<T: ?Sized> Unlock for RefLock<T> {
+    type Unlocked = RefCell<T>;
+
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
+        &self.cell
+    }
+}
+
+unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
+    fn trace(&self, cc: CollectionContext) {
+        self.cell.borrow().trace(cc);
     }
 }
