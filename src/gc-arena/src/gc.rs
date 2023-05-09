@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through an `Allocator` inside an arena type,
+/// pointer. You can only allocate `Gc` pointers through a `MutationContext` inside an arena type,
 /// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
