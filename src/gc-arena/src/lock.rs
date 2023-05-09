@@ -28,7 +28,7 @@ pub trait Unlock {
 macro_rules! make_lock_wrapper {
     (
         $(#[$meta:meta])*
-        locked = $locked_type:ident;
+        locked = $locked_type:ident as $gc_locked_type:ident;
         unlocked = $unlocked_type:ident unsafe $unsafe_unlock_method:ident;
         impl Sized { $($sized_items:tt)* }
         impl ?Sized { $($unsized_items:tt)* }
@@ -50,6 +50,9 @@ macro_rules! make_lock_wrapper {
         pub struct $locked_type<T: ?Sized> {
             cell: $unlocked_type<T>,
         }
+
+        #[doc = concat!("An alias for `Gc<'gc, ", stringify!($locked_type), "<T>>`.")]
+        pub type $gc_locked_type<'gc, T> = Gc<'gc, $locked_type<T>>;
 
         impl<T> $locked_type<T> {
             pub fn new(t: T) -> $locked_type<T> {
@@ -112,7 +115,7 @@ macro_rules! make_lock_wrapper {
 
 make_lock_wrapper!(
     #[derive(Default)]
-    locked = Lock;
+    locked = Lock as GcLock;
     unlocked = Cell unsafe as_cell;
     impl Sized {
         pub fn get(&self) -> T where T: Copy {
@@ -200,7 +203,7 @@ impl<T: Ord + Copy> Ord for Lock<T> {
 
 make_lock_wrapper!(
     #[derive(Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
-    locked = RefLock;
+    locked = RefLock as GcRefLock;
     unlocked = RefCell unsafe as_ref_cell;
     impl Sized {
         pub fn take(&self) -> T where T: Default {
