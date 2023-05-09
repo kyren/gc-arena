@@ -52,7 +52,7 @@ fn weak_allocation() {
             .map(|gc| Gc::ptr_eq(gc, root.test.borrow().unwrap()))
             .unwrap_or(false));
 
-        *root.test.write_ref_cell(mc).borrow_mut() = None;
+        *root.test.unlock(mc).borrow_mut() = None;
     });
     let mut done = false;
     while !done {
@@ -129,7 +129,7 @@ fn repeated_allocation_deallocation() {
 
     for _ in 0..40 {
         arena.mutate(|mc, root| {
-            let mut map = root.0.write_ref_cell(mc).borrow_mut();
+            let mut map = root.0.unlock(mc).borrow_mut();
             for _ in 0..50 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.insert(i, Gc::new(mc, (i, r.clone()))) {
@@ -172,7 +172,7 @@ fn all_dropped() {
     });
 
     arena.mutate(|mc, root| {
-        let mut v = root.0.write_ref_cell(mc).borrow_mut();
+        let mut v = root.0.unlock(mc).borrow_mut();
         for _ in 0..100 {
             v.push(Gc::new(mc, r.clone()));
         }
@@ -198,13 +198,13 @@ fn all_garbage_collected() {
     });
 
     arena.mutate(|mc, root| {
-        let mut v = root.0.write_ref_cell(mc).borrow_mut();
+        let mut v = root.0.unlock(mc).borrow_mut();
         for _ in 0..100 {
             v.push(Gc::new(mc, r.clone()));
         }
     });
     arena.mutate(|mc, root| {
-        root.0.write_ref_cell(mc).borrow_mut().clear();
+        root.0.unlock(mc).borrow_mut().clear();
     });
     arena.collect_all();
     arena.collect_all();

@@ -53,7 +53,7 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: MutationContext<'gc, '_>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
-        let mut inner = self.0.write_ref_cell(mc).borrow_mut();
+        let mut inner = self.0.unlock(mc).borrow_mut();
 
         let handle = Rc::new(Handle {
             set_id: inner.set_id.clone(),

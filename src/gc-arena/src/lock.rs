@@ -7,6 +7,22 @@ use core::{
 
 use crate::{Collect, CollectionContext, Gc, MutationContext};
 
+/// Types that support additional operations (typically, mutation) when behind a write barrier.
+pub trait Unlock {
+    /// This will typically be a cell-like type providing some sort of interior mutability.
+    type Unlocked: ?Sized;
+
+    /// Provides unsafe access to the unlocked type, *without* triggering a write barrier.
+    ///
+    /// # Safety
+    ///
+    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
+    /// may be adopted by as a result of the interior mutability afforded by the unlocked value,
+    /// unless the write barrier for the containing `Gc` pointer is invoked manually before
+    /// collection is triggered.
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked;
+}
+
 /// A wrapper around a `Cell` that implements `Collect`.
 ///
 /// Only provides safe read access to the RefCell, full write access requires unsafety.
@@ -42,7 +58,7 @@ impl<T> Lock<T> {
         Self { cell: Cell::new(t) }
     }
 
-    /// Access the inner `Cell` type.
+    /// Access the inner `Cell` value.
     ///
     /// SAFETY: In order to maintain the invariants of the garbage collector, no new `Gc` pointers
     /// may be adopted by this type as a result of the interior mutability afforded by directly
@@ -56,6 +72,14 @@ impl<T> Lock<T> {
 impl<T: Copy> Lock<T> {
     pub fn get(&self) -> T {
         self.cell.get()
+    }
+}
+
+impl<T: ?Sized> Unlock for Lock<T> {
+    type Unlocked = Cell<T>;
+
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
+        &self.cell
     }
 }
 
@@ -87,15 +111,7 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     }
 
     pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
-        self.write_cell(mc).set(t);
-    }
-}
-
-impl<'gc, T: 'gc> Gc<'gc, Lock<T>> {
-    /// Access the inner `Cell` type safely by ensuring that the write barrier is called.
-    pub fn write_cell(&self, mc: MutationContext<'gc, '_>) -> &Cell<T> {
-        Gc::write_barrier(mc, *self);
-        unsafe { self.as_cell() }
+        self.unlock(mc).set(t);
     }
 }
 
@@ -166,6 +182,14 @@ impl<T: ?Sized> RefLock<T> {
     }
 }
 
+impl<T: ?Sized> Unlock for RefLock<T> {
+    type Unlocked = RefCell<T>;
+
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
+        &self.cell
+    }
+}
+
 unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
     fn trace(&self, cc: CollectionContext) {
         self.cell.borrow().trace(cc);
@@ -184,19 +208,13 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
 
     #[track_caller]
     pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
-        self.write_ref_cell(mc).borrow_mut()
+        self.unlock(mc).borrow_mut()
     }
 
     pub fn try_borrow_mut<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, T>, BorrowMutError> {
-        self.write_ref_cell(mc).try_borrow_mut()
-    }
-
-    /// Access the inner `RefCell` type safely by ensuring that the write barrier is called.
-    pub fn write_ref_cell(&self, mc: MutationContext<'gc, '_>) -> &RefCell<T> {
-        Gc::write_barrier(mc, *self);
-        unsafe { self.as_ref_cell() }
+        self.unlock(mc).try_borrow_mut()
     }
 }
