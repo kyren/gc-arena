@@ -4,7 +4,8 @@ use alloc::{
 };
 use core::mem;
 
-use crate::{Collect, Gc, MutationContext, RefLock, Root, Rootable};
+use crate::lock::RefLock;
+use crate::{Collect, Gc, MutationContext, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -52,7 +53,7 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: MutationContext<'gc, '_>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
-        let mut inner = self.0.write_ref_cell(mc).borrow_mut();
+        let mut inner = self.0.unlock(mc).borrow_mut();
 
         let handle = Rc::new(Handle {
             set_id: inner.set_id.clone(),

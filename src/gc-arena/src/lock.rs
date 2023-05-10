@@ -1,19 +1,143 @@
+//! GC-aware interior mutability types.
+
 use core::{
     cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cmp::Ordering,
     fmt,
 };
 
 use crate::{Collect, CollectionContext, Gc, MutationContext};
 
-/// A wrapper around a `Cell` that implements `Collect`.
-///
-/// Only provides safe read access to the RefCell, full write access requires unsafety.
-///
-/// If the `Lock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
-/// on `Gc` can ensure that the write barrier is called.
-pub struct Lock<T: ?Sized> {
-    cell: Cell<T>,
+/// Types that support additional operations (typically, mutation) when behind a write barrier.
+pub trait Unlock {
+    /// This will typically be a cell-like type providing some sort of interior mutability.
+    type Unlocked: ?Sized;
+
+    /// Provides unsafe access to the unlocked type, *without* triggering a write barrier.
+    ///
+    /// # Safety
+    ///
+    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
+    /// may be adopted by as a result of the interior mutability afforded by the unlocked value,
+    /// unless the write barrier for the containing `Gc` pointer is invoked manually before
+    /// collection is triggered.
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked;
 }
+
+// Helper macro to factor out the common parts of locks types.
+macro_rules! make_lock_wrapper {
+    (
+        $(#[$meta:meta])*
+        locked = $locked_type:ident as $gc_locked_type:ident;
+        unlocked = $unlocked_type:ident unsafe $unsafe_unlock_method:ident;
+        impl Sized { $($sized_items:tt)* }
+        impl ?Sized { $($unsized_items:tt)* }
+    ) => {
+        /// A wrapper around a [`
+        #[doc = stringify!($unlocked_type)]
+        /// `] that implements [`Collect`].
+        ///
+        /// Only provides safe read access to the wrapped [`
+        #[doc = stringify!($unlocked_type)]
+        /// `], full write access requires unsafety.
+        ///
+        /// If the `
+        #[doc = stringify!($locked_type)]
+        /// ` is directly held in a [`Gc`] pointer, safe mutable access is provided,
+        /// since methods on [`Gc`] can ensure that the write barrier is called.
+        $(#[$meta])*
+        #[repr(transparent)]
+        pub struct $locked_type<T: ?Sized> {
+            cell: $unlocked_type<T>,
+        }
+
+        #[doc = concat!("An alias for `Gc<'gc, ", stringify!($locked_type), "<T>>`.")]
+        pub type $gc_locked_type<'gc, T> = Gc<'gc, $locked_type<T>>;
+
+        impl<T> $locked_type<T> {
+            pub fn new(t: T) -> $locked_type<T> {
+                Self { cell: $unlocked_type::new(t) }
+            }
+
+            pub fn into_inner(self) -> T {
+                self.cell.into_inner()
+            }
+
+            $($sized_items)*
+        }
+
+        impl<T: ?Sized> $locked_type<T> {
+            pub fn as_ptr(&self) -> *mut T {
+                self.cell.as_ptr()
+            }
+
+            $($unsized_items)*
+
+            #[doc = concat!("Access the wrapped [`", stringify!($unlocked_type), "`].")]
+            ///
+            /// # Safety
+            /// In order to maintain the invariants of the garbage collector, no new [`Gc`]
+            /// pointers may be adopted by this type as a result of the interior mutability
+            /// afforded by directly accessing the inner [`
+            #[doc = stringify!($unlocked_type)]
+            /// `], unless the write barrier for the containing [`Gc`] pointer is invoked manuall
+            /// before collection is triggered.
+            pub unsafe fn $unsafe_unlock_method(&self) -> &$unlocked_type<T> {
+                &self.cell
+            }
+
+            pub fn get_mut(&mut self) -> &mut T {
+                self.cell.get_mut()
+            }
+        }
+
+        impl<T: ?Sized> Unlock for $locked_type<T> {
+            type Unlocked = $unlocked_type<T>;
+
+            unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
+                &self.cell
+            }
+        }
+
+        impl<T> From<T> for $locked_type<T> {
+            fn from(t: T) -> Self {
+                Self::new(t)
+            }
+        }
+
+        impl<T> From<$unlocked_type<T>> for $locked_type<T> {
+            fn from(cell: $unlocked_type<T>) -> Self {
+                Self { cell }
+            }
+        }
+    };
+}
+
+make_lock_wrapper!(
+    #[derive(Default)]
+    locked = Lock as GcLock;
+    unlocked = Cell unsafe as_cell;
+    impl Sized {
+        pub fn get(&self) -> T where T: Copy {
+            self.cell.get()
+        }
+
+        pub fn take(&self) -> T where T: Default {
+            // Despite mutating the contained value, this doesn't need a write barrier, as
+            // the return value of `Default::default` can never contain (non-leaked) `Gc` pointers.
+            //
+            // The reason for this is somewhat subtle, and boils down to lifetime parametricity.
+            // Because Rust doesn't allow naming concrete lifetimes, and because `Default` doesn't
+            // have any lifetime parameters, any potential `'gc` lifetime in `T` must be
+            // existentially quantified. As such, a `Default` implementation that tries to smuggle
+            // a branded `Gc` pointer or `MutationContext` through external state (e.g. thread
+            // locals) must use unsafe code and cannot be sound in the first place, as it has no
+            // way to ensure that the smuggled data has the correct `'gc` brand.
+            self.cell.take()
+        }
+    }
+    impl ?Sized {}
+);
 
 impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -21,39 +145,13 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     }
 }
 
-impl<T: Copy> Clone for Lock<T> {
-    fn clone(&self) -> Self {
-        Self {
-            cell: self.cell.clone(),
-        }
-    }
-}
-
-impl<T: ?Sized> Lock<T> {
-    pub fn as_ptr(&self) -> *mut T {
-        self.cell.as_ptr()
-    }
-}
-
-impl<T> Lock<T> {
-    pub fn new(t: T) -> Lock<T> {
-        Self { cell: Cell::new(t) }
-    }
-
-    /// Access the inner `Cell` type.
-    ///
-    /// SAFETY: In order to maintain the invariants of the garbage collector, no new `Gc` pointers
-    /// may be adopted by this type as a result of the interior mutability afforded by directly
-    /// accessing the `Cell`, unless the write barrier for the containing `Gc` pointer is invoked
-    /// manually before collection is triggered.
-    pub unsafe fn as_cell(&self) -> &Cell<T> {
-        &self.cell
-    }
-}
-
-impl<T: Copy> Lock<T> {
+impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     pub fn get(&self) -> T {
         self.cell.get()
+    }
+
+    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
+        self.unlock(mc).set(t);
     }
 }
 
@@ -79,41 +177,66 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     }
 }
 
-impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
-    pub fn get(&self) -> T {
-        self.cell.get()
-    }
-
-    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
-        self.write_cell(mc).set(t);
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Copy> Clone for Lock<T> {
+    fn clone(&self) -> Self {
+        Self::new(self.get())
     }
 }
 
-impl<'gc, T: 'gc> Gc<'gc, Lock<T>> {
-    /// Access the inner `Cell` type safely by ensuring that the write barrier is called.
-    pub fn write_cell(&self, mc: MutationContext<'gc, '_>) -> &Cell<T> {
-        Gc::write_barrier(mc, *self);
-        unsafe { self.as_cell() }
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: PartialEq + Copy> PartialEq for Lock<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
     }
 }
 
-/// A wrapper around a `RefCell` that implements `Collect`.
-///
-/// Only provides safe read access to the RefCell, full write access requires unsafety.
-///
-/// If the `RefLock` is directly held in a `Gc` pointer, safe mutable access is provided, since methods
-/// on `Gc` can ensure that the write barrier is called.
-#[derive(Clone)]
-pub struct RefLock<T: ?Sized> {
-    cell: RefCell<T>,
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Eq + Copy> Eq for Lock<T> {}
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: PartialOrd + Copy> PartialOrd for Lock<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.get().partial_cmp(&other.get())
+    }
 }
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T: Ord + Copy> Ord for Lock<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.get().cmp(&other.get())
+    }
+}
+
+make_lock_wrapper!(
+    #[derive(Clone, Default, Eq, PartialEq, Ord, PartialOrd)]
+    locked = RefLock as GcRefLock;
+    unlocked = RefCell unsafe as_ref_cell;
+    impl Sized {
+        pub fn take(&self) -> T where T: Default {
+            // See comment in `Lock::take`.
+            self.cell.take()
+        }
+    }
+    impl ?Sized {
+        #[track_caller]
+        pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
+            self.cell.borrow()
+        }
+
+        pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
+            self.cell.try_borrow()
+        }
+    }
+);
 
 impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut fmt = fmt.debug_tuple("RefLock");
         match self.try_borrow() {
-            Ok(borrow) => fmt.debug_tuple("RefLock").field(&borrow).finish(),
+            Ok(borrow) => fmt.field(&borrow),
             Err(_) => {
-                // The GcCell is mutably borrowed so we can't look at its value
+                // The RefLock is mutably borrowed so we can't look at its value
                 // here. Show a placeholder instead.
                 struct BorrowedPlaceholder;
 
@@ -123,50 +246,10 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
                     }
                 }
 
-                fmt.debug_tuple("GcCell")
-                    .field(&BorrowedPlaceholder)
-                    .finish()
+                fmt.field(&BorrowedPlaceholder)
             }
         }
-    }
-}
-
-impl<T> RefLock<T> {
-    pub fn new(t: T) -> Self {
-        Self {
-            cell: RefCell::new(t),
-        }
-    }
-}
-
-impl<T: ?Sized> RefLock<T> {
-    pub fn as_ptr(&self) -> *mut T {
-        self.cell.as_ptr()
-    }
-
-    #[track_caller]
-    pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
-        self.cell.borrow()
-    }
-
-    pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
-        self.cell.try_borrow()
-    }
-
-    /// Access the inner `RefCell` type.
-    ///
-    /// SAFETY: In order to maintain the invariants of the garbage collector, no new `Gc` pointers
-    /// may be adopted by this type as a result of the interior mutability afforded by directly
-    /// accessing the `RefCell`, unless the write barrier for the containing `Gc` pointer is invoked
-    /// manually before collection is triggered.
-    pub unsafe fn as_ref_cell(&self) -> &RefCell<T> {
-        &self.cell
-    }
-}
-
-unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
-    fn trace(&self, cc: CollectionContext) {
-        self.cell.borrow().trace(cc);
+        .finish()
     }
 }
 
@@ -182,19 +265,19 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
 
     #[track_caller]
     pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
-        self.write_ref_cell(mc).borrow_mut()
+        self.unlock(mc).borrow_mut()
     }
 
     pub fn try_borrow_mut<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
     ) -> Result<RefMut<'a, T>, BorrowMutError> {
-        self.write_ref_cell(mc).try_borrow_mut()
+        self.unlock(mc).try_borrow_mut()
     }
+}
 
-    /// Access the inner `RefCell` type safely by ensuring that the write barrier is called.
-    pub fn write_ref_cell(&self, mc: MutationContext<'gc, '_>) -> &RefCell<T> {
-        Gc::write_barrier(mc, *self);
-        unsafe { self.as_ref_cell() }
+unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
+    fn trace(&self, cc: CollectionContext) {
+        self.borrow().trace(cc);
     }
 }

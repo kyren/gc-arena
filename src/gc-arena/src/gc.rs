@@ -10,6 +10,7 @@ use crate::{
     collect::Collect,
     context::{CollectionContext, MutationContext},
     gc_weak::GcWeak,
+    lock::Unlock,
     types::{GcBox, GcBoxInner, Invariant},
 };
 
@@ -106,6 +107,15 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
             ptr: NonNull::new_unchecked(ptr),
             _invariant: PhantomData,
         }
+    }
+}
+
+impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
+    /// Unlock the contents of this `Gc` safely by ensuring that the write barrier is called.
+    pub fn unlock(&self, mc: MutationContext<'gc, '_>) -> &T::Unlocked {
+        Gc::write_barrier(mc, *self);
+        // SAFETY: see doc-comment.
+        unsafe { self.unlock_unchecked() }
     }
 }
 
