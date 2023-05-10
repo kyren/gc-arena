@@ -209,7 +209,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let drop_impl = if mode == Mode::NoDrop {
         let mut s = s;
         s.add_bounds(AddBounds::None).gen_impl(quote! {
-            gen impl ::gc_arena::MustNotImplDrop for @Self {}
+            gen impl ::gc_arena::__MustNotImplDrop for @Self {}
         })
     } else {
         quote!()

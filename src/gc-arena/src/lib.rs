@@ -6,9 +6,6 @@ extern crate std;
 
 extern crate alloc;
 
-#[doc(hidden)]
-pub use gc_arena_derive::*;
-
 mod arena;
 mod collect;
 mod collect_impl;
@@ -22,9 +19,11 @@ mod static_collect;
 mod types;
 mod unsize;
 
-// Not public API.
 #[doc(hidden)]
-pub use unsize::__CoercePtrInternal;
+pub use gc_arena_derive::*;
+
+#[doc(hidden)]
+pub use self::{no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
@@ -33,6 +32,5 @@ pub use self::{
     dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     gc_weak::GcWeak,
-    no_drop::MustNotImplDrop,
     static_collect::StaticCollect,
 };

@@ -2,7 +2,7 @@
 //
 // Used to cause a conflicting trait impl if a type implements `Drop` to forbid implementing `Drop`.
 #[doc(hidden)]
-pub trait MustNotImplDrop {}
+pub trait __MustNotImplDrop {}
 
 #[allow(drop_bounds)]
-impl<T: Drop> MustNotImplDrop for T {}
+impl<T: Drop> __MustNotImplDrop for T {}
