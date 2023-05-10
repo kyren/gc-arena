@@ -123,9 +123,16 @@ make_lock_wrapper!(
         }
 
         pub fn take(&self) -> T where T: Default {
-            // Despite mutating the contained value, this doesn't need a write barrier, as,
-            // thanks to lifetime parametricity, the result of `Default::default()` cannot
-            // ever obtain safely a `MutationContext` or other external `Gc` pointers.
+            // Despite mutating the contained value, this doesn't need a write barrier, as
+            // the return value of `Default::default` can never contain (non-leaked) `Gc` pointers.
+            //
+            // The reason for this is somewhat subtle, and boils down to lifetime parametricity.
+            // Because Rust doesn't allow naming concrete lifetimes, and because `Default` doesn't
+            // have any lifetime parameters, any potential `'gc` lifetime in `T` must be
+            // existentially quantified. As such, a `Default` implementation that tries to smuggle
+            // a branded `Gc` pointer or `MutationContext` through external state (e.g. thread
+            // locals) must use unsafe code and cannot be sound in the first place, as it has no
+            // way to ensure that the smuggled data has the correct `'gc` brand.
             self.cell.take()
         }
     }
@@ -207,9 +214,7 @@ make_lock_wrapper!(
     unlocked = RefCell unsafe as_ref_cell;
     impl Sized {
         pub fn take(&self) -> T where T: Default {
-            // Despite mutating the contained value, this doesn't need a write barrier,
-            // as, thanks to lifetime parametricity, a `Default::default()` cannot ever
-            // safely obtain a `MutationContext` or other external `Gc` pointers.
+            // See comment in `Lock::take`.
             self.cell.take()
         }
     }
@@ -273,6 +278,6 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
 
 unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
     fn trace(&self, cc: CollectionContext) {
-        self.cell.borrow().trace(cc);
+        self.borrow().trace(cc);
     }
 }
