@@ -65,6 +65,7 @@ static_collect!(String);
 static_collect!(str);
 static_collect!(alloc::ffi::CString);
 static_collect!(core::ffi::CStr);
+static_collect!(core::any::TypeId);
 #[cfg(feature = "std")]
 static_collect!(std::path::Path);
 #[cfg(feature = "std")]
