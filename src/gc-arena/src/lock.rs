@@ -169,6 +169,11 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
 
 unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
     fn trace(&self, cc: CollectionContext) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
@@ -300,7 +305,17 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
+// We can't have `T: ?Sized` here because rustc is dumb and doesn't
+// understand that `T: Sized` is equivalent to `Self: Sized` (which is
+// required by `needs_trace`).
+// Fortunately this doesn't matter much as there's no way to allocate
+// unsized GC'd values directly.
+unsafe impl<'gc, T: Collect + 'gc> Collect for RefLock<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
     #[inline]
     fn trace(&self, cc: CollectionContext) {
         self.borrow().trace(cc);
