@@ -359,7 +359,15 @@ impl Context {
         let header = gc_box.header();
         if self.phase.get() == Phase::Propagate && header.color() == GcColor::Black {
             header.set_color(GcColor::Gray);
-            self.gray_again.borrow_mut().push(gc_box);
+
+            // Outline the actual enqueueing code (which is somewhat expensive and won't be
+            // executed often) to promote the inlining of the write barrier.
+            #[cold]
+            fn enqueue(this: &Context, gc_box: GcBox) {
+                this.gray_again.borrow_mut().push(gc_box);
+            }
+
+            enqueue(&self, gc_box);
         }
     }
 
