@@ -12,6 +12,7 @@ pub struct GcWeak<'gc, T: ?Sized + 'gc> {
 impl<'gc, T: ?Sized + 'gc> Copy for GcWeak<'gc, T> {}
 
 impl<'gc, T: ?Sized + 'gc> Clone for GcWeak<'gc, T> {
+    #[inline]
     fn clone(&self) -> GcWeak<'gc, T> {
         *self
     }
@@ -24,6 +25,7 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
 }
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
+    #[inline]
     fn trace(&self, cc: CollectionContext) {
         unsafe {
             cc.trace_weak(GcBox::erase(self.inner.ptr));
@@ -32,6 +34,7 @@ unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
 }
 
 impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
+    #[inline]
     pub fn upgrade(&self, mc: MutationContext<'gc, '_>) -> Option<Gc<'gc, T>> {
         unsafe {
             let ptr = GcBox::erase(self.inner.ptr);
@@ -42,15 +45,18 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// Returns whether the value referenced by this `GcWeak` has been dropped.
     ///
     /// Note that calling `upgrade` may still fail even when this method returns `false`.
+    #[inline]
     pub fn is_dropped(self) -> bool {
         let ptr = unsafe { GcBox::erase(self.inner.ptr) };
         !ptr.header().is_live()
     }
 
+    #[inline]
     pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
         this.as_ptr() == other.as_ptr()
     }
 
+    #[inline]
     pub fn as_ptr(self) -> *const T {
         Gc::as_ptr(self.inner)
     }
@@ -61,6 +67,7 @@ impl<'gc, T: 'gc> GcWeak<'gc, T> {
     ///
     /// SAFETY:
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    #[inline]
     pub unsafe fn cast<U: 'gc>(this: GcWeak<'gc, T>) -> GcWeak<'gc, U> {
         GcWeak {
             inner: Gc::cast::<U>(this.inner),
@@ -73,6 +80,7 @@ impl<'gc, T: 'gc> GcWeak<'gc, T> {
     /// The provided pointer must have been obtained from `GcWeak::as_ptr` or `Gc::as_ptr`, and
     /// the pointer must not have been *fully* collected yet (it may be a dropped but live weak
     /// pointer).
+    #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> GcWeak<'gc, T> {
         GcWeak {
             inner: Gc::from_ptr(ptr),

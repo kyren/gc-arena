@@ -18,14 +18,17 @@ pub struct MutationContext<'gc, 'context> {
 }
 
 impl<'gc, 'context> MutationContext<'gc, 'context> {
+    #[inline]
     pub(crate) fn allocate<T: 'gc + Collect>(self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
     }
 
+    #[inline]
     pub(crate) fn write_barrier(self, gc_box: GcBox) {
         self.context.write_barrier(gc_box)
     }
 
+    #[inline]
     pub(crate) fn upgrade(self, gc_box: GcBox) -> bool {
         self.context.upgrade(gc_box)
     }
@@ -39,10 +42,12 @@ pub struct CollectionContext<'context> {
 }
 
 impl<'context> CollectionContext<'context> {
+    #[inline]
     pub(crate) fn trace(self, gc_box: GcBox) {
         self.context.trace(gc_box)
     }
 
+    #[inline]
     pub(crate) fn trace_weak(&self, gc_box: GcBox) {
         self.context.trace_weak(gc_box)
     }
@@ -150,6 +155,7 @@ impl Context {
 
     // If the garbage collector is currently in the sleep phase,
     // add the root to the gray queue and transition to the `Propagate` phase.
+    #[inline]
     pub(crate) fn wake(&self) {
         if self.phase.get() == Phase::Sleep {
             self.phase.set(Phase::Propagate);
@@ -157,6 +163,7 @@ impl Context {
         }
     }
 
+    #[inline]
     pub(crate) fn root_barrier(&self) {
         if self.phase.get() == Phase::Propagate {
             self.root_needs_trace.set(true);
@@ -344,6 +351,7 @@ impl Context {
         ptr
     }
 
+    #[inline]
     fn write_barrier(&self, gc_box: GcBox) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
@@ -355,6 +363,7 @@ impl Context {
         }
     }
 
+    #[inline]
     fn trace(&self, gc_box: GcBox) {
         let header = gc_box.header();
         match header.color() {
@@ -373,6 +382,7 @@ impl Context {
         }
     }
 
+    #[inline]
     fn trace_weak(&self, gc_box: GcBox) {
         let header = gc_box.header();
         if header.color() == GcColor::White {
@@ -382,6 +392,7 @@ impl Context {
 
     /// Determines whether or not a Gc pointer is safe to be upgraded.
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
+    #[inline]
     fn upgrade(&self, gc_box: GcBox) -> bool {
         let header = gc_box.header();
 
