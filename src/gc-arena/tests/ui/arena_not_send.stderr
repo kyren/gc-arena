@@ -1,0 +1,15 @@
+error[E0277]: `Rc<()>` cannot be sent between threads safely
+ --> tests/ui/arena_not_send.rs:9:19
+  |
+9 |     assert_send::<Arena<Rootable![Gc<'gc, Rc<()>>]>>();
+  |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+  |
+  = help: the trait `Send` is not implemented for `Rc<()>`
+  = note: required for `Gc<'_, Rc<()>>` to implement `Send`
+  = note: 1 redundant requirement hidden
+  = note: required for `Arena<dyn for<'gc> Rootable<'gc, for<'gc> Root = Gc<'gc, Rc<()>>>>` to implement `Send`
+note: required by a bound in `assert_send`
+ --> tests/ui/arena_not_send.rs:5:19
+  |
+5 | fn assert_send<S: Send>() {}
+  |                   ^^^^ required by this bound in `assert_send`

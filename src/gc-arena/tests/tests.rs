@@ -556,6 +556,12 @@ fn ptr_magic() {
 }
 
 #[test]
+fn test_send() {
+    fn assert_send<S: Send>() {}
+    assert_send::<Arena<Rootable![Gc<'gc, RefLock<()>>]>>();
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

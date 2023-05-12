@@ -24,6 +24,8 @@ pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) _invariant: Invariant<'gc>,
 }
 
+unsafe impl<T: ?Sized + Send + 'static> Send for Gc<'static, T> {}
+
 impl<'gc, T: Debug + ?Sized + 'gc> Debug for Gc<'gc, T> {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Debug::fmt(&**self, fmt)

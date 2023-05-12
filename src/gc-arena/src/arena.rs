@@ -293,6 +293,22 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 }
 
+// SAFETY: The intention here is to make the Arena type Send if it contains no types which are
+// !Send *other* than `Gc`. We know that we can't get in trouble with `Gc` specifically, because a
+// `Gc` already cannot escape an `Arena` for the soundness of the garbage collector, so references
+// to it can only be reachable from one thread at a time (you cannot, for example, store a `Gc`
+// inside TLS without `unsafe`).
+//
+// We implement `Send` specifically for `Gc<'static, T>`, so that if there are no *other* !Send
+// types, the entire root object (projected to 'static) will be Send.
+//
+// You could use the `'gc` lifetime in a different type, other than `Gc` or other `gc_arena` types,
+// that implements Send iff 'gc == 'static, and in doing so, the projection of those types would be
+// 'static and thus also Send, possibly incorrectly. However, it would be unsafe to create such
+// a type and store it into the Arena in the first place, because it would require transmuting an
+// unrelated lifetime to 'gc, which we know is generative and invariant.
+unsafe impl<R: for<'a> Rootable<'a> + ?Sized> Send for Arena<R> where Root<'static, R>: Send {}
+
 /// Create a temporary arena without a root object and perform the given operation on it. No garbage
 /// collection will be done until the very end of the call, at which point all allocations will
 /// be collected.
