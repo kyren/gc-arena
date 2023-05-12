@@ -1,0 +1,12 @@
+error: lifetime may not live long enough
+  --> tests/ui/no_gc_static.rs:15:56
+   |
+15 |     let _test: Gc<'static, _> = arena.mutate(|_, root| root.test);
+   |                                               -      - ^^^^^^^^^ returning this value requires that `'1` must outlive `'2`
+   |                                               |      |
+   |                                               |      return type of closure is Gc<'2, u8>
+   |                                               has type `MutationContext<'1, '_>`
+   |
+   = note: requirement occurs because of the type `Gc<'_, u8>`, which makes the generic argument `'_` invariant
+   = note: the struct `Gc<'gc, T>` is invariant over the parameter `'gc`
+   = help: see <https://doc.rust-lang.org/nomicon/subtyping.html> for more information about variance
