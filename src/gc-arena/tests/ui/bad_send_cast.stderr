@@ -1,0 +1,20 @@
+error[E0277]: `Rc<i32>` cannot be sent between threads safely
+  --> tests/ui/bad_send_cast.rs:14:50
+   |
+14 |       let _p: Gc<'gc, dyn TestTrait<'gc> + Send> = unsize!(
+   |  __________________________________________________^
+15 | |         test,
+16 | |         Rootable!['a => Gc<'a, TestStruct<'a>>] =>
+17 | |         Rootable!['a => Gc<'a, dyn TestTrait<'a> + Send>]
+18 | |     );
+   | |_____^ `Rc<i32>` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `Rc<i32>`
+   = note: required for `Gc<'_, Rc<i32>>` to implement `Send`
+note: required because it appears within the type `TestStruct<'_>`
+  --> tests/ui/bad_send_cast.rs:9:8
+   |
+9  | struct TestStruct<'gc>(Gc<'gc, Rc<i32>>);
+   |        ^^^^^^^^^^
+   = note: required for the cast from `TestStruct<'_>` to the object type `dyn TestTrait<'_> + Send`
+   = note: this error originates in the macro `unsize` (in Nightly builds, run with -Z macro-backtrace for more info)

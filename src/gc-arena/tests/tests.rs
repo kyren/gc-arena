@@ -6,7 +6,7 @@ use std::{collections::HashMap, rc::Rc};
 use gc_arena::lock::RefLock;
 use gc_arena::{
     unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcWeak,
-    Rootable,
+    MutationContext, Rootable,
 };
 
 #[test]
@@ -558,7 +558,26 @@ fn ptr_magic() {
 #[test]
 fn test_send() {
     fn assert_send<S: Send>() {}
+
     assert_send::<Arena<Rootable![Gc<'gc, RefLock<()>>]>>();
+
+    trait TestTrait<'gc> {}
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestStruct<'gc>(Gc<'gc, i32>);
+
+    impl<'gc> TestTrait<'gc> for TestStruct<'gc> {}
+
+    fn test<'gc>(_mc: MutationContext<'gc, '_>, test: Gc<'gc, TestStruct<'gc>>) {
+        let _p: Gc<'gc, dyn TestTrait<'gc> + Send> = unsize!(
+            test,
+            Rootable!['a => Gc<'a, TestStruct<'a>>] =>
+            Rootable!['a => Gc<'a, dyn TestTrait<'a> + Send>]
+        );
+    }
+
+    gc_arena::rootless_arena(|mc| test(mc, Gc::new(mc, TestStruct(Gc::new(mc, 4)))));
 }
 
 #[test]
