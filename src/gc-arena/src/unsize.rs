@@ -67,9 +67,9 @@ use crate::{
 /// This is safe to do because `Gc<'static, T>` is Send if `T: Send + 'static`, and "at rest",
 /// the entire root object is stored projected to the 'static lifetime. Morally speaking, `'gc`
 /// *actually is* `'static`, but code that uses the arena cannot know the lifetime and must work
-/// *for any* `'gc`. In any case, the `'gc` lifetime provided can only be used to produce
-/// `gc-arena` related types, so the potential for damage is limited... Any other type using the
-/// generative 'gc lifetime for anything is already unsound.
+/// *for any* `'gc`. In any case, only `gc-arena` related types are produced with the generated
+/// `'gc` lifetime so the potential for damage is limited, the only allowed use of this `'gc`
+/// branding lifetime is to be "morally 'static, locked to a single arena".
 ///
 /// An example of using this to cast a `Gc<'gc, T> to `Gc<'gc, dyn MyTrait + Send>`...
 /// ```rust
