@@ -56,9 +56,10 @@ use crate::{
 /// `unsize!(gc, T => U)`
 ///
 /// ...where T and U are types that implement `for<'a> Rootable<'a>`. This form of the macro takes
-/// an extra step vs the first form, and casts the pointer types to 'static before casting back to
-/// the correct lifetime. This is safe to do, it only affects the internals of pointer coercion, and
-/// it and is useful in exactly one situation: where a `Gc<'gc, T>` is Send if 'gc is 'static.
+/// an extra step vs the first form, and projects the 'gc lifetime of the pointer types to 'static
+/// before projecting back to the correct lifetime. This is safe to do, it only affects the
+/// internals of pointer coercion, and it and is useful in exactly one situation: where a
+/// `Gc<'gc, T>` is Send if 'gc is 'static.
 ///
 /// This can produce a `Gc<'gc, dyn MyTrait<'gc> + Send>` type by round tripping through the 'static
 /// lifetime.
