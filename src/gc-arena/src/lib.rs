@@ -11,6 +11,7 @@ mod collect;
 mod collect_impl;
 mod context;
 mod dynamic_roots;
+pub mod ensure_send;
 mod gc;
 mod gc_weak;
 pub mod lock;
@@ -23,10 +24,7 @@ mod unsize;
 pub use gc_arena_derive::*;
 
 #[doc(hidden)]
-pub use self::{
-    arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal,
-    unsize::__coerce_rooted_ptr_internal,
-};
+pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},

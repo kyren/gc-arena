@@ -1,3 +1,4 @@
+use gc_arena::ensure_send::{ensure_send, EnsureSend};
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -576,15 +577,21 @@ fn test_send() {
 
     impl<'gc> TestTrait<'gc> for TestStruct<'gc> {}
 
-    fn test<'gc>(_mc: MutationContext<'gc, '_>, test: Gc<'gc, TestStruct<'gc>>) {
-        let _p: Gc<'gc, dyn TestTrait<'gc> + Send> = unsize!(
-            test,
-            Rootable!['a => Gc<'a, TestStruct<'a>>] =>
-            Rootable!['a => Gc<'a, dyn TestTrait<'a> + Send>]
-        );
+    fn make_test_struct<'gc>(mc: MutationContext<'gc, '_>) -> EnsureSend<'gc, TestStruct<'gc>> {
+        ensure_send::<Rootable!['a => TestStruct<'a>]>(mc, TestStruct(Gc::new(mc, 5)))
     }
 
-    gc_arena::rootless_arena(|mc| test(mc, Gc::new(mc, TestStruct(Gc::new(mc, 4)))));
+    fn make_test_trait<'gc>(
+        mc: MutationContext<'gc, '_>,
+    ) -> Gc<'gc, EnsureSend<'gc, dyn TestTrait<'gc>>> {
+        let test_struct = make_test_struct(mc);
+        unsize!(Gc::new(mc, test_struct) => EnsureSend<'gc, dyn TestTrait<'gc>>)
+    }
+
+    Arena::<Rootable![Gc<'gc, EnsureSend<'gc, dyn TestTrait<'gc>>>]>::new(
+        Default::default(),
+        |mc| make_test_trait(mc),
+    );
 }
 
 #[test]
