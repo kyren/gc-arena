@@ -559,7 +559,14 @@ fn ptr_magic() {
 fn test_send() {
     fn assert_send<S: Send>() {}
 
-    assert_send::<Arena<Rootable![Gc<'gc, RefLock<()>>]>>();
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct SendRoot<'gc> {
+        a: Gc<'gc, RefLock<u32>>,
+        b: GcWeak<'gc, RefLock<u32>>,
+    }
+
+    assert_send::<Arena<Rootable![SendRoot<'gc>]>>();
 
     trait TestTrait<'gc> {}
 
