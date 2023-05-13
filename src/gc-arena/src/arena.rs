@@ -66,7 +66,7 @@ impl ArenaParameters {
 /// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait Rootable<'a> {
-    type Root: Collect + 'a;
+    type Root: ?Sized + Collect + 'a;
 }
 
 /// A convenience macro for quickly creating type that implements of `Rootable`.
@@ -139,13 +139,19 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R: for<'a> Rootable<'a> + ?Sized> {
+pub struct Arena<R: for<'a> Rootable<'a> + ?Sized>
+where
+    Root<'static, R>: Sized,
+{
     // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
     root: Root<'static, R>,
     context: Context,
 }
 
-impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
+impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R>
+where
+    Root<'static, R>: Sized,
+{
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `MutationContext` and returns the appropriate root.
     pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
@@ -216,7 +222,10 @@ impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     pub fn map_root<R2: for<'a> Rootable<'a> + ?Sized>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
-    ) -> Arena<R2> {
+    ) -> Arena<R2>
+    where
+        Root<'static, R2>: Sized,
+    {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root) };
         Arena {
@@ -229,7 +238,10 @@ impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     pub fn try_map_root<R2: for<'a> Rootable<'a> + ?Sized, E>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
-    ) -> Result<Arena<R2>, E> {
+    ) -> Result<Arena<R2>, E>
+    where
+        Root<'static, R2>: Sized,
+    {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root)? };
         Ok(Arena {
