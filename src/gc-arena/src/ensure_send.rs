@@ -55,7 +55,7 @@ unsafe impl<'gc, S: Collect> Collect for EnsureSend<'gc, S> {
     }
 }
 
-impl<'gc, S> ops::Deref for EnsureSend<'gc, S> {
+impl<'gc, S: ?Sized> ops::Deref for EnsureSend<'gc, S> {
     type Target = S;
 
     fn deref(&self) -> &Self::Target {
@@ -63,7 +63,7 @@ impl<'gc, S> ops::Deref for EnsureSend<'gc, S> {
     }
 }
 
-impl<'gc, S> ops::DerefMut for EnsureSend<'gc, S> {
+impl<'gc, S: ?Sized> ops::DerefMut for EnsureSend<'gc, S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
