@@ -24,6 +24,17 @@ pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) _invariant: Invariant<'gc>,
 }
 
+// Implement `Send` for Gc if the 'gc branding lifetime is 'static.
+//
+// SAFETY: This is only safe because all Gc pointers must be stored in an Arena, and an Arena does
+// not allow witnessing a bare Gc type that can be *known* to be 'static, it only provides access
+// to `Gc` types that may be any possible 'gc lifetime. This must work for the soundness of the
+// garbage collector generally, it is what prevents `Gc` pointers from escaping the arena, so we
+// know that it is okay to mark `Gc<'static, T>` as Send, because we know that to be Send it must
+// be "at rest", contained in the root object of an Arena being interacted with from the outside.
+// Arena and Gc are both !Sync, and all Context types are !Sync and !Send, so this locks access
+// to a GC context and all associated Gc pointers to a single thread for the duration of a call
+// to Arena::mutate.
 unsafe impl<T: ?Sized + Send + 'static> Send for Gc<'static, T> {}
 
 impl<'gc, T: Debug + ?Sized + 'gc> Debug for Gc<'gc, T> {
