@@ -12,7 +12,7 @@ use crate::{Collect, Root, Rootable};
 /// However, in reality, from the outside of an Arena we can observe that the branding 'gc lifetime
 /// is *actually* 'static, which is why Gc can safely implement Send when 'gc is 'static and Arena
 /// can be Send if its root object is Send. This means that as long as the root type only stores
-/// normally Send types and gc-arena pointers, it will be Send when "at rest" viewwed from outside
+/// normally Send types and gc-arena pointers, it will be Send when "at rest" viewed from outside
 /// the Arena, even though this is not the case when viewed from the inside via a callback. This is
 /// extremely useful, as it allows a sort of "Send jail", where when interacting with Gc pointers,
 /// they are !Send, but we can still send an entire arena to another thread if there are no
@@ -33,8 +33,8 @@ use crate::{Collect, Root, Rootable};
 ///
 /// This is extremely useful to get around the limitations of dyn types. By placing a Sized type
 /// inside an StaticSend, we assert that it *would* be Send when placed into the arena root and
-/// projected to 'static. We are then free to use the `unsize!` macro to convert this to a dyn type
-/// without having to worry about Send bounds, and it will remain Send.
+/// projected to 'static. We are then free to convert this to a trait object without having to worry
+/// about Send bounds, and it will remain Send.
 pub struct StaticSend<S: ?Sized> {
     inner: S,
 }
