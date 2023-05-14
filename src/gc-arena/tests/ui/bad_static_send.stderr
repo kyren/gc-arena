@@ -1,0 +1,13 @@
+error[E0277]: `Rc<i32>` cannot be sent between threads safely
+  --> tests/ui/bad_static_send.rs:10:19
+   |
+10 |     static_send::<Rootable!['a => Gc<'a, Rc<i32>>]>(ptr)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `Rc<i32>` cannot be sent between threads safely
+   |
+   = help: the trait `Send` is not implemented for `Rc<i32>`
+   = note: required for `Gc<'_, Rc<i32>>` to implement `Send`
+note: required by a bound in `static_send`
+  --> src/static_send.rs
+   |
+   |     Root<'static, R>: Send,
+   |                       ^^^^ required by this bound in `static_send`
