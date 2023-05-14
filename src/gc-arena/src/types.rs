@@ -288,7 +288,7 @@ mod tagged_ptr {
     /// If this isn't true, this macro will cause a post-monomorphization error.
     macro_rules! check_mask {
         ($type:ty, $mask:expr) => {
-            let _ = <$type as ValidMask<MASK>>::CHECK;
+            let _ = <$type as ValidMask<$mask>>::CHECK;
         };
     }
 
