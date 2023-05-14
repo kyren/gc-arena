@@ -313,7 +313,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 // be 'static. If the 'gc lifetime ends up in a user type, it must either be from a type returned
 // by gc-arena (which again, knows that 'gc is really 'static), or it is in a place where it must be
 // valid that any lifetime be there since the callback is required to work for all 'gc lifetimes.
-unsafe impl<R: for<'a> Rootable<'a> + ?Sized> Send for Arena<R> where Root<'static, R>: Send {}
+unsafe impl<R: for<'a> Rootable<'a>> Send for Arena<R> where Root<'static, R>: Send {}
 
 /// Create a temporary arena without a root object and perform the given operation on it. No garbage
 /// collection will be done until the very end of the call, at which point all allocations will
