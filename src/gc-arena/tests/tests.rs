@@ -1,4 +1,4 @@
-use gc_arena::ensure_send::{ensure_send, EnsureSend};
+use gc_arena::static_send::{static_send, StaticSend};
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -6,8 +6,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::lock::RefLock;
 use gc_arena::{
-    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcWeak,
-    MutationContext, Rootable,
+    rootless_arena, unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet,
+    Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -569,29 +569,30 @@ fn test_send() {
 
     assert_send::<Arena<Rootable![SendRoot<'gc>]>>();
 
-    trait TestTrait<'gc> {}
+    rootless_arena(|mc| {
+        trait TestTrait<'gc> {
+            fn test(&self) -> Gc<'gc, i32>;
+        }
 
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct TestStruct<'gc>(Gc<'gc, i32>);
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct TestStruct<'gc>(Gc<'gc, i32>);
 
-    impl<'gc> TestTrait<'gc> for TestStruct<'gc> {}
+        impl<'gc> TestTrait<'gc> for TestStruct<'gc> {
+            fn test(&self) -> Gc<'gc, i32> {
+                self.0
+            }
+        }
 
-    fn make_test_struct<'gc>(mc: MutationContext<'gc, '_>) -> EnsureSend<'gc, TestStruct<'gc>> {
-        ensure_send::<Rootable!['a => TestStruct<'a>]>(mc, TestStruct(Gc::new(mc, 5)))
-    }
+        let test_struct = Gc::new(
+            mc,
+            static_send::<Rootable![TestStruct<'gc>]>(TestStruct(Gc::new(mc, 4))),
+        );
 
-    fn make_test_trait<'gc>(
-        mc: MutationContext<'gc, '_>,
-    ) -> Gc<'gc, EnsureSend<'gc, dyn TestTrait<'gc>>> {
-        let test_struct = make_test_struct(mc);
-        unsize!(Gc::new(mc, test_struct) => EnsureSend<'gc, dyn TestTrait<'gc>>)
-    }
+        let test_struct = unsize!(test_struct => StaticSend<dyn TestTrait>);
 
-    Arena::<Rootable![Gc<'gc, EnsureSend<'gc, dyn TestTrait<'gc>>>]>::new(
-        Default::default(),
-        |mc| make_test_trait(mc),
-    );
+        assert_eq!(*test_struct.test(), 4);
+    });
 }
 
 #[test]

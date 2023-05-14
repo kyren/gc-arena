@@ -1,6 +1,6 @@
-use core::{marker::PhantomData, ops};
+use core::ops;
 
-use crate::{types::Invariant, Collect, MutationContext, Root, Rootable};
+use crate::{Collect, Root, Rootable};
 
 /// Assert that a contained type implements `Send` when we can observe that 'gc is actually 'static.
 ///
@@ -24,38 +24,30 @@ use crate::{types::Invariant, Collect, MutationContext, Root, Rootable};
 /// be known to be 'static, so the object cannot be known to be Send *at that time*.
 ///
 /// This struct is a simple wrapper that gets around this problem. On construction, we must provide
-/// a Rootable projection of the held type along with a `MutationContext<'gc>`, and this allows us
-/// to assert all of the following:
-///   1) Our held type, when projected to 'static, must be Send
-///   2) We currently have a MutationContext as evidence we are inside an arena callback, and to
-///      brand the constructed type with this unique lifetime branding.
-///   3) Our held type is projected with the same provided Rootable to the 'gc of the
-///      MutationContext, ensuring that everywhere we required 'static to be Send, we now have a
-///      known 'gc branding lifetime (which is actually 'static).
-///
-/// Knowing these facts allows us to conditionally implement Send when we can observe that the
-/// branding lifetime is actually 'static, while *ignoring the inner type*. Since we have proven
-/// that the proper conditions hold at the time of creation, we don't need to check the inner type
-/// for Send.
+/// a Rootable projection of the held type which allows us to check that the projection of the
+/// 'static lifetime is Send. Since the Rootable projection of 'static is itself 'static (from the
+/// Rootable trait definition), we have evidence that if the held were known to be 'static, it would
+/// also be known to be Send. We cannot get in trouble with mismatched projections because there's
+/// only ever one way for a type with lifetime parameters to become 'static, all the lifetime
+/// parameters must be 'static, we just need *proof* that when this type is 'static, it is Send.
 ///
 /// This is extremely useful to get around the limitations of dyn types. By placing a Sized type
-/// inside an EnsureSend, we assert that it *would* be Send when placed into the arena root and
+/// inside an StaticSend, we assert that it *would* be Send when placed into the arena root and
 /// projected to 'static. We are then free to use the `unsize!` macro to convert this to a dyn type
 /// without having to worry about Send bounds, and it will remain Send.
-pub struct EnsureSend<'gc, S: ?Sized + 'gc> {
-    _invariant: Invariant<'gc>,
+pub struct StaticSend<S: ?Sized> {
     inner: S,
 }
 
-unsafe impl<S: ?Sized> Send for EnsureSend<'static, S> {}
+unsafe impl<S: ?Sized + 'static> Send for StaticSend<S> {}
 
-unsafe impl<'gc, S: ?Sized + Collect> Collect for EnsureSend<'gc, S> {
+unsafe impl<S: ?Sized + Collect> Collect for StaticSend<S> {
     fn trace(&self, cc: crate::CollectionContext) {
         self.inner.trace(cc)
     }
 }
 
-impl<'gc, S: ?Sized> ops::Deref for EnsureSend<'gc, S> {
+impl<S: ?Sized> ops::Deref for StaticSend<S> {
     type Target = S;
 
     fn deref(&self) -> &Self::Target {
@@ -63,21 +55,17 @@ impl<'gc, S: ?Sized> ops::Deref for EnsureSend<'gc, S> {
     }
 }
 
-impl<'gc, S: ?Sized> ops::DerefMut for EnsureSend<'gc, S> {
+impl<S: ?Sized> ops::DerefMut for StaticSend<S> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-pub fn ensure_send<'gc, R: ?Sized + for<'a> Rootable<'a>>(
-    _mc: MutationContext<'gc, '_>,
+pub fn static_send<'gc, R: ?Sized + for<'a> Rootable<'a>>(
     r: Root<'gc, R>,
-) -> EnsureSend<'gc, Root<'gc, R>>
+) -> StaticSend<Root<'gc, R>>
 where
     Root<'static, R>: Send,
 {
-    EnsureSend {
-        _invariant: PhantomData,
-        inner: r,
-    }
+    StaticSend { inner: r }
 }
