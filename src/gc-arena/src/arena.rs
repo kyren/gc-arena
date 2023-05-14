@@ -1,4 +1,4 @@
-use core::{f64, mem, usize};
+use core::{f64, marker::PhantomData, mem, usize};
 
 use crate::{
     context::{Context, MutationContext},
@@ -65,8 +65,18 @@ impl ArenaParameters {
 /// In order to use an implementation of this trait in an [`Arena`], it must implement
 /// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
-pub trait Rootable<'a> {
+pub trait Rootable<'a>: 'static {
     type Root: Collect + 'a;
+}
+
+/// A marker type used by the `Rootable!` macro instead of a bare trait object.
+///
+/// Prevents having to include extra ?Sized bounds on every `for<'a> Rootable<'a>`.
+#[doc(hidden)]
+pub struct __DynRootable<T: ?Sized>(PhantomData<T>);
+
+impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
+    type Root = <T as Rootable<'a>>::Root;
 }
 
 /// A convenience macro for quickly creating type that implements of `Rootable`.
@@ -110,7 +120,7 @@ macro_rules! Rootable {
     ($gc:lifetime => $root:ty) => {
         // Instead of generating an impl of `Rootable`, we use a trait object. Thus, we avoid the
         // need to generate a new type for each invocation of this macro.
-        dyn for<$gc> $crate::Rootable<$gc, Root = $root>
+        $crate::__DynRootable::<dyn for<$gc> $crate::Rootable<$gc, Root = $root>>
     };
     ($root:ty) => {
         Rootable!['gc => $root]
@@ -139,13 +149,13 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R: for<'a> Rootable<'a> + ?Sized> {
+pub struct Arena<R: for<'a> Rootable<'a>> {
     // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
     root: Root<'static, R>,
     context: Context,
 }
 
-impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
+impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `MutationContext` and returns the appropriate root.
     pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
@@ -213,7 +223,7 @@ impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn map_root<R2: for<'a> Rootable<'a> + ?Sized>(
+    pub fn map_root<R2: for<'a> Rootable<'a>>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2> {
@@ -226,7 +236,7 @@ impl<R: for<'a> Rootable<'a> + ?Sized> Arena<R> {
     }
 
     #[inline]
-    pub fn try_map_root<R2: for<'a> Rootable<'a> + ?Sized, E>(
+    pub fn try_map_root<R2: for<'a> Rootable<'a>, E>(
         self,
         f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
     ) -> Result<Arena<R2>, E> {

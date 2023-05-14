@@ -23,7 +23,7 @@ mod unsize;
 pub use gc_arena_derive::*;
 
 #[doc(hidden)]
-pub use self::{no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
+pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},

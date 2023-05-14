@@ -48,7 +48,7 @@ impl<'gc> DynamicRootSet<'gc> {
         ))
     }
 
-    pub fn stash<R: for<'a> Rootable<'a> + ?Sized>(
+    pub fn stash<R: for<'a> Rootable<'a>>(
         &self,
         mc: MutationContext<'gc, '_>,
         root: Root<'gc, R>,
@@ -70,10 +70,7 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
-    pub fn fetch<'a, R: for<'b> Rootable<'b> + ?Sized>(
-        &self,
-        root: &'a DynamicRoot<R>,
-    ) -> &'a Root<'gc, R> {
+    pub fn fetch<'a, R: for<'b> Rootable<'b>>(&self, root: &'a DynamicRoot<R>) -> &'a Root<'gc, R> {
         assert_eq!(
             Rc::as_ptr(&self.0.borrow().set_id),
             Rc::as_ptr(&root.handle.set_id),
@@ -84,11 +81,11 @@ impl<'gc> DynamicRootSet<'gc> {
     }
 }
 
-pub struct DynamicRoot<R: for<'gc> Rootable<'gc> + ?Sized> {
+pub struct DynamicRoot<R: for<'gc> Rootable<'gc>> {
     handle: Rc<Handle<Root<'static, R>>>,
 }
 
-impl<R: for<'gc> Rootable<'gc> + ?Sized> Clone for DynamicRoot<R> {
+impl<R: for<'gc> Rootable<'gc>> Clone for DynamicRoot<R> {
     fn clone(&self) -> Self {
         Self {
             handle: self.handle.clone(),
@@ -96,7 +93,7 @@ impl<R: for<'gc> Rootable<'gc> + ?Sized> Clone for DynamicRoot<R> {
     }
 }
 
-impl<R: for<'gc> Rootable<'gc> + ?Sized> DynamicRoot<R> {
+impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
     // Get a pointer to the held object.
     //
     // The pointer will never be dangling, as the `DynamicRoot` is the owner of the held type, but
