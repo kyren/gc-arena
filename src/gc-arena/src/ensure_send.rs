@@ -49,7 +49,7 @@ pub struct EnsureSend<'gc, S: ?Sized + 'gc> {
 
 unsafe impl<S: ?Sized> Send for EnsureSend<'static, S> {}
 
-unsafe impl<'gc, S: Collect> Collect for EnsureSend<'gc, S> {
+unsafe impl<'gc, S: ?Sized + Collect> Collect for EnsureSend<'gc, S> {
     fn trace(&self, cc: crate::CollectionContext) {
         self.inner.trace(cc)
     }
