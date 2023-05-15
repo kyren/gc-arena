@@ -55,10 +55,12 @@ macro_rules! make_lock_wrapper {
         pub type $gc_locked_type<'gc, T> = Gc<'gc, $locked_type<T>>;
 
         impl<T> $locked_type<T> {
+            #[inline]
             pub fn new(t: T) -> $locked_type<T> {
                 Self { cell: $unlocked_type::new(t) }
             }
 
+            #[inline]
             pub fn into_inner(self) -> T {
                 self.cell.into_inner()
             }
@@ -67,6 +69,7 @@ macro_rules! make_lock_wrapper {
         }
 
         impl<T: ?Sized> $locked_type<T> {
+            #[inline]
             pub fn as_ptr(&self) -> *mut T {
                 self.cell.as_ptr()
             }
@@ -82,10 +85,12 @@ macro_rules! make_lock_wrapper {
             #[doc = stringify!($unlocked_type)]
             /// `], unless the write barrier for the containing [`Gc`] pointer is invoked manuall
             /// before collection is triggered.
+            #[inline]
             pub unsafe fn $unsafe_unlock_method(&self) -> &$unlocked_type<T> {
                 &self.cell
             }
 
+            #[inline]
             pub fn get_mut(&mut self) -> &mut T {
                 self.cell.get_mut()
             }
@@ -94,18 +99,21 @@ macro_rules! make_lock_wrapper {
         impl<T: ?Sized> Unlock for $locked_type<T> {
             type Unlocked = $unlocked_type<T>;
 
+            #[inline]
             unsafe fn unlock_unchecked(&self) -> &Self::Unlocked {
                 &self.cell
             }
         }
 
         impl<T> From<T> for $locked_type<T> {
+            #[inline]
             fn from(t: T) -> Self {
                 Self::new(t)
             }
         }
 
         impl<T> From<$unlocked_type<T>> for $locked_type<T> {
+            #[inline]
             fn from(cell: $unlocked_type<T>) -> Self {
                 Self { cell }
             }
@@ -118,10 +126,12 @@ make_lock_wrapper!(
     locked = Lock as GcLock;
     unlocked = Cell unsafe as_cell;
     impl Sized {
+        #[inline]
         pub fn get(&self) -> T where T: Copy {
             self.cell.get()
         }
 
+        #[inline]
         pub fn take(&self) -> T where T: Default {
             // Despite mutating the contained value, this doesn't need a write barrier, as
             // the return value of `Default::default` can never contain (non-leaked) `Gc` pointers.
@@ -146,16 +156,24 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
 }
 
 impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
+    #[inline]
     pub fn get(&self) -> T {
         self.cell.get()
     }
 
+    #[inline]
     pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
         self.unlock(mc).set(t);
     }
 }
 
 unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
     fn trace(&self, cc: CollectionContext) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
@@ -179,6 +197,7 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
 
 // Can't use `#[derive]` because of the non-standard bounds.
 impl<T: Copy> Clone for Lock<T> {
+    #[inline]
     fn clone(&self) -> Self {
         Self::new(self.get())
     }
@@ -186,6 +205,7 @@ impl<T: Copy> Clone for Lock<T> {
 
 // Can't use `#[derive]` because of the non-standard bounds.
 impl<T: PartialEq + Copy> PartialEq for Lock<T> {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.get() == other.get()
     }
@@ -196,6 +216,7 @@ impl<T: Eq + Copy> Eq for Lock<T> {}
 
 // Can't use `#[derive]` because of the non-standard bounds.
 impl<T: PartialOrd + Copy> PartialOrd for Lock<T> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         self.get().partial_cmp(&other.get())
     }
@@ -203,6 +224,7 @@ impl<T: PartialOrd + Copy> PartialOrd for Lock<T> {
 
 // Can't use `#[derive]` because of the non-standard bounds.
 impl<T: Ord + Copy> Ord for Lock<T> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.get().cmp(&other.get())
     }
@@ -213,6 +235,7 @@ make_lock_wrapper!(
     locked = RefLock as GcRefLock;
     unlocked = RefCell unsafe as_ref_cell;
     impl Sized {
+        #[inline]
         pub fn take(&self) -> T where T: Default {
             // See comment in `Lock::take`.
             self.cell.take()
@@ -220,10 +243,12 @@ make_lock_wrapper!(
     }
     impl ?Sized {
         #[track_caller]
+        #[inline]
         pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
             self.cell.borrow()
         }
 
+        #[inline]
         pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
             self.cell.try_borrow()
         }
@@ -255,19 +280,23 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     #[track_caller]
+    #[inline]
     pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
         RefLock::borrow(self)
     }
 
+    #[inline]
     pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
         RefLock::try_borrow(self)
     }
 
     #[track_caller]
+    #[inline]
     pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
         self.unlock(mc).borrow_mut()
     }
 
+    #[inline]
     pub fn try_borrow_mut<'a>(
         &'a self,
         mc: MutationContext<'gc, '_>,
@@ -276,7 +305,18 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect + ?Sized + 'gc> Collect for RefLock<T> {
+// We can't have `T: ?Sized` here because rustc is dumb and doesn't
+// understand that `T: Sized` is equivalent to `Self: Sized` (which is
+// required by `needs_trace`).
+// Fortunately this doesn't matter much as there's no way to allocate
+// unsized GC'd values directly.
+unsafe impl<'gc, T: Collect + 'gc> Collect for RefLock<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
     fn trace(&self, cc: CollectionContext) {
         self.borrow().trace(cc);
     }

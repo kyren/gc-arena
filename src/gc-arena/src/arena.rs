@@ -285,6 +285,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Run the current garbage collection cycle to completion, stopping once the garbage collector
     /// has entered the sleeping phase. If the garbage collector is currently sleeping, starts a new
     /// cycle and runs that cycle to completion.
+    #[inline]
     pub fn collect_all(&mut self) {
         self.context.wake();
         unsafe {
