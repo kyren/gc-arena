@@ -1,3 +1,4 @@
+use gc_arena::static_send::{static_send, StaticSend};
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -5,8 +6,8 @@ use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::lock::RefLock;
 use gc_arena::{
-    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcWeak,
-    Rootable,
+    rootless_arena, unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet,
+    Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -552,6 +553,45 @@ fn ptr_magic() {
             let b = Gc::from_ptr(aptr);
             assert_eq!(*b, S(3, 4, 5));
         }
+    });
+}
+
+#[test]
+fn test_send() {
+    fn assert_send<S: Send>() {}
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct SendRoot<'gc> {
+        a: Gc<'gc, RefLock<u32>>,
+        b: GcWeak<'gc, RefLock<u32>>,
+    }
+
+    assert_send::<Arena<Rootable![SendRoot<'gc>]>>();
+
+    rootless_arena(|mc| {
+        trait TestTrait<'gc> {
+            fn test(&self) -> Gc<'gc, i32>;
+        }
+
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct TestStruct<'gc>(Gc<'gc, i32>);
+
+        impl<'gc> TestTrait<'gc> for TestStruct<'gc> {
+            fn test(&self) -> Gc<'gc, i32> {
+                self.0
+            }
+        }
+
+        let test_struct = Gc::new(
+            mc,
+            static_send::<Rootable![TestStruct<'gc>]>(TestStruct(Gc::new(mc, 4))),
+        );
+
+        let test_struct = unsize!(test_struct => StaticSend<dyn TestTrait>);
+
+        assert_eq!(*test_struct.test(), 4);
     });
 }
 

@@ -16,6 +16,7 @@ mod gc_weak;
 pub mod lock;
 mod no_drop;
 mod static_collect;
+pub mod static_send;
 mod types;
 mod unsize;
 
