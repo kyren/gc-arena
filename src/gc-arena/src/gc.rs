@@ -69,6 +69,13 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
     }
 }
 
+impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
+    #[inline]
+    fn as_ref(&self) -> &T {
+        unsafe { &self.ptr.as_ref().value }
+    }
+}
+
 impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn new(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
@@ -127,6 +134,18 @@ impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
 }
 
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
+    /// Obtains a long-lived reference to the contents of this `Gc`.
+    ///
+    /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
+    /// will stay valid for the entirety of the current arena callback.
+    #[inline]
+    pub fn as_ref(self: Gc<'gc, T>) -> &'gc T {
+        // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
+        // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
+        // so cannot be stored inside the GC root.
+        unsafe { &self.ptr.as_ref().value }
+    }
+
     #[inline]
     pub fn downgrade(this: Gc<'gc, T>) -> GcWeak<'gc, T> {
         GcWeak { inner: this }
