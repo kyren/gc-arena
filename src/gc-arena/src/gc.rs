@@ -126,10 +126,10 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
 impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
     /// Unlock the contents of this `Gc` safely by ensuring that the write barrier is called.
     #[inline]
-    pub fn unlock(&self, mc: MutationContext<'gc, '_>) -> &T::Unlocked {
-        Gc::write_barrier(mc, *self);
+    pub fn unlock(self, mc: MutationContext<'gc, '_>) -> &'gc T::Unlocked {
+        Gc::write_barrier(mc, self);
         // SAFETY: see doc-comment.
-        unsafe { self.unlock_unchecked() }
+        unsafe { self.as_ref().unlock_unchecked() }
     }
 }
 
