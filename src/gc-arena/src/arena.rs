@@ -197,13 +197,10 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// collected value. The callback may "mutate" any part of the object graph during this call,
     /// but no garbage collection will take place during this method.
     #[inline]
-    pub fn mutate<'a, F, T>(&'a self, f: F) -> T
+    pub fn mutate<F, T>(&self, f: F) -> T
     where
         F: for<'gc> FnOnce(&'gc Mutation<'gc>, &Root<'gc, R>) -> T,
     {
-        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
-        // this is safe as all objects in the graph live until the next collection, which
-        // requires exclusive access to the arena.
         unsafe {
             let mutation_context: &'static Mutation<'static> =
                 mem::transmute(self.context.mutation_context());
@@ -214,15 +211,11 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
     /// cost of an extra write barrier.
     #[inline]
-    pub fn mutate_root<'a, F, T>(&'a mut self, f: F) -> T
+    pub fn mutate_root<F, T>(&mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &'a mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &mut Root<'gc, R>) -> T,
     {
         self.context.root_barrier();
-        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
-        // this is safe as all objects in the graph live until the next collection, which
-        // requires exclusive access to the arena. Additionally, the write barrier ensures
-        // that any changes to the root set are properly picked up.
         unsafe {
             let mutation_context: &'static Mutation<'static> =
                 mem::transmute(self.context.mutation_context());
