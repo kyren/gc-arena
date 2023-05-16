@@ -8,14 +8,14 @@ use core::{
 
 use crate::{
     collect::Collect,
-    context::{CollectionContext, MutationContext},
+    context::{Collection, Mutation},
     gc_weak::GcWeak,
     lock::Unlock,
     types::{GcBox, GcBoxInner, Invariant},
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through a `MutationContext` inside an arena type,
+/// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
 /// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
 /// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
@@ -53,7 +53,7 @@ impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for Gc<'gc, T> {
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         unsafe {
             cc.trace(GcBox::erase(self.ptr));
         }
@@ -78,7 +78,7 @@ impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
 
 impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
     #[inline]
-    pub fn new(mc: MutationContext<'gc, '_>, t: T) -> Gc<'gc, T> {
+    pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
         Gc {
             ptr: mc.allocate(t),
             _invariant: PhantomData,
@@ -126,7 +126,7 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
 impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
     /// Unlock the contents of this `Gc` safely by ensuring that the write barrier is called.
     #[inline]
-    pub fn unlock(self, mc: MutationContext<'gc, '_>) -> &'gc T::Unlocked {
+    pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
         Gc::write_barrier(mc, self);
         // SAFETY: see doc-comment.
         unsafe { self.as_ref().unlock_unchecked() }
@@ -155,7 +155,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// method must be used to ensure safe mutability. Safe to call, but only necessary from unsafe
     /// code.
     #[inline]
-    pub fn write_barrier(mc: MutationContext<'gc, '_>, gc: Self) {
+    pub fn write_barrier(mc: &Mutation<'gc>, gc: Self) {
         unsafe {
             mc.write_barrier(GcBox::erase(gc.ptr));
         }

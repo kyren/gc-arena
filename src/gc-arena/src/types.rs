@@ -47,7 +47,7 @@ impl GcBox {
     ///
     /// **SAFETY**: `Self::drop_in_place` must not have been called.
     #[inline(always)]
-    pub(crate) unsafe fn trace_value(&self, cc: crate::CollectionContext) {
+    pub(crate) unsafe fn trace_value(&self, cc: &crate::Collection) {
         (self.header().vtable().trace_value)(*self, cc)
     }
 
@@ -193,7 +193,7 @@ struct CollectVtable {
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
-    trace_value: unsafe fn(GcBox, crate::CollectionContext<'_>),
+    trace_value: unsafe fn(GcBox, &crate::Collection),
 }
 
 impl CollectVtable {

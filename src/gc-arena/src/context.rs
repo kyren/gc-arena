@@ -1,7 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
-use core::marker::PhantomData;
 use core::mem;
 use core::ptr::NonNull;
 
@@ -11,39 +10,39 @@ use crate::types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant};
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
-#[derive(Copy, Clone)]
-pub struct MutationContext<'gc, 'context> {
+#[repr(transparent)]
+pub struct Mutation<'gc> {
+    context: Context,
     _invariant: Invariant<'gc>,
-    context: &'context Context,
 }
 
-impl<'gc, 'context> MutationContext<'gc, 'context> {
+impl<'gc> Mutation<'gc> {
     #[inline]
-    pub(crate) fn allocate<T: 'gc + Collect>(self, t: T) -> NonNull<GcBoxInner<T>> {
+    pub(crate) fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
     }
 
     #[inline]
-    pub(crate) fn write_barrier(self, gc_box: GcBox) {
+    pub(crate) fn write_barrier(&self, gc_box: GcBox) {
         self.context.write_barrier(gc_box)
     }
 
     #[inline]
-    pub(crate) fn upgrade(self, gc_box: GcBox) -> bool {
+    pub(crate) fn upgrade(&self, gc_box: GcBox) -> bool {
         self.context.upgrade(gc_box)
     }
 }
 
 /// Handle value given by arena callbacks during garbage collection, which must be passed through
 /// `Collect::trace` implementations.
-#[derive(Copy, Clone)]
-pub struct CollectionContext<'context> {
-    context: &'context Context,
+#[repr(transparent)]
+pub struct Collection {
+    context: Context,
 }
 
-impl<'context> CollectionContext<'context> {
+impl Collection {
     #[inline]
-    pub(crate) fn trace(self, gc_box: GcBox) {
+    pub(crate) fn trace(&self, gc_box: GcBox) {
         self.context.trace(gc_box)
     }
 
@@ -127,15 +126,9 @@ impl Context {
         }
     }
 
-    // Creates a MutationContext with an unbounded 'gc lifetime.
     #[inline]
-    pub(crate) unsafe fn mutation_context<'gc, 'context>(
-        &'context self,
-    ) -> MutationContext<'gc, 'context> {
-        MutationContext {
-            _invariant: PhantomData,
-            context: self,
-        }
+    pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
+        mem::transmute::<&Self, &Mutation>(&self)
     }
 
     #[inline]
@@ -184,7 +177,7 @@ impl Context {
 
     fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) -> f64 {
         let mut work_done = 0.0;
-        let cc = CollectionContext { context: self };
+        let cc = unsafe { mem::transmute::<&Self, &Collection>(self) };
 
         while work > work_done {
             match self.phase.get() {
