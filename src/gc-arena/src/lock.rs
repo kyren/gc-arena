@@ -157,12 +157,12 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
 
 impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     #[inline]
-    pub fn get(&self) -> T {
+    pub fn get(self) -> T {
         self.cell.get()
     }
 
     #[inline]
-    pub fn set(&self, mc: MutationContext<'gc, '_>, t: T) {
+    pub fn set(self, mc: MutationContext<'gc, '_>, t: T) {
         self.unlock(mc).set(t);
     }
 }
@@ -281,26 +281,26 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     #[track_caller]
     #[inline]
-    pub fn borrow<'a>(&'a self) -> Ref<'a, T> {
-        RefLock::borrow(self)
+    pub fn borrow(self) -> Ref<'gc, T> {
+        RefLock::borrow(self.as_ref())
     }
 
     #[inline]
-    pub fn try_borrow<'a>(&'a self) -> Result<Ref<'a, T>, BorrowError> {
-        RefLock::try_borrow(self)
+    pub fn try_borrow(self) -> Result<Ref<'gc, T>, BorrowError> {
+        RefLock::try_borrow(self.as_ref())
     }
 
     #[track_caller]
     #[inline]
-    pub fn borrow_mut<'a>(&'a self, mc: MutationContext<'gc, '_>) -> RefMut<'a, T> {
+    pub fn borrow_mut(self, mc: MutationContext<'gc, '_>) -> RefMut<'gc, T> {
         self.unlock(mc).borrow_mut()
     }
 
     #[inline]
-    pub fn try_borrow_mut<'a>(
-        &'a self,
+    pub fn try_borrow_mut(
+        self,
         mc: MutationContext<'gc, '_>,
-    ) -> Result<RefMut<'a, T>, BorrowMutError> {
+    ) -> Result<RefMut<'gc, T>, BorrowMutError> {
         self.unlock(mc).try_borrow_mut()
     }
 }
