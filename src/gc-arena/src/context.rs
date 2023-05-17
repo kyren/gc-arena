@@ -210,7 +210,37 @@ impl Context {
                         // If we have an object in the gray queue, take one, trace it, and turn it
                         // black.
                         // SAFETY: we know gray objects are always live.
+
+                        // Our `Collect::trace` call may panic, and if it does the object will be
+                        // lost from the gray queue but potentially incompletely traced. By catching
+                        // a panic during `Arena::collect()`, this could lead to memory unsafety.
+                        //
+                        // So, if the `Collect::trace` call panics, we need to add the popped object
+                        // back to the `gray_again` queue. If the panic is caught, this will maybe
+                        // give it some time to not panic before attempting to collect it again, and
+                        // also this doesn't invalidate the collection debt math.
+                        struct DropGuard<'a> {
+                            panicking: bool,
+                            this: &'a Context,
+                            gc_box: GcBox,
+                        }
+
+                        impl<'a> Drop for DropGuard<'a> {
+                            fn drop(&mut self) {
+                                if self.panicking {
+                                    self.this.gray_again.borrow_mut().push(self.gc_box);
+                                }
+                            }
+                        }
+
+                        let mut guard = DropGuard {
+                            panicking: true,
+                            this: self,
+                            gc_box,
+                        };
                         unsafe { gc_box.trace_value(cc) }
+                        guard.panicking = false;
+
                         gc_box.header().set_color(GcColor::Black);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we

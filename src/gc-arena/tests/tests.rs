@@ -1,3 +1,4 @@
+use core::cell::Cell;
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -498,8 +499,6 @@ fn test_collect_overflow() {
 
 #[test]
 fn cast() {
-    use core::cell::Cell;
-
     #[derive(Collect)]
     #[collect(require_static)]
     #[repr(C)]
@@ -552,6 +551,56 @@ fn ptr_magic() {
             let b = Gc::from_ptr(aptr);
             assert_eq!(*b, S(3, 4, 5));
         }
+    });
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn okay_panic() {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    struct Test<'gc> {
+        data: Gc<'gc, [u8; 256]>,
+        panic_count: Cell<u8>,
+        trace_finished: Cell<bool>,
+    }
+
+    unsafe impl<'gc> Collect for Test<'gc> {
+        fn trace(&self, cc: gc_arena::CollectionContext) {
+            let panics = self.panic_count.get();
+            if panics > 0 {
+                self.panic_count.set(panics - 1);
+                panic!("test panic");
+            }
+            self.data.trace(cc);
+            self.trace_finished.set(true);
+        }
+    }
+
+    let mut arena = Arena::<Rootable![Gc<'gc, Test<'gc>>]>::new(ArenaParameters::default(), |mc| {
+        Gc::new(
+            mc,
+            Test {
+                data: Gc::new(mc, [5; 256]),
+                panic_count: Cell::new(5),
+                trace_finished: Cell::new(false),
+            },
+        )
+    });
+
+    for _ in 0..10 {
+        if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
+            arena.collect_all();
+        })) {
+            assert_eq!(*err.downcast::<&'static str>().unwrap(), "test panic");
+        } else {
+            break;
+        }
+    }
+
+    arena.mutate(|_, root| {
+        assert_eq!(root.panic_count.get(), 0);
+        assert!(root.trace_finished.get());
     });
 }
 
