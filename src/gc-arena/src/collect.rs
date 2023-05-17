@@ -1,4 +1,4 @@
-use crate::context::CollectionContext;
+use crate::context::Collection;
 
 /// A trait for garbage collected objects that can be placed into `Gc` pointers. This trait is
 /// unsafe, because `Gc` pointers inside an Arena are assumed never to be dangling, and in order to
@@ -34,5 +34,5 @@ pub unsafe trait Collect {
     /// implement `Collect`, a valid implementation would simply call `Collect::trace` on all the
     /// held values to ensure this.
     #[inline]
-    fn trace(&self, _cc: CollectionContext) {}
+    fn trace(&self, _cc: &Collection) {}
 }

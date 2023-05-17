@@ -13,7 +13,7 @@ use core::marker::PhantomData;
 use std::collections::{HashMap, HashSet};
 
 use crate::collect::Collect;
-use crate::context::CollectionContext;
+use crate::context::Collection;
 
 /// If a type will never hold `Gc` pointers, you can use this macro to provide a simple empty
 /// `Collect` implementation.
@@ -110,7 +110,7 @@ unsafe impl<T: ?Sized + 'static> Collect for &'static T {
 
 unsafe impl<T: ?Sized + Collect> Collect for Box<T> {
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         (**self).trace(cc)
     }
 }
@@ -122,7 +122,7 @@ unsafe impl<T: Collect> Collect for [T] {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for t in self.iter() {
             t.trace(cc)
         }
@@ -136,7 +136,7 @@ unsafe impl<T: Collect> Collect for Option<T> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         if let Some(t) = self.as_ref() {
             t.trace(cc)
         }
@@ -150,7 +150,7 @@ unsafe impl<T: Collect, E: Collect> Collect for Result<T, E> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         match self {
             Ok(r) => r.trace(cc),
             Err(e) => e.trace(cc),
@@ -165,7 +165,7 @@ unsafe impl<T: Collect> Collect for Vec<T> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for t in self {
             t.trace(cc)
         }
@@ -179,7 +179,7 @@ unsafe impl<T: Collect> Collect for VecDeque<T> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for t in self {
             t.trace(cc)
         }
@@ -199,7 +199,7 @@ where
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for (k, v) in self {
             k.trace(cc);
             v.trace(cc);
@@ -219,7 +219,7 @@ where
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for v in self {
             v.trace(cc);
         }
@@ -237,7 +237,7 @@ where
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for (k, v) in self {
             k.trace(cc);
             v.trace(cc);
@@ -255,7 +255,7 @@ where
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for v in self {
             v.trace(cc);
         }
@@ -267,7 +267,7 @@ where
     T: ?Sized + Collect,
 {
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         (**self).trace(cc);
     }
 }
@@ -277,7 +277,7 @@ where
     T: ?Sized + Collect,
 {
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         (**self).trace(cc);
     }
 }
@@ -317,7 +317,7 @@ unsafe impl<T: Collect, const N: usize> Collect for [T; N] {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         for t in self {
             t.trace(cc)
         }
@@ -345,7 +345,7 @@ macro_rules! impl_tuple {
 
             #[allow(non_snake_case)]
             #[inline]
-            fn trace(&self, cc: CollectionContext) {
+            fn trace(&self, cc: &Collection) {
                 let ($($name,)*) = self;
                 $($name.trace(cc);)*
             }

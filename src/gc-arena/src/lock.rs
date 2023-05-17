@@ -6,7 +6,7 @@ use core::{
     fmt,
 };
 
-use crate::{Collect, CollectionContext, Gc, MutationContext};
+use crate::{Collect, Collection, Gc, Mutation};
 
 /// Types that support additional operations (typically, mutation) when behind a write barrier.
 pub trait Unlock {
@@ -140,7 +140,7 @@ make_lock_wrapper!(
             // Because Rust doesn't allow naming concrete lifetimes, and because `Default` doesn't
             // have any lifetime parameters, any potential `'gc` lifetime in `T` must be
             // existentially quantified. As such, a `Default` implementation that tries to smuggle
-            // a branded `Gc` pointer or `MutationContext` through external state (e.g. thread
+            // a branded `Gc` pointer or `Mutation` through external state (e.g. thread
             // locals) must use unsafe code and cannot be sound in the first place, as it has no
             // way to ensure that the smuggled data has the correct `'gc` brand.
             self.cell.take()
@@ -162,7 +162,7 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     }
 
     #[inline]
-    pub fn set(self, mc: MutationContext<'gc, '_>, t: T) {
+    pub fn set(self, mc: &Mutation<'gc>, t: T) {
         self.unlock(mc).set(t);
     }
 }
@@ -174,7 +174,7 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
         // This is theoretically a correctness issue, because technically `T` could have interior
@@ -292,15 +292,12 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
 
     #[track_caller]
     #[inline]
-    pub fn borrow_mut(self, mc: MutationContext<'gc, '_>) -> RefMut<'gc, T> {
+    pub fn borrow_mut(self, mc: &Mutation<'gc>) -> RefMut<'gc, T> {
         self.unlock(mc).borrow_mut()
     }
 
     #[inline]
-    pub fn try_borrow_mut(
-        self,
-        mc: MutationContext<'gc, '_>,
-    ) -> Result<RefMut<'gc, T>, BorrowMutError> {
+    pub fn try_borrow_mut(self, mc: &Mutation<'gc>) -> Result<RefMut<'gc, T>, BorrowMutError> {
         self.unlock(mc).try_borrow_mut()
     }
 }
@@ -317,7 +314,7 @@ unsafe impl<'gc, T: Collect + 'gc> Collect for RefLock<T> {
     }
 
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         self.borrow().trace(cc);
     }
 }

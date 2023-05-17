@@ -566,7 +566,7 @@ fn okay_panic() {
     }
 
     unsafe impl<'gc> Collect for Test<'gc> {
-        fn trace(&self, cc: gc_arena::CollectionContext) {
+        fn trace(&self, cc: &gc_arena::Collection) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);

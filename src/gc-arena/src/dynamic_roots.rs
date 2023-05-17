@@ -5,7 +5,7 @@ use alloc::{
 use core::mem;
 
 use crate::lock::RefLock;
-use crate::{Collect, Gc, MutationContext, Root, Rootable};
+use crate::{Collect, Gc, Mutation, Root, Rootable};
 
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
@@ -20,7 +20,7 @@ use crate::{Collect, Gc, MutationContext, Root, Rootable};
 pub struct DynamicRootSet<'gc>(Gc<'gc, RefLock<Inner<'gc>>>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
-    fn trace(&self, cc: crate::CollectionContext) {
+    fn trace(&self, cc: &crate::Collection) {
         // SAFETY: We do not adopt any new pointers so we don't need a write barrier.
         unsafe {
             // We cheat horribly and filter out dead handles during tracing. Since we have to go
@@ -38,7 +38,7 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
 }
 
 impl<'gc> DynamicRootSet<'gc> {
-    pub fn new(mc: MutationContext<'gc, '_>) -> Self {
+    pub fn new(mc: &Mutation<'gc>) -> Self {
         DynamicRootSet(Gc::new(
             mc,
             RefLock::new(Inner {
@@ -50,7 +50,7 @@ impl<'gc> DynamicRootSet<'gc> {
 
     pub fn stash<R: for<'a> Rootable<'a>>(
         &self,
-        mc: MutationContext<'gc, '_>,
+        mc: &Mutation<'gc>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
         let mut inner = self.0.unlock(mc).borrow_mut();
@@ -120,7 +120,7 @@ struct Inner<'gc> {
 }
 
 unsafe impl<'gc> Collect for Inner<'gc> {
-    fn trace(&self, cc: crate::CollectionContext) {
+    fn trace(&self, cc: &crate::Collection) {
         for handle in &self.handles {
             if let Some(handle) = handle.upgrade() {
                 handle.root.trace(cc);

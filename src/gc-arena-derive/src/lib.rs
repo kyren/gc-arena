@@ -199,7 +199,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                 }
 
                 #[inline]
-                fn trace(&self, cc: ::gc_arena::CollectionContext) {
+                fn trace(&self, cc: &::gc_arena::Collection) {
                     match *self { #trace_body }
                 }
             }

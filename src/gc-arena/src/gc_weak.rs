@@ -1,7 +1,7 @@
 use crate::collect::Collect;
 use crate::gc::Gc;
 use crate::types::GcBox;
-use crate::{CollectionContext, MutationContext};
+use crate::{Collection, Mutation};
 
 use core::fmt::{self, Debug};
 
@@ -26,7 +26,7 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
     #[inline]
-    fn trace(&self, cc: CollectionContext) {
+    fn trace(&self, cc: &Collection) {
         unsafe {
             cc.trace_weak(GcBox::erase(self.inner.ptr));
         }
@@ -35,7 +35,7 @@ unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
 
 impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     #[inline]
-    pub fn upgrade(self, mc: MutationContext<'gc, '_>) -> Option<Gc<'gc, T>> {
+    pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
         unsafe {
             let ptr = GcBox::erase(self.inner.ptr);
             mc.upgrade(ptr).then(|| self.inner)

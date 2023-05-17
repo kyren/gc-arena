@@ -1,7 +1,7 @@
 use core::{f64, marker::PhantomData, mem, usize};
 
 use crate::{
-    context::{Context, MutationContext},
+    context::{Context, Mutation},
     Collect,
 };
 
@@ -157,21 +157,21 @@ pub struct Arena<R: for<'a> Rootable<'a>> {
 
 impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
-    /// closure that accepts a `MutationContext` and returns the appropriate root.
+    /// closure that accepts a `&Mutation<'gc>` and returns the appropriate root.
     pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Root<'gc, R>,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
             let context = Context::new(arena_parameters);
-            // Note - we transmute the `MutationContext` to a `'static` lifetime here,
+            // Note - we transmute the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
             // (see https://github.com/rust-lang/rust/pull/101520#issuecomment-1252016235)
-            // but is not yet stable. Transmuting the `MutationContext` is completely invisible
+            // but is not yet stable. Transmuting the `&Mutation` is completely invisible
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
-            let mutation_context: MutationContext<'static, '_> =
+            let mutation_context: &'static Mutation<'static> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context);
             Arena { context, root }
@@ -181,11 +181,11 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Similar to `new`, but allows for constructor that can fail.
     pub fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena<R>, E>
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> Result<Root<'gc, R>, E>,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
             let context = Context::new(arena_parameters);
-            let mutation_context: MutationContext<'static, '_> =
+            let mutation_context: &'static Mutation<'static> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context)?;
             Ok(Arena { context, root })
@@ -193,42 +193,47 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     /// The primary means of interacting with a garbage collected arena. Accepts a callback which
-    /// receives a `MutationContext` and a reference to the root, and can return any non garbage
+    /// receives a `&Mutation<'gc>` and a reference to the root, and can return any non garbage
     /// collected value. The callback may "mutate" any part of the object graph during this call,
     /// but no garbage collection will take place during this method.
     #[inline]
-    pub fn mutate<'a, F, T>(&'a self, f: F) -> T
+    pub fn mutate<F, T>(&self, f: F) -> T
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &Root<'gc, R>) -> T,
     {
-        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
-        // this is safe as all objects in the graph live until the next collection, which
-        // requires exclusive access to the arena.
-        unsafe { f(self.context.mutation_context(), &self.root) }
+        unsafe {
+            let mutation_context: &'static Mutation<'static> =
+                mem::transmute(self.context.mutation_context());
+            f(mutation_context, &self.root)
+        }
     }
 
     /// An alternative version of [`Arena::mutate`] which allows mutating the root set, at the
     /// cost of an extra write barrier.
     #[inline]
-    pub fn mutate_root<'a, F, T>(&'a mut self, f: F) -> T
+    pub fn mutate_root<F, T>(&mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(MutationContext<'gc, 'a>, &'a mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &mut Root<'gc, R>) -> T,
     {
         self.context.root_barrier();
-        // The user-provided callback may return a (non-GC'd) value borrowed from the arena;
-        // this is safe as all objects in the graph live until the next collection, which
-        // requires exclusive access to the arena. Additionally, the write barrier ensures
-        // that any changes to the root set are properly picked up.
-        unsafe { f(self.context.mutation_context(), &mut self.root) }
+        unsafe {
+            let mutation_context: &'static Mutation<'static> =
+                mem::transmute(self.context.mutation_context());
+            f(mutation_context, &mut self.root)
+        }
     }
 
     #[inline]
     pub fn map_root<R2: for<'a> Rootable<'a>>(
         self,
-        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Root<'gc, R2>,
+        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2> {
         self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root) };
+        let new_root: Root<'static, R2> = unsafe {
+            let mutation_context: &'static Mutation<'static> =
+                mem::transmute(self.context.mutation_context());
+            f(mutation_context, self.root)
+        };
         Arena {
             context: self.context,
             root: new_root,
@@ -238,10 +243,14 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn try_map_root<R2: for<'a> Rootable<'a>, E>(
         self,
-        f: impl for<'gc> FnOnce(MutationContext<'gc, '_>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
+        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
     ) -> Result<Arena<R2>, E> {
         self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe { f(self.context.mutation_context(), self.root)? };
+        let new_root: Root<'static, R2> = unsafe {
+            let mutation_context: &'static Mutation<'static> =
+                mem::transmute(self.context.mutation_context());
+            f(mutation_context, self.root)?
+        };
         Ok(Arena {
             context: self.context,
             root: new_root,
@@ -299,7 +308,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 /// be collected.
 pub fn rootless_arena<F, R>(f: F) -> R
 where
-    F: for<'gc> FnOnce(MutationContext<'gc, '_>) -> R,
+    F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> R,
 {
     unsafe {
         let context = Context::new(ArenaParameters::default());
