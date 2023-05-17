@@ -75,7 +75,33 @@ static_collect!(std::ffi::OsStr);
 #[cfg(feature = "std")]
 static_collect!(std::ffi::OsString);
 
-unsafe impl<T: ?Sized> Collect for &'static T {
+/// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc` data, so it is safe
+/// to keep in a rooted objet and we do not have to trace through it.
+///
+/// HOWEVER, There is an extra bound here that seems superfluous. If we have a `&'static T`, why do
+/// we require `T: 'static`, shouldn't this be implied, otherwise a `&'static T` would not be well-
+/// formed? WELL, there are currently some neat compiler bugs, observe...
+///
+/// ```rust,compile_fail
+/// let arena = Arena::<Rootable![&'static Gc<'gc, i32>]>::new(Default::default(), |mc| {
+///     Box::leak(Box::new(Gc::new(mc, 4)))
+/// });
+/// ```
+///
+/// At the time of this writing, without the extra `T: static` bound, the above code compiles and
+/// produces an arena with a reachable but un-traceable `Gc<'gc, i32>`, and this is unsound. This
+/// *is* ofc the stored type of the root, since the Arena is actually constructing a `&'static
+/// Gc<'static, i32>` as the root object, but this should still not rightfully compile due to the
+/// signature of the constructor callback passed to `Arena::new`. In fact, the 'static lifetime is a
+/// red herring, it is possible to change the internals of `Arena` such that the 'gc lifetime given
+/// to the callback is *not* 'static, and the problem persists.
+///
+/// It should not be required to have this extra lifetime bound, and yet! It fixes the above issue
+/// perfectly and the given example of unsoundness no longer compiles. So, until this rustc bug
+/// is fixed...
+///
+/// DO NOT REMOVE THIS EXTRA `T: 'static` BOUND
+unsafe impl<T: ?Sized + 'static> Collect for &'static T {
     #[inline]
     fn needs_trace() -> bool {
         false
