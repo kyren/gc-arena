@@ -605,6 +605,49 @@ fn okay_panic() {
 }
 
 #[test]
+fn field_locks() {
+    use gc_arena::barrier::{field, unlock};
+    use gc_arena::lock::{Lock, RefLock};
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Nested<'gc> {
+        bar: Lock<Option<Gc<'gc, Test<'gc>>>>,
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Test<'gc> {
+        foo: RefLock<Gc<'gc, i32>>,
+        nested: Nested<'gc>,
+    }
+
+    let arena = Arena::<Rootable![Gc<'gc, Test<'gc>>]>::new(ArenaParameters::default(), |mc| {
+        Gc::new(
+            mc,
+            Test {
+                foo: RefLock::new(Gc::new(mc, 10)),
+                nested: Nested {
+                    bar: Lock::new(None),
+                },
+            },
+        )
+    });
+
+    arena.mutate(|mc, root| {
+        let this = Gc::write(mc, *root);
+        assert_eq!(**this.foo.borrow(), 10);
+        assert!(this.nested.bar.get().is_none());
+
+        *unlock!(this, Test, foo).borrow_mut() = Gc::new(mc, 42);
+        unlock!(field!(this, Test, nested), Nested, bar).set(Some(*root));
+
+        assert_eq!(**this.foo.borrow(), 42);
+        assert!(Gc::ptr_eq(this.nested.bar.get().unwrap(), *root));
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
