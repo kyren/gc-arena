@@ -6,23 +6,7 @@ use core::{
     fmt,
 };
 
-use crate::{Collect, Collection, Gc, Mutation};
-
-/// Types that support additional operations (typically, mutation) when behind a write barrier.
-pub trait Unlock {
-    /// This will typically be a cell-like type providing some sort of interior mutability.
-    type Unlocked: ?Sized;
-
-    /// Provides unsafe access to the unlocked type, *without* triggering a write barrier.
-    ///
-    /// # Safety
-    ///
-    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
-    /// may be adopted by as a result of the interior mutability afforded by the unlocked value,
-    /// unless the write barrier for the containing `Gc` pointer is invoked manually before
-    /// collection is triggered.
-    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked;
-}
+use crate::{barrier::Unlock, Collect, Collection, Gc, Mutation};
 
 // Helper macro to factor out the common parts of locks types.
 macro_rules! make_lock_wrapper {

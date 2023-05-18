@@ -3,8 +3,6 @@
 use core::mem;
 use core::ops::{Deref, DerefMut};
 
-use crate::lock::Unlock;
-
 #[cfg(doc)]
 use crate::Gc;
 
@@ -89,6 +87,22 @@ impl<T: ?Sized> Write<T> {
         // SAFETY: a `&Write<T>` implies that a write barrier was triggered on the parent `Gc`.
         unsafe { self.__inner.unlock_unchecked() }
     }
+}
+
+/// Types that support additional operations (typically, mutation) when behind a write barrier.
+pub trait Unlock {
+    /// This will typically be a cell-like type providing some sort of interior mutability.
+    type Unlocked: ?Sized;
+
+    /// Provides unsafe access to the unlocked type, *without* triggering a write barrier.
+    ///
+    /// # Safety
+    ///
+    /// In order to maintain the invariants of the garbage collector, no new `Gc` pointers
+    /// may be adopted by as a result of the interior mutability afforded by the unlocked value,
+    /// unless the write barrier for the containing `Gc` pointer is invoked manually before
+    /// collection is triggered.
+    unsafe fn unlock_unchecked(&self) -> &Self::Unlocked;
 }
 
 /// Macro for named field projection behind [`Write`] references.

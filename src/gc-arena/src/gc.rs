@@ -7,11 +7,10 @@ use core::{
 };
 
 use crate::{
-    barrier::Write,
+    barrier::{Unlock, Write},
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
-    lock::Unlock,
     types::{GcBox, GcBoxInner, Invariant},
 };
 
