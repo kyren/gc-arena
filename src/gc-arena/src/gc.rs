@@ -7,6 +7,7 @@ use core::{
 };
 
 use crate::{
+    barrier::Write,
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
@@ -124,7 +125,7 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
 }
 
 impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
-    /// Unlock the contents of this `Gc` safely by ensuring that the write barrier is called.
+    /// Shorthand for [`Gc::write_barrier`]`(mc, self).`[`unlock()`](Write::unlock).
     #[inline]
     pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
         Gc::write_barrier(mc, self);
@@ -151,13 +152,13 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         GcWeak { inner: this }
     }
 
-    /// When implementing `Collect` on types with internal mutability containing `Gc` pointers, this
-    /// method must be used to ensure safe mutability. Safe to call, but only necessary from unsafe
-    /// code.
+    /// Triggers a write barrier on this `Gc`, allowing for further safe mutation.
     #[inline]
-    pub fn write_barrier(mc: &Mutation<'gc>, gc: Self) {
+    pub fn write_barrier(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
             mc.write_barrier(GcBox::erase(gc.ptr));
+            // SAFETY: the write barrier stays valid until the end of the current callback.
+            Write::assume(gc.as_ref())
         }
     }
 
