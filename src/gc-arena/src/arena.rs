@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use core::{f64, marker::PhantomData, mem, usize};
 
 use crate::{
@@ -152,7 +153,7 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 pub struct Arena<R: for<'a> Rootable<'a>> {
     // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
     root: Root<'static, R>,
-    context: Context,
+    context: Box<Context>,
 }
 
 impl<R: for<'a> Rootable<'a>> Arena<R> {
@@ -163,7 +164,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
-            let context = Context::new(arena_parameters);
+            let context = Box::new(Context::new(arena_parameters));
             // Note - we transmute the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -184,7 +185,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let context = Context::new(arena_parameters);
+            let context = Box::new(Context::new(arena_parameters));
             let mutation_context: &'static Mutation<'static> =
                 mem::transmute(context.mutation_context());
             let root: Root<'static, R> = f(mutation_context)?;
