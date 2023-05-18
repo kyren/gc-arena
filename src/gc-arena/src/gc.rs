@@ -125,10 +125,10 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
 }
 
 impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
-    /// Shorthand for [`Gc::write_barrier`]`(mc, self).`[`unlock()`](Write::unlock).
+    /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
     #[inline]
     pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
-        Gc::write_barrier(mc, self);
+        Gc::write(mc, self);
         // SAFETY: see doc-comment.
         unsafe { self.as_ref().unlock_unchecked() }
     }
@@ -154,7 +154,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 
     /// Triggers a write barrier on this `Gc`, allowing for further safe mutation.
     #[inline]
-    pub fn write_barrier(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
+    pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
             mc.write_barrier(GcBox::erase(gc.ptr));
             // SAFETY: the write barrier stays valid until the end of the current callback.

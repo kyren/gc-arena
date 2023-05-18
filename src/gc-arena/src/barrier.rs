@@ -11,7 +11,7 @@ use crate::Gc;
 /// An (interiorly-)mutable reference inside a GC'd object graph.
 ///
 /// This type can only exist behind a reference; it is typically obtained by calling
-/// [`Gc::write_barrier`] on a [`Gc`] pointer or by using the [`field!`] projection macro
+/// [`Gc::write`] on a [`Gc`] pointer or by using the [`field!`] projection macro
 /// on a pre-existing `&Write<T>`.
 #[non_exhaustive]
 pub struct Write<T: ?Sized> {
@@ -43,7 +43,7 @@ impl<T: ?Sized> Write<T> {
     /// # Safety
     /// In order to maintain the invariants of the garbage collector, no new [`Gc`] pointers
     /// may be adopted by the referenced value as a result of the interior mutability enabled
-    /// by this wrapper, unless [`Gc::write_barrier`] is invoked manually on the parent [`Gc`]
+    /// by this wrapper, unless [`Gc::write`] is invoked manually on the parent [`Gc`]
     /// pointer during the current arena callback.
     #[inline(always)]
     pub unsafe fn assume(v: &T) -> &Self {
