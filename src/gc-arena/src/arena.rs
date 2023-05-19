@@ -1,4 +1,5 @@
-use core::{f64, marker::PhantomData, mem, usize};
+use alloc::boxed::Box;
+use core::{f64, marker::PhantomData, usize};
 
 use crate::{
     context::{Context, Mutation},
@@ -152,7 +153,7 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 pub struct Arena<R: for<'a> Rootable<'a>> {
     // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
     root: Root<'static, R>,
-    context: Context,
+    context: Box<Context>,
 }
 
 impl<R: for<'a> Rootable<'a>> Arena<R> {
@@ -163,17 +164,16 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
-            let context = Context::new(arena_parameters);
-            // Note - we transmute the `&Mutation` to a `'static` lifetime here,
+            let context = Box::new(Context::new(arena_parameters));
+            // Note - we cast the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
             // (see https://github.com/rust-lang/rust/pull/101520#issuecomment-1252016235)
-            // but is not yet stable. Transmuting the `&Mutation` is completely invisible
+            // but is not yet stable. Casting the `&Mutation` is completely invisible
             // to the callback `f` (since it needs to handle an arbitrary lifetime),
             // and lets us stay compatible with older versions of Rust
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(context.mutation_context());
-            let root: Root<'static, R> = f(mutation_context);
+            let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
+            let root: Root<'static, R> = f(mc);
             Arena { context, root }
         }
     }
@@ -184,10 +184,9 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let context = Context::new(arena_parameters);
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(context.mutation_context());
-            let root: Root<'static, R> = f(mutation_context)?;
+            let context = Box::new(Context::new(arena_parameters));
+            let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
+            let root: Root<'static, R> = f(mc)?;
             Ok(Arena { context, root })
         }
     }
@@ -199,12 +198,12 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn mutate<F, T>(&self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &'gc Root<'gc, R>) -> T,
     {
         unsafe {
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(self.context.mutation_context());
-            f(mutation_context, &self.root)
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            let root: &'static Root<'_, R> = &*(&self.root as *const _);
+            f(mc, root)
         }
     }
 
@@ -213,13 +212,13 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn mutate_root<F, T>(&mut self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &mut Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Mutation<'gc>, &'gc mut Root<'gc, R>) -> T,
     {
         self.context.root_barrier();
         unsafe {
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(self.context.mutation_context());
-            f(mutation_context, &mut self.root)
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            let root: &'static mut Root<'_, R> = &mut *(&mut self.root as *mut _);
+            f(mc, root)
         }
     }
 
@@ -230,9 +229,8 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     ) -> Arena<R2> {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(self.context.mutation_context());
-            f(mutation_context, self.root)
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            f(mc, self.root)
         };
         Arena {
             context: self.context,
@@ -247,9 +245,8 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     ) -> Result<Arena<R2>, E> {
         self.context.root_barrier();
         let new_root: Root<'static, R2> = unsafe {
-            let mutation_context: &'static Mutation<'static> =
-                mem::transmute(self.context.mutation_context());
-            f(mutation_context, self.root)?
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            f(mc, self.root)?
         };
         Ok(Arena {
             context: self.context,
