@@ -7,6 +7,7 @@ extern crate std;
 extern crate alloc;
 
 mod arena;
+pub mod barrier;
 mod collect;
 mod collect_impl;
 mod context;
