@@ -124,7 +124,7 @@ macro_rules! Rootable {
         $crate::__DynRootable::<dyn for<$gc> $crate::Rootable<$gc, Root = $root>>
     };
     ($root:ty) => {
-        Rootable!['gc => $root]
+        $crate::Rootable!['gc => $root]
     };
 }
 
