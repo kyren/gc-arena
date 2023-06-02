@@ -28,8 +28,7 @@ The credit goes mostly to others for the release, @Bale001, @Aaron1011,
 This release also **completely drops** the `gc-sequence` combinator crate.
 Because of other API changes, anything you could do with `gc-sequence` before
 can almost certainly be expressed better either using the new 'static root API
-or with the new map API. See [this comment](https:// github.com/kyren/ gc-arena/
-pull/50#issuecomment-1538421347) for a bit more info.
+or with the new map API. See [this comment](https://github.com/kyren/gc-arena/pull/50#issuecomment-1538421347) for a bit more info.
 
 ## [0.2.2]
 - No changes, fixing a release snafu with cargo-release
