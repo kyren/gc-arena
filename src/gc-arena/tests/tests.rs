@@ -18,7 +18,7 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
+    let arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
         test: Gc::new(mc, 42),
     });
 
@@ -36,7 +36,7 @@ fn weak_allocation() {
         weak: GcWeak<'gc, i32>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
         let test = Gc::new(mc, 42);
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
@@ -87,7 +87,7 @@ fn dyn_sized_allocation() {
 
     let counter = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
         let array: [_; SIZE] = core::array::from_fn(|_| Gc::new(mc, counter.clone()));
         let slice = unsize!(Gc::new(mc, array) => [_]);
         TestRoot { slice }
@@ -121,7 +121,7 @@ fn repeated_allocation_deallocation() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
@@ -168,7 +168,7 @@ fn all_dropped() {
 
     let r = RefCounter(Rc::new(()));
 
-    let arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+    let arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
     });
 
@@ -194,7 +194,7 @@ fn all_garbage_collected() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
         TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
     });
 
@@ -354,7 +354,7 @@ fn test_map() {
         some_complex_state: Vec<Gc<'gc, i32>>,
     }
 
-    let arena = Arena::<Rootable![Root<'gc>]>::new(ArenaParameters::default(), |mc| Root {
+    let arena = Arena::<Rootable![Root<'_>]>::new(ArenaParameters::default(), |mc| Root {
         some_complex_state: vec![Gc::new(mc, 42), Gc::new(mc, 69)],
     });
 
@@ -365,7 +365,7 @@ fn test_map() {
         state: Gc<'gc, i32>,
     }
 
-    let arena = arena.map_root::<Rootable![Intermediate<'gc>]>(|_, root| {
+    let arena = arena.map_root::<Rootable![Intermediate<'_>]>(|_, root| {
         let state = root.some_complex_state[0];
         Intermediate { root, state }
     });
@@ -376,7 +376,7 @@ fn test_map() {
     });
 
     let arena = arena
-        .try_map_root::<Rootable![Intermediate<'gc>], ()>(|_, intermediate| {
+        .try_map_root::<Rootable![Intermediate<'_>], ()>(|_, intermediate| {
             let state = intermediate.root.some_complex_state[1];
             Ok(Intermediate {
                 root: intermediate.root,
@@ -393,20 +393,20 @@ fn test_map() {
 
 #[test]
 fn test_dynamic_roots() {
-    let mut arena: Arena<Rootable![DynamicRootSet<'gc>]> =
+    let mut arena: Arena<Rootable![DynamicRootSet<'_>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
     let initial_size = arena.total_allocated();
 
     let root1 =
-        arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'gc, i32>]>(mc, Gc::new(mc, 12)));
+        arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'_, i32>]>(mc, Gc::new(mc, 12)));
 
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
 
     let root2 = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Root2<'gc>]>(mc, Root2(Gc::new(mc, 27), Gc::new(mc, true)))
+        root_set.stash::<Rootable![Root2<'_>]>(mc, Root2(Gc::new(mc, 27), Gc::new(mc, true)))
     });
 
     arena.collect_all();
@@ -435,10 +435,10 @@ fn test_dynamic_roots() {
 #[test]
 #[should_panic]
 fn test_dynamic_bad_set() {
-    let arena1: Arena<Rootable![DynamicRootSet<'gc>]> =
+    let arena1: Arena<Rootable![DynamicRootSet<'_>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
-    let arena2: Arena<Rootable![DynamicRootSet<'gc>]> =
+    let arena2: Arena<Rootable![DynamicRootSet<'_>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
     #[derive(Collect)]
@@ -446,7 +446,7 @@ fn test_dynamic_bad_set() {
     struct Root<'gc>(Gc<'gc, i32>);
 
     let dyn_root =
-        arena1.mutate(|mc, root| root.stash::<Rootable![Root<'gc>]>(mc, Root(Gc::new(mc, 44))));
+        arena1.mutate(|mc, root| root.stash::<Rootable![Root<'_>]>(mc, Root(Gc::new(mc, 44))));
 
     arena2.mutate(|_, root| {
         root.fetch(&dyn_root);
@@ -485,7 +485,7 @@ fn test_collect_overflow() {
     }
 
     let mut arena =
-        Arena::<Rootable![TestRoot<'gc>]>::new(ArenaParameters::default(), |mc| TestRoot {
+        Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
             test: Gc::new(mc, [0; 256]),
         });
 
@@ -577,7 +577,7 @@ fn okay_panic() {
         }
     }
 
-    let mut arena = Arena::<Rootable![Gc<'gc, Test<'gc>>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(ArenaParameters::default(), |mc| {
         Gc::new(
             mc,
             Test {
@@ -622,7 +622,7 @@ fn field_locks() {
         nested: Nested<'gc>,
     }
 
-    let arena = Arena::<Rootable![Gc<'gc, Test<'gc>>]>::new(ArenaParameters::default(), |mc| {
+    let arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(ArenaParameters::default(), |mc| {
         Gc::new(
             mc,
             Test {

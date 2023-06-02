@@ -80,11 +80,11 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
     type Root = <T as Rootable<'a>>::Root;
 }
 
-/// A convenience macro for quickly creating type that implements of `Rootable`.
+/// A convenience macro for quickly creating type that implements `Rootable`.
 ///
-/// The macro takes a single argument, which should be a generic type that references a `'gc`
-/// lifetime. When used as a root object, this `'gc` lifetime will be replaced with the branding
-/// lifetime.
+/// The macro takes a single argument, which should be a generic type with elided lifetimes.
+/// When used as a root object, every instances of the elided lifetime will be replaced with
+/// the branding lifetime.
 ///
 /// ```
 /// # use gc_arena::{Arena, Collect, Gc, Rootable};
@@ -96,7 +96,10 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 ///     ptr: Gc<'gc, i32>,
 /// }
 ///
-/// type MyArena = Arena<Rootable![MyRoot<'gc>]>;
+/// type MyArena = Arena<Rootable![MyRoot<'_>]>;
+///
+/// // If desired, the branding lifetime can also be explicitely named:
+/// type MyArena2 = Arena<Rootable!['gc => MyRoot<'gc>]>;
 /// # }
 /// ```
 ///
@@ -113,7 +116,7 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 ///     ptr: Gc<'gc, StaticCollect<T>>,
 /// }
 ///
-/// type MyGenericArena<T> = Arena<Rootable![MyGenericRoot<'gc, T>]>;
+/// type MyGenericArena<T> = Arena<Rootable![MyGenericRoot<'_, T>]>;
 /// # }
 /// ```
 #[macro_export]
@@ -124,7 +127,7 @@ macro_rules! Rootable {
         $crate::__DynRootable::<dyn for<$gc> $crate::Rootable<$gc, Root = $root>>
     };
     ($root:ty) => {
-        $crate::Rootable!['gc => $root]
+        $crate::Rootable!['__gc => $crate::__unelide_lifetimes!('__gc; $root)]
     };
 }
 

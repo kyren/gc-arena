@@ -1,6 +1,10 @@
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned, ToTokens};
-use syn::spanned::Spanned;
+use syn::{
+    parse::{Parse, ParseStream},
+    spanned::Spanned,
+    visit_mut::VisitMut,
+};
 use synstructure::{decl_derive, AddBounds};
 
 fn find_collect_meta(attrs: &[syn::Attribute]) -> syn::Result<Option<&syn::Attribute>> {
@@ -258,4 +262,39 @@ decl_derive! {
     /// to trace into the given field (the ideal choice where possible). Note that if the entire
     /// struct/enum is marked with `require_static` then this is unnecessary.
     collect_derive
+}
+
+// Not public API; implementation detail of `gc_arena::Rootable!`.
+// Replaces all `'_` lifetimes in a type by the specified named lifetime.
+// Syntax: `__unelide_lifetimes!('lt; SomeType)`.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __unelide_lifetimes(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    struct Input {
+        lt: syn::Lifetime,
+        ty: syn::Type,
+    }
+
+    impl Parse for Input {
+        fn parse(input: ParseStream) -> syn::Result<Self> {
+            let lt: syn::Lifetime = input.parse()?;
+            let _: syn::Token!(;) = input.parse()?;
+            let ty: syn::Type = input.parse()?;
+            Ok(Self { lt, ty })
+        }
+    }
+
+    struct UnelideLifetimes(syn::Lifetime);
+
+    impl VisitMut for UnelideLifetimes {
+        fn visit_lifetime_mut(&mut self, i: &mut syn::Lifetime) {
+            if i.ident == "_" {
+                *i = self.0.clone();
+            }
+        }
+    }
+
+    let mut input = syn::parse_macro_input!(input as Input);
+    UnelideLifetimes(input.lt).visit_type_mut(&mut input.ty);
+    input.ty.to_token_stream().into()
 }
