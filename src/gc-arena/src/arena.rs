@@ -80,10 +80,10 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
     type Root = <T as Rootable<'a>>::Root;
 }
 
-/// A convenience macro for quickly creating type that implements `Rootable`.
+/// A convenience macro for quickly creating a type that implements `Rootable`.
 ///
 /// The macro takes a single argument, which should be a generic type with elided lifetimes.
-/// When used as a root object, every instances of the elided lifetime will be replaced with
+/// When used as a root object, every instance of the elided lifetime will be replaced with
 /// the branding lifetime.
 ///
 /// ```
