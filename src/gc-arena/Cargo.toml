@@ -1,6 +1,6 @@
 [package]
 name = "gc-arena"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -13,7 +13,7 @@ default = ["std"]
 std = []
 
 [dependencies]
-gc-arena-derive = { path = "../gc-arena-derive", version = "0.2.2"}
+gc-arena-derive = { path = "../gc-arena-derive", version = "0.3.0"}
 sptr = "0.3.2"
 
 [dev-dependencies]
