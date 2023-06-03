@@ -8,6 +8,10 @@ use crate::barrier::unlock;
 use crate::lock::RefLock;
 use crate::{Collect, Gc, Mutation, Root, Rootable};
 
+/// A way of registering GC roots dynamically.
+///
+/// Use this type as (a part of) an [`Arena`](crate::Arena) root to enable dynamic rooting of
+/// GC'd objects through [`DynamicRoot`] handles.
 // SAFETY: Allows us to conert `Gc<'gc>` pointers to `Gc<'static>` and back, and this is VERY
 // sketchy. We know it is safe because:
 //   1) The `DynamicRootSet` must be created inside an arena and is branded with an invariant `'gc`
@@ -27,6 +31,7 @@ unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
 }
 
 impl<'gc> DynamicRootSet<'gc> {
+    /// Creates a new, empty root set.
     pub fn new(mc: &Mutation<'gc>) -> Self {
         DynamicRootSet(Gc::new(
             mc,
@@ -37,6 +42,10 @@ impl<'gc> DynamicRootSet<'gc> {
         ))
     }
 
+    /// Puts a root inside this root set.
+    ///
+    /// The returned handle can be freely stored outside the current arena,
+    /// and will keep the root alive across garbage collections.
     pub fn stash<R: for<'a> Rootable<'a>>(
         &self,
         mc: &Mutation<'gc>,
@@ -58,6 +67,12 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
+    /// Gets immutable access to the given root.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle doesn't belong to this root set. For the non-panicking variant, use
+    /// [`try_fetch`](Self::try_fetch).
     #[inline]
     pub fn fetch<'a, R: for<'r> Rootable<'r>>(&self, root: &'a DynamicRoot<R>) -> &'a Root<'gc, R> {
         if self.contains(root) {
@@ -67,6 +82,8 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
+    /// Gets immutable access to the given root, or returns an error if the handle doesn't belong
+    /// to this root set.
     #[inline]
     pub fn try_fetch<'a, R: for<'r> Rootable<'r>>(
         &self,
@@ -79,6 +96,7 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
+    /// Tests if the given handle belongs to this root set.
     #[inline]
     pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> bool {
         let ours = Rc::as_ptr(&self.0.set_id);
@@ -87,6 +105,13 @@ impl<'gc> DynamicRootSet<'gc> {
     }
 }
 
+/// An unbranded, reference-counted handle to a GC root held in some [`DynamicRootSet`].
+///
+/// A `DynamicRoot` can freely be stored outside GC arenas; in exchange, all accesses to the held
+/// object must go through the [`DynamicRootSet`] from which it was created.
+///
+/// This handle is cheaply clonable: all clones will refer to the *same* object, which will be
+/// dropped when the last surviving handle goes out of scope.
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc>> {
     handle: Rc<Handle<Root<'static, R>>>,
 }
@@ -100,23 +125,26 @@ impl<R: for<'gc> Rootable<'gc>> Clone for DynamicRoot<R> {
 }
 
 impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
-    // Get a pointer to the held object.
-    //
-    // The pointer will never be dangling, as the `DynamicRoot` is the owner of the held type, but
-    // using the object behind this pointer is extremely dangerous.
-    //
-    // Firstly, the 'gc lifetime returned here is unbound, so it is meaningless and can allow
-    // improper mixing of objects across arenas.
-    //
-    // Secondly, though the pointer to the object *itself* will not be dangling, any garbage
-    // collected pointers the object holds *will* be dangling if the arena backing this root has
-    // been dropped.
+    /// Get a pointer to the held object.
+    ///
+    /// # Safety
+    ///
+    /// The pointer will never be dangling as long as at least one `DynamicRoot` is alive, but
+    /// using the object behind this pointer is extremely dangerous.
+    ///
+    /// Firstly, the `'gc` lifetime returned here is unbound, so it is meaningless and can allow
+    /// improper mixing of objects across arenas.
+    ///
+    /// Secondly, though the pointer to the object *itself* will not be dangling, any garbage
+    /// collected pointers the object holds *will* be dangling if the [`DynamicRootSet`] backing
+    /// this root has been collected.
     #[inline]
     pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
         unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.handle.root) as *const _ }
     }
 }
 
+/// Error returned when trying to fetch a [`DynamicRoot`] from the wrong [`DynamicRootSet`].
 #[derive(Debug)]
 pub struct MismatchedRootSet(());
 
