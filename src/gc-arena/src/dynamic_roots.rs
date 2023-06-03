@@ -2,7 +2,7 @@ use alloc::{
     rc::{Rc, Weak},
     vec::Vec,
 };
-use core::mem;
+use core::{fmt, mem};
 
 use crate::lock::RefLock;
 use crate::{Collect, Gc, Mutation, Root, Rootable};
@@ -70,14 +70,32 @@ impl<'gc> DynamicRootSet<'gc> {
         }
     }
 
-    pub fn fetch<'a, R: for<'b> Rootable<'b>>(&self, root: &'a DynamicRoot<R>) -> &'a Root<'gc, R> {
-        assert_eq!(
-            Rc::as_ptr(&self.0.borrow().set_id),
-            Rc::as_ptr(&root.handle.set_id),
-            "provided `DynamicRoot` does not originate from this `DynamicRootSet`",
-        );
+    #[inline]
+    pub fn fetch<'a, R: for<'r> Rootable<'r>>(&self, root: &'a DynamicRoot<R>) -> &'a Root<'gc, R> {
+        if self.contains(root) {
+            unsafe { &*root.as_ptr() }
+        } else {
+            panic!("mismatched root set")
+        }
+    }
 
-        unsafe { mem::transmute::<&'a Root<'static, R>, &'a Root<'gc, R>>(&root.handle.root) }
+    #[inline]
+    pub fn try_fetch<'a, R: for<'r> Rootable<'r>>(
+        &self,
+        root: &'a DynamicRoot<R>,
+    ) -> Result<&'a Root<'gc, R>, MismatchedRootSet> {
+        if self.contains(root) {
+            unsafe { Ok(&*root.as_ptr()) }
+        } else {
+            Err(MismatchedRootSet(()))
+        }
+    }
+
+    #[inline]
+    pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> bool {
+        let ours = Rc::as_ptr(&self.0.borrow().set_id);
+        let theirs = Rc::as_ptr(&root.handle.set_id);
+        ours == theirs
     }
 }
 
@@ -110,6 +128,18 @@ impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
         unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.handle.root) as *const _ }
     }
 }
+
+#[derive(Debug)]
+pub struct MismatchedRootSet(());
+
+impl fmt::Display for MismatchedRootSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("mismatched root set")
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for MismatchedRootSet {}
 
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
 struct SetId {}
