@@ -30,7 +30,7 @@ pub use self::{
     arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
     collect::Collect,
     context::{Collection, Mutation},
-    dynamic_roots::{DynamicRoot, DynamicRootSet},
+    dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
     gc::Gc,
     gc_weak::GcWeak,
     static_collect::StaticCollect,
