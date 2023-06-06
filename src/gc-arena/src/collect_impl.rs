@@ -207,8 +207,48 @@ where
     }
 }
 
+#[cfg(feature = "hashbrown")]
+unsafe impl<K, V, S> Collect for hashbrown::HashMap<K, V, S>
+where
+    K: Eq + Hash + Collect,
+    V: Collect,
+    S: BuildHasher + 'static,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        K::needs_trace() || V::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: &Collection) {
+        for (k, v) in self {
+            k.trace(cc);
+            v.trace(cc);
+        }
+    }
+}
+
 #[cfg(feature = "std")]
 unsafe impl<T, S> Collect for HashSet<T, S>
+where
+    T: Eq + Hash + Collect,
+    S: BuildHasher + 'static,
+{
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: &Collection) {
+        for v in self {
+            v.trace(cc);
+        }
+    }
+}
+
+#[cfg(feature = "hashbrown")]
+unsafe impl<T, S> Collect for hashbrown::HashSet<T, S>
 where
     T: Eq + Hash + Collect,
     S: BuildHasher + 'static,

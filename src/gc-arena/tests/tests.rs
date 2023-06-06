@@ -647,6 +647,71 @@ fn field_locks() {
     });
 }
 
+#[cfg(feature = "hashbrown")]
+#[test]
+fn hashbrown_collect() {
+    use core::hash::Hash;
+    use core::hash::Hasher;
+    use gc_arena::barrier::unlock;
+    use gc_arena::lock::RefLock;
+
+    #[derive(Clone, Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        hashbrown_map: RefLock<hashbrown::HashMap<i32, Gc<'gc, bool>>>,
+        hashbrown_set: RefLock<hashbrown::HashSet<MyValue<'gc>>>,
+    }
+
+    #[derive(Collect, Clone)]
+    #[collect(no_drop)]
+    struct MyValue<'gc>(Gc<'gc, u32>);
+
+    impl<'gc> PartialEq for MyValue<'gc> {
+        fn eq(&self, other: &Self) -> bool {
+            *self.0 == *other.0
+        }
+    }
+
+    impl<'gc> Eq for MyValue<'gc> {}
+
+    impl Hash for MyValue<'_> {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.0.hash(state);
+        }
+    }
+
+    let mut arena =
+        Arena::<Rootable![Gc<'_, TestRoot<'_>>]>::new(ArenaParameters::default(), |mc| {
+            Gc::new(
+                mc,
+                TestRoot {
+                    hashbrown_map: RefLock::new(hashbrown::HashMap::new()),
+                    hashbrown_set: RefLock::new(hashbrown::HashSet::new()),
+                },
+            )
+        });
+
+    arena.mutate(|mc, root| {
+        let this = Gc::write(mc, *root);
+        unlock!(this, TestRoot, hashbrown_map)
+            .borrow_mut()
+            .insert(42, Gc::new(mc, true));
+        unlock!(this, TestRoot, hashbrown_set)
+            .borrow_mut()
+            .insert(MyValue(Gc::new(mc, 100)));
+    });
+
+    arena.collect_all();
+
+    arena.mutate(|_mc, root| {
+        assert_eq!(
+            root.hashbrown_map.borrow().get(&42).map(|val| **val),
+            Some(true)
+        );
+        assert_eq!(*root.hashbrown_set.borrow().iter().next().unwrap().0, 100);
+    });
+}
+
 #[test]
 fn ui() {
     let t = trybuild::TestCases::new();
