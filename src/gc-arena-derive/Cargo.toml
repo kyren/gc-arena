@@ -1,12 +1,12 @@
 [package]
 name = "gc-arena-derive"
-version = "0.3.0"
-authors = ["kyren <kerriganw@gmail.com>"]
-edition = "2018"
-license = "MIT"
 description = "proc-macro support for gc-arena"
-readme = "../../README.md"
-repository = "https://github.com/kyren/gc-arena"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
 
 [lib]
 proc-macro = true

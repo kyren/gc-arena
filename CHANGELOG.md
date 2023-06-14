@@ -1,3 +1,6 @@
+## [0.3.1]
+- Fallible `DynamicRootSet` API.
+
 ## [0.3.0]
 
 An enormous number of breaking API changes, too many to list, almost the entire

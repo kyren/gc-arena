@@ -3,3 +3,11 @@ members = [
     "src/gc-arena-derive/",
     "src/gc-arena/",
 ]
+
+[workspace.package]
+version = "0.3.1"
+authors = ["kyren <kerriganw@gmail.com>"]
+edition = "2018"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/kyren/gc-arena"
