@@ -31,8 +31,8 @@ impl Default for ArenaParameters {
 }
 
 impl ArenaParameters {
-    /// The garbage collector will wait until the live size reaches <current heap size> + <previous
-    /// retained size> * `pause_multiplier` before beginning a new collection. Must be >= 0.0,
+    /// The garbage collector will wait until the live size reaches `<current heap size> + <previous
+    /// retained size> * pause_multiplier` before beginning a new collection. Must be >= 0.0,
     /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
     /// beginning a new collection.
     pub fn set_pause_factor(mut self, pause_factor: f64) -> ArenaParameters {
@@ -41,8 +41,8 @@ impl ArenaParameters {
         self
     }
 
-    /// The garbage collector will try and finish a collection by the time <current heap size> *
-    /// `timing_factor` additional bytes are allocated. For example, if the collection is started
+    /// The garbage collector will try and finish a collection by the time `<current heap size> *
+    /// timing_factor` additional bytes are allocated. For example, if the collection is started
     /// when the arena has 100KB live data, and the timing_multiplier is 1.0, the collector should
     /// finish its final phase of this collection after another 100KB has been allocated. Must be >=
     /// 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
