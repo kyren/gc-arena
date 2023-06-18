@@ -12,6 +12,7 @@ use crate::Gc;
 /// [`Gc::write`] on a [`Gc`] pointer or by using the [`field!`] projection macro
 /// on a pre-existing `&Write<T>`.
 #[non_exhaustive]
+#[repr(transparent)]
 pub struct Write<T: ?Sized> {
     // Public so that the `field!` macro can pattern-match on it; the `non_exhaustive` attribute
     // prevents 3rd-party code from instanciating the struct directly.
