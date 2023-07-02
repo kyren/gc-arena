@@ -1,5 +1,6 @@
 use core::{
     fmt::{self, Debug, Display, Pointer},
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
     ops::Deref,
@@ -172,5 +173,51 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
             let inner = gc.ptr.as_ptr();
             core::ptr::addr_of!((*inner).value) as *const T
         }
+    }
+}
+
+impl<'gc, T: PartialEq + ?Sized + 'gc> PartialEq for Gc<'gc, T> {
+    fn eq(&self, other: &Self) -> bool {
+        (**self).eq(other)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        (**self).ne(other)
+    }
+}
+
+impl<'gc, T: Eq + ?Sized + 'gc> Eq for Gc<'gc, T> {}
+
+impl<'gc, T: PartialOrd + ?Sized + 'gc> PartialOrd for Gc<'gc, T> {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        (**self).partial_cmp(other)
+    }
+
+    fn le(&self, other: &Self) -> bool {
+        (**self).le(other)
+    }
+
+    fn lt(&self, other: &Self) -> bool {
+        (**self).lt(other)
+    }
+
+    fn ge(&self, other: &Self) -> bool {
+        (**self).ge(other)
+    }
+
+    fn gt(&self, other: &Self) -> bool {
+        (**self).gt(other)
+    }
+}
+
+impl<'gc, T: Ord + ?Sized + 'gc> Ord for Gc<'gc, T> {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        (**self).cmp(other)
+    }
+}
+
+impl<'gc, T: Hash + ?Sized + 'gc> Hash for Gc<'gc, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (**self).hash(state)
     }
 }
