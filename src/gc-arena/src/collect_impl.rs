@@ -7,7 +7,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 #[cfg(feature = "std")]
-use core::hash::{BuildHasher, Hash};
+use core::hash::BuildHasher;
 use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
@@ -189,7 +189,7 @@ unsafe impl<T: Collect> Collect for VecDeque<T> {
 #[cfg(feature = "std")]
 unsafe impl<K, V, S> Collect for HashMap<K, V, S>
 where
-    K: Eq + Hash + Collect,
+    K: Collect,
     V: Collect,
     S: BuildHasher + 'static,
 {
@@ -210,7 +210,7 @@ where
 #[cfg(feature = "std")]
 unsafe impl<T, S> Collect for HashSet<T, S>
 where
-    T: Eq + Hash + Collect,
+    T: Collect,
     S: BuildHasher + 'static,
 {
     #[inline]
@@ -228,7 +228,7 @@ where
 
 unsafe impl<K, V> Collect for BTreeMap<K, V>
 where
-    K: Eq + Ord + Collect,
+    K: Collect,
     V: Collect,
 {
     #[inline]
@@ -247,7 +247,7 @@ where
 
 unsafe impl<T> Collect for BTreeSet<T>
 where
-    T: Eq + Ord + Collect,
+    T: Collect,
 {
     #[inline]
     fn needs_trace() -> bool {
