@@ -266,7 +266,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Returns the size of the remembered set from the last completed sweep phase.
     #[inline]
     pub fn remembered_size(&self) -> usize {
-        self.context.remembered_size()
+        self.context.last_remembered_size()
     }
 
     /// When the garbage collector is not sleeping, all allocated objects cause the arena to

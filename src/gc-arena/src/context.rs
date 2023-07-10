@@ -144,7 +144,7 @@ impl Context {
     }
 
     #[inline]
-    pub(crate) fn remembered_size(&self) -> usize {
+    pub(crate) fn last_remembered_size(&self) -> usize {
         self.last_remembered_size.get()
     }
 
