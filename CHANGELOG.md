@@ -1,3 +1,9 @@
+## [0.3.2]
+- Implement `Eq`, `PartialEq`, `Ord`, `PartialOrd`, and `Hash` traits on `Gc<T>`
+  similar to the traits on std smart pointers like `Rc<T>`.
+- Relax unnecessary bounds on `Collect` impls of std collections.
+- Make `Arena::remembered_size()` return reasonable values.
+
 ## [0.3.1]
 - Fallible `DynamicRootSet` API.
 
