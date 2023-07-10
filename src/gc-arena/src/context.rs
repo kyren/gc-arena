@@ -59,6 +59,7 @@ pub(crate) struct Context {
     root_needs_trace: Cell<bool>,
     total_allocated: Cell<usize>,
     remembered_size: Cell<usize>,
+    last_remembered_size: Cell<usize>,
     wakeup_total: Cell<usize>,
     allocation_debt: Cell<f64>,
 
@@ -116,6 +117,7 @@ impl Context {
             root_needs_trace: Cell::new(true),
             total_allocated: Cell::new(0),
             remembered_size: Cell::new(0),
+            last_remembered_size: Cell::new(0),
             wakeup_total: Cell::new(0),
             allocation_debt: Cell::new(0.0),
             all: Cell::new(None),
@@ -143,7 +145,7 @@ impl Context {
 
     #[inline]
     pub(crate) fn remembered_size(&self) -> usize {
-        self.remembered_size.get()
+        self.last_remembered_size.get()
     }
 
     // If the garbage collector is currently in the sleep phase,
@@ -320,11 +322,13 @@ impl Context {
                         // Do not let debt or remembered size accumulate across cycles.
                         // When we enter sleep, zero them out.
                         self.allocation_debt.set(0.0);
-                        let remembered_size = self.remembered_size.replace(0);
+                        self.last_remembered_size
+                            .set(self.remembered_size.replace(0));
 
-                        let sleep =
-                            f64_to_usize(remembered_size as f64 * self.parameters.pause_factor)
-                                .min(self.parameters.min_sleep);
+                        let sleep = f64_to_usize(
+                            self.last_remembered_size.get() as f64 * self.parameters.pause_factor,
+                        )
+                        .min(self.parameters.min_sleep);
 
                         self.wakeup_total.set(self.total_allocated.get() + sleep);
                     }

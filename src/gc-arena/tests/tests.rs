@@ -498,6 +498,23 @@ fn test_collect_overflow() {
 }
 
 #[test]
+fn test_remembered_size() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 256]>,
+    }
+
+    let mut arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
+            test: Gc::new(mc, [0; 256]),
+        });
+
+    arena.collect_all();
+    assert!(arena.remembered_size() >= 256);
+}
+
+#[test]
 fn cast() {
     #[derive(Collect)]
     #[collect(require_static)]

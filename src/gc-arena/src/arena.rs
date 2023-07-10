@@ -263,6 +263,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         self.context.total_allocated()
     }
 
+    /// Returns the size of the remembered set from the last completed sweep phase.
     #[inline]
     pub fn remembered_size(&self) -> usize {
         self.context.remembered_size()
