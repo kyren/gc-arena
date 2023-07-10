@@ -1,4 +1,4 @@
-use core::cell::Cell;
+use core::{cell::Cell, mem};
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -512,6 +512,47 @@ fn test_remembered_size() {
 
     arena.collect_all();
     assert!(arena.remembered_size() >= 256);
+}
+
+#[test]
+fn test_collection_bounded() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 256]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(
+        ArenaParameters::default()
+            .set_pause_factor(1.0)
+            .set_timing_factor(1.0)
+            .set_min_sleep(256),
+        |mc| TestRoot {
+            test: Gc::new(mc, [0; 256]),
+        },
+    );
+
+    for _ in 0..1024 {
+        for _ in 0..4 {
+            arena.mutate(|mc, _| {
+                let _ = Gc::new(mc, [0u8; 256]);
+            });
+        }
+        assert!(arena.total_allocated() < 4096);
+        assert!(arena.allocation_debt() < 4096.0);
+        arena.collect_debt();
+    }
+
+    for _ in 0..1024 {
+        for _ in 0..4 {
+            arena.mutate_root(|mc, root| {
+                let _ = mem::replace(&mut root.test, Gc::new(mc, [0u8; 256]));
+            });
+        }
+        assert!(arena.total_allocated() < 4096);
+        assert!(arena.allocation_debt() < 4096.0);
+        arena.collect_debt();
+    }
 }
 
 #[test]
