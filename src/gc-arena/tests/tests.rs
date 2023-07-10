@@ -396,7 +396,7 @@ fn test_dynamic_roots() {
     let mut arena: Arena<Rootable![DynamicRootSet<'_>]> =
         Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
 
-    let initial_size = arena.total_allocated();
+    let initial_size = arena.allocation().total_allocation();
 
     let root1 =
         arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'_, i32>]>(mc, Gc::new(mc, 12)));
@@ -412,7 +412,7 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.total_allocated() > initial_size);
+    assert!(arena.allocation().total_allocation() > initial_size);
 
     arena.mutate(|_, root_set| {
         let root1 = *root_set.fetch(&root1);
@@ -429,7 +429,7 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.total_allocated() == initial_size);
+    assert!(arena.allocation().total_allocation() == initial_size);
 }
 
 #[test]
@@ -477,44 +477,6 @@ fn test_unsize() {
 }
 
 #[test]
-fn test_collect_overflow() {
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 256]>,
-    }
-
-    let mut arena =
-        Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
-            test: Gc::new(mc, [0; 256]),
-        });
-
-    for _ in 0..1024 {
-        arena.collect_all();
-        assert!(arena.total_allocated() < 1024); // these should all stay bounded
-        assert!(arena.remembered_size() < 1024);
-        assert!(arena.allocation_debt() < 1024.0);
-    }
-}
-
-#[test]
-fn test_remembered_size() {
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 256]>,
-    }
-
-    let mut arena =
-        Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
-            test: Gc::new(mc, [0; 256]),
-        });
-
-    arena.collect_all();
-    assert!(arena.remembered_size() >= 256);
-}
-
-#[test]
 fn test_collection_bounded() {
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -538,8 +500,8 @@ fn test_collection_bounded() {
                 let _ = Gc::new(mc, [0u8; 256]);
             });
         }
-        assert!(arena.total_allocated() < 4096);
-        assert!(arena.allocation_debt() < 4096.0);
+        assert!(arena.allocation().total_allocation() < 4096);
+        assert!(arena.allocation().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
 
@@ -549,8 +511,8 @@ fn test_collection_bounded() {
                 let _ = mem::replace(&mut root.test, Gc::new(mc, [0u8; 256]));
             });
         }
-        assert!(arena.total_allocated() < 4096);
-        assert!(arena.allocation_debt() < 4096.0);
+        assert!(arena.allocation().total_allocation() < 4096);
+        assert!(arena.allocation().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
 }

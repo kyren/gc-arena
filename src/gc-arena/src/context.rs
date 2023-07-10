@@ -1,8 +1,9 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
-use core::mem;
-use core::ptr::NonNull;
+use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use core::{
+    cell::{Cell, RefCell},
+    mem,
+    ptr::NonNull,
+};
 
 use crate::arena::ArenaParameters;
 use crate::collect::Collect;
@@ -17,6 +18,11 @@ pub struct Mutation<'gc> {
 }
 
 impl<'gc> Mutation<'gc> {
+    #[inline]
+    pub fn allocation(&self) -> &Allocation {
+        self.context.allocation()
+    }
+
     #[inline]
     pub(crate) fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
@@ -42,6 +48,11 @@ pub struct Collection {
 
 impl Collection {
     #[inline]
+    pub fn allocation(&self) -> &Allocation {
+        self.context.allocation()
+    }
+
+    #[inline]
     pub(crate) fn trace(&self, gc_box: GcBox) {
         self.context.trace(gc_box)
     }
@@ -52,16 +63,126 @@ impl Collection {
     }
 }
 
-pub(crate) struct Context {
+#[derive(Debug, Default)]
+struct AllocationInner {
     parameters: ArenaParameters,
 
+    total_gc_bytes: Cell<usize>,
+    total_gcs: Cell<usize>,
+    traced_gcs: Cell<usize>,
+
+    remembered_gcs: Cell<usize>,
+    remembered_gc_bytes: Cell<usize>,
+
+    total_external_bytes: Cell<usize>,
+
+    gc_debt: Cell<f64>,
+    external_debt: Cell<f64>,
+    wakeup_debt: Cell<f64>,
+}
+
+#[derive(Clone)]
+pub struct Allocation(Rc<AllocationInner>);
+
+impl Allocation {
+    fn new(parameters: ArenaParameters) -> Self {
+        let this = Self(Rc::new(AllocationInner {
+            parameters,
+            ..Default::default()
+        }));
+        this.start_propagation();
+        this
+    }
+
+    pub fn total_gc_allocation(&self) -> usize {
+        self.0.total_gc_bytes.get()
+    }
+
+    pub fn total_external_allocation(&self) -> usize {
+        self.0.total_external_bytes.get()
+    }
+
+    pub fn total_allocation(&self) -> usize {
+        self.0
+            .total_gc_bytes
+            .get()
+            .saturating_add(self.0.total_external_bytes.get())
+    }
+
+    /// All arena allocation causes the arena to accumulate "allocation debt". This debt is
+    /// then used to time incremental garbage collection based on the tuning parameters set in
+    /// `ArenaParameters`. The allocation debt is measured in bytes, but will generally increase at
+    /// a rate faster than that of allocation so that collection will always complete.
+    pub fn allocation_debt(&self) -> f64 {
+        let traced_external_estimate = self.0.traced_gcs.get() as f64
+            / self.0.total_gcs.get() as f64
+            * self.0.total_external_bytes.get() as f64;
+        let debt_estimate =
+            self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
+        (debt_estimate - self.0.wakeup_debt.get()).max(0.0)
+    }
+
+    pub fn mark_external_allocation(&self, bytes: usize) {
+        cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
+        cell_update(&self.0.external_debt, |d| {
+            d + bytes as f64 + bytes as f64 / self.0.parameters.timing_factor
+        });
+    }
+
+    pub fn mark_external_deallocation(&self, bytes: usize) {
+        cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
+        cell_update(&self.0.external_debt, |d| d - bytes as f64);
+    }
+
+    fn start_propagation(&self) {
+        let remembered_size_estimate = self.remembered_set_estimate();
+        let wakeup_amount = (remembered_size_estimate * self.0.parameters.pause_factor)
+            .max(self.0.parameters.min_sleep as f64);
+        let wakeup_debt = wakeup_amount + wakeup_amount / self.0.parameters.timing_factor;
+
+        self.0.traced_gcs.set(0);
+        self.0.remembered_gcs.set(0);
+        self.0.remembered_gc_bytes.set(0);
+        self.0.gc_debt.set(0.0);
+        self.0.external_debt.set(0.0);
+        self.0.wakeup_debt.set(wakeup_debt);
+    }
+
+    fn mark_gc_allocated(&self, bytes: usize) {
+        cell_update(&self.0.total_gc_bytes, |b| b + bytes);
+        cell_update(&self.0.total_gcs, |c| c + 1);
+        cell_update(&self.0.gc_debt, |d| {
+            d + bytes as f64 + bytes as f64 / self.0.parameters.timing_factor
+        });
+    }
+
+    fn mark_gc_traced(&self, bytes: usize) {
+        cell_update(&self.0.traced_gcs, |c| c + 1);
+        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
+    }
+
+    fn mark_gc_deallocated(&self, bytes: usize) {
+        cell_update(&self.0.total_gc_bytes, |b| b - bytes);
+        cell_update(&self.0.total_gcs, |c| c - 1);
+        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
+    }
+
+    fn mark_gc_remembered(&self, bytes: usize) {
+        cell_update(&self.0.remembered_gcs, |c| c + 1);
+        cell_update(&self.0.remembered_gc_bytes, |b| b + bytes);
+    }
+
+    fn remembered_set_estimate(&self) -> f64 {
+        self.0.remembered_gc_bytes.get() as f64
+            + self.0.remembered_gcs.get() as f64 / self.0.total_gcs.get() as f64
+                * self.0.total_external_bytes.get() as f64
+    }
+}
+
+pub(crate) struct Context {
+    allocation: Allocation,
     phase: Cell<Phase>,
     root_needs_trace: Cell<bool>,
-    total_allocated: Cell<usize>,
-    remembered_size: Cell<usize>,
-    last_remembered_size: Cell<usize>,
-    wakeup_total: Cell<usize>,
-    allocation_debt: Cell<f64>,
 
     // A linked list of all allocated `GcBox`es.
     all: Cell<Option<GcBox>>,
@@ -112,14 +233,9 @@ impl Drop for Context {
 impl Context {
     pub(crate) unsafe fn new(parameters: ArenaParameters) -> Context {
         Context {
-            parameters,
+            allocation: Allocation::new(parameters),
             phase: Cell::new(Phase::Propagate),
             root_needs_trace: Cell::new(true),
-            total_allocated: Cell::new(0),
-            remembered_size: Cell::new(0),
-            last_remembered_size: Cell::new(0),
-            wakeup_total: Cell::new(0),
-            allocation_debt: Cell::new(0.0),
             all: Cell::new(None),
             sweep: Cell::new(None),
             sweep_prev: Cell::new(None),
@@ -134,28 +250,8 @@ impl Context {
     }
 
     #[inline]
-    pub(crate) fn allocation_debt(&self) -> f64 {
-        self.allocation_debt.get()
-    }
-
-    #[inline]
-    pub(crate) fn total_allocated(&self) -> usize {
-        self.total_allocated.get()
-    }
-
-    #[inline]
-    pub(crate) fn last_remembered_size(&self) -> usize {
-        self.last_remembered_size.get()
-    }
-
-    // If the garbage collector is currently in the sleep phase,
-    // add the root to the gray queue and transition to the `Propagate` phase.
-    #[inline]
-    pub(crate) fn wake(&self) {
-        if self.phase.get() == Phase::Sleep {
-            self.phase.set(Phase::Propagate);
-            self.root_needs_trace.set(true);
-        }
+    pub(crate) fn allocation(&self) -> &Allocation {
+        &self.allocation
     }
 
     #[inline]
@@ -165,23 +261,22 @@ impl Context {
         }
     }
 
-    // Do some collection work until we have either reached the target amount of work or are in the
-    // sleeping gc phase. The unit of "work" here is a byte count of objects either turned black
-    // or freed, so to completely collect a heap with 1000 bytes of objects should take 1000 units
-    // of work, whatever percentage of them are live or not. Returns the amount of work actually
-    // performed, which may be less if we are entering the sleep phase.
+    // Do some collection work until we have either reached the target amount of work or have
+    // finished the gc sweep phase. The unit of "work" here is a byte count of objects either
+    // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
+    // 1000 units of work, whatever percentage of them are live or not.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
-    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) -> f64 {
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
         self.do_collection_inner(root, work)
     }
 
-    fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) -> f64 {
-        let mut work_done = 0.0;
+    fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) {
+        let target_debt = self.allocation.allocation_debt() - work;
         let cc = unsafe { mem::transmute::<&Self, &Collection>(self) };
 
-        while work > work_done {
+        while self.allocation.allocation_debt() > target_debt {
             match self.phase.get() {
                 Phase::Propagate => {
                     // We look for an object first in the normal gray queue, then the "gray again"
@@ -190,10 +285,8 @@ impl Context {
                     // double count them. Processing "gray again" objects later also gives them more
                     // time to be mutated again without triggering another write barrier.
                     let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
-                        let gray_size = gc_box.header().size_of_box() as f64;
-                        work_done += gray_size;
-                        self.allocation_debt
-                            .set((self.allocation_debt.get() - gray_size).max(0.0));
+                        self.allocation
+                            .mark_gc_traced(gc_box.header().size_of_box());
                         Some(gc_box)
                     } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
                         Some(gc_box)
@@ -272,12 +365,8 @@ impl Context {
                                     debug_assert_eq!(self.all.get(), Some(sweep));
                                     self.all.set(next_box);
                                 }
-                                let sweep_size = sweep_header.size_of_box();
-                                self.total_allocated
-                                    .set(self.total_allocated.get() - sweep_size);
-                                work_done += sweep_size as f64;
-                                self.allocation_debt
-                                    .set((self.allocation_debt.get() - sweep_size as f64).max(0.0));
+                                self.allocation
+                                    .mark_gc_deallocated(sweep_header.size_of_box());
 
                                 // SAFETY: this object is white, and wasn't traced by a `GcWeak`
                                 // during this cycle, meaning it cannot have either strong or weak
@@ -303,8 +392,8 @@ impl Context {
                             // need to keep it but turn it back white.
                             GcColor::Black => {
                                 self.sweep_prev.set(Some(sweep));
-                                self.remembered_size
-                                    .set(self.remembered_size.get() + sweep_header.size_of_box());
+                                self.allocation
+                                    .mark_gc_remembered(sweep_header.size_of_box());
                                 sweep_header.set_color(GcColor::White);
                             }
                             // No gray objects should be in this part of the main list, they should
@@ -315,29 +404,15 @@ impl Context {
                             }
                         }
                     } else {
-                        // We are done sweeping, so enter the sleeping phase.
                         self.sweep_prev.set(None);
-                        self.phase.set(Phase::Sleep);
-
-                        // Do not let debt or remembered size accumulate across cycles.
-                        // When we enter sleep, zero them out.
-                        self.allocation_debt.set(0.0);
-                        self.last_remembered_size
-                            .set(self.remembered_size.replace(0));
-
-                        let sleep = f64_to_usize(
-                            self.last_remembered_size.get() as f64 * self.parameters.pause_factor,
-                        )
-                        .max(self.parameters.min_sleep);
-
-                        self.wakeup_total.set(self.total_allocated.get() + sleep);
+                        self.phase.set(Phase::Propagate);
+                        self.root_needs_trace.set(true);
+                        self.allocation.start_propagation();
+                        break;
                     }
                 }
-                Phase::Sleep => break,
             }
         }
-
-        work_done
     }
 
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
@@ -347,20 +422,7 @@ impl Context {
         header.set_needs_trace(T::needs_trace());
 
         let alloc_size = header.size_of_box();
-        self.total_allocated
-            .set(self.total_allocated.get() + alloc_size);
-        if self.phase.get() == Phase::Sleep && self.total_allocated.get() > self.wakeup_total.get()
-        {
-            self.wake();
-        }
-
-        if self.phase.get() != Phase::Sleep {
-            self.allocation_debt.set(
-                self.allocation_debt.get()
-                    + alloc_size as f64
-                    + alloc_size as f64 / self.parameters.timing_factor,
-            );
-        }
+        self.allocation.mark_gc_allocated(alloc_size);
 
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
@@ -489,56 +551,11 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
 enum Phase {
     Propagate,
     Sweep,
-    Sleep,
 }
 
-/// Rounds a floating point number to an unsigned integer.
-///
-/// If the floating point number is outside the bounds of the unsigned
-/// integer, the number is clamped.
-///
-/// This methods works in no_std environments too.
+// TODO: Use `Cell::update` when it is available, see:
+// https://github.com/rust-lang/rust/issues/50186
 #[inline]
-fn f64_to_usize(input: f64) -> usize {
-    // As per the Rustonomicon, the cast to usize is truncating.
-    // TODO: Use f64::round when that is available in no_std. See:
-    // https://github.com/rust-lang/rust/issues/50145
-    (input + 0.5) as usize
-}
-
-#[cfg(test)]
-mod test {
-    use super::f64_to_usize;
-
-    #[test]
-    fn test_clamp_f64() {
-        assert_eq!(f64_to_usize(f64::MIN), 0);
-        assert_eq!(f64_to_usize(-100.0), 0);
-        assert_eq!(f64_to_usize(-1.0), 0);
-        assert_eq!(f64_to_usize(-0.6), 0);
-        assert_eq!(f64_to_usize(0.0), 0);
-        assert_eq!(f64_to_usize(0.4), 0);
-        assert_eq!(f64_to_usize(0.5 - f64::EPSILON), 0);
-        assert_eq!(f64_to_usize(0.5), 1);
-        assert_eq!(f64_to_usize(0.6), 1);
-        assert_eq!(f64_to_usize(1.0), 1);
-        assert_eq!(f64_to_usize(100.0), 100);
-        assert_eq!(f64_to_usize(usize::MAX as f64), usize::MAX);
-        assert_eq!(f64_to_usize(f64::MAX), usize::MAX);
-    }
-
-    // This tests loss of precision, which only happens when `usize::MAX`
-    // is large enough. when `usize` is `u32`, it's small enough that we
-    // don't lose precision, so only run this test on 64-bit platforms.
-    #[cfg(all(feature = "std", target_pointer_width = "64"))]
-    #[test]
-    fn test_clamp_f64_precision() {
-        fn std_impl(input: f64) -> usize {
-            input.round().min(usize::MAX as f64) as usize
-        }
-
-        // Precision is lost both using the no_std impl and the std impl
-        assert_eq!(std_impl((usize::MAX - 1) as f64) as usize, usize::MAX);
-        assert_eq!(f64_to_usize((usize::MAX - 1) as f64), usize::MAX);
-    }
+fn cell_update<T: Copy>(c: &Cell<T>, f: impl FnOnce(T) -> T) {
+    c.set(f(c.get()))
 }

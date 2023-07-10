@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::{f64, marker::PhantomData, usize};
 
 use crate::{
-    context::{Context, Mutation},
+    context::{Allocation, Context, Mutation},
     Collect,
 };
 
@@ -256,26 +256,9 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         })
     }
 
-    /// Return total currently used memory.
     #[inline]
-    pub fn total_allocated(&self) -> usize {
-        self.context.total_allocated()
-    }
-
-    /// Returns the size of the remembered set from the last completed sweep phase.
-    #[inline]
-    pub fn remembered_size(&self) -> usize {
-        self.context.last_remembered_size()
-    }
-
-    /// When the garbage collector is not sleeping, all allocated objects cause the arena to
-    /// accumulate "allocation debt". This debt is then be used to time incremental garbage
-    /// collection based on the tuning parameters set in `ArenaParameters`. The allocation debt is
-    /// measured in bytes, but will generally increase at a rate faster than that of allocation so
-    /// that collection will always complete.
-    #[inline]
-    pub fn allocation_debt(&self) -> f64 {
-        self.context.allocation_debt()
+    pub fn allocation(&self) -> &Allocation {
+        self.context.allocation()
     }
 
     /// Run the incremental garbage collector until the allocation debt is <= 0.0. There is no
@@ -284,7 +267,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            let debt = self.context.allocation_debt();
+            let debt = self.context.allocation().allocation_debt();
             if debt > 0.0 {
                 self.context.do_collection(&self.root, debt);
             }
@@ -292,11 +275,9 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     /// Run the current garbage collection cycle to completion, stopping once the garbage collector
-    /// has entered the sleeping phase. If the garbage collector is currently sleeping, starts a new
-    /// cycle and runs that cycle to completion.
+    /// has finished the sweep phase.
     #[inline]
     pub fn collect_all(&mut self) {
-        self.context.wake();
         unsafe {
             self.context.do_collection(&self.root, f64::INFINITY);
         }
