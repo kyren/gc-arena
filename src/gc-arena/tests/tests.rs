@@ -666,6 +666,52 @@ fn field_locks() {
 }
 
 #[test]
+fn gc_pause_actually_pauses() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 256]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+        test: Gc::new(mc, [0; 256]),
+    });
+
+    arena.metrics().set_pacing(
+        Pacing::default()
+            .set_pause_factor(1.0)
+            .set_timing_factor(1.0)
+            .set_min_sleep(1024),
+    );
+    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
+    // for exactly min_sleep, since the pause factor is 1.0 and 2x 256 bytes is 512 which is less
+    // than 1024.
+    arena.collect_all();
+
+    // We should be asleep, aka the debt should be zero.
+    assert!(arena.metrics().allocation_debt() == 0.0);
+
+    for _ in 0..8 {
+        arena.mutate(|mc, _| {
+            let _ = Gc::new(mc, [0u8; 100]);
+        });
+    }
+
+    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
+    // 224 bytes).
+    assert!(arena.metrics().allocation_debt() == 0.0);
+
+    for _ in 0..3 {
+        arena.mutate(|mc, _| {
+            let _ = Gc::new(mc, [0u8; 100]);
+        });
+    }
+
+    // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
+    assert!(arena.metrics().allocation_debt() > 0.0);
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

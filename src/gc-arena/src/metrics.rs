@@ -79,22 +79,34 @@ pub struct Metrics(Rc<MetricsInner>);
 impl Metrics {
     pub(crate) fn new() -> Self {
         let this = Self(Default::default());
-        this.start_propagation();
+        this.start_cycle();
         this
     }
 
+    /// Sets the pacing parameters used by the collection algorithm.
+    ///
+    /// The factors that affect the gc pause time will not take effect until the start of the next
+    /// collection.
     pub fn set_pacing(&self, pacing: Pacing) {
         self.0.pacing.set(pacing);
     }
 
+    /// Returns the total bytes allocated by the arena itself, used as the backing storage for `Gc`
+    /// pointers.
     pub fn total_gc_allocation(&self) -> usize {
         self.0.total_gc_bytes.get()
     }
 
+    /// Returns the total bytes that have been marked as externally allocated.
+    ///
+    /// A call to `Metrics::mark_external_allocation` will increase this count, and a call to
+    /// `Metrics::mark_external_deallocation` will decrease it.
     pub fn total_external_allocation(&self) -> usize {
         self.0.total_external_bytes.get()
     }
 
+    /// Returns the sum of `Metrics::total_gc_allocation()` and
+    /// `Metrics::total_external_allocation()`.
     pub fn total_allocation(&self) -> usize {
         self.0
             .total_gc_bytes
@@ -103,9 +115,9 @@ impl Metrics {
     }
 
     /// All arena allocation causes the arena to accumulate "allocation debt". This debt is then
-    /// used to time incremental garbage collection based on the tuning parameters set in `Pacing`.
-    /// The allocation debt is measured in bytes, but will generally increase at a rate faster than
-    /// that of allocation so that collection will always complete.
+    /// used to time incremental garbage collection based on the tuning parameters in the current
+    /// `Pacing`. The allocation debt is measured in bytes, but will generally increase at a rate
+    /// faster than that of allocation so that collection will always complete.
     pub fn allocation_debt(&self) -> f64 {
         let traced_external_estimate = self.0.traced_gcs.get() as f64
             / self.0.total_gcs.get() as f64
@@ -115,6 +127,10 @@ impl Metrics {
         (debt_estimate - self.0.wakeup_debt.get()).max(0.0)
     }
 
+    /// Call to mark that bytes have been externally allocated that are owned by an arena.
+    ///
+    /// This affects the GC pacing, marking external bytes as allocated will trigger allocation
+    /// debt.
     pub fn mark_external_allocation(&self, bytes: usize) {
         cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
         cell_update(&self.0.external_debt, |d| {
@@ -122,12 +138,21 @@ impl Metrics {
         });
     }
 
+    /// Call to mark that bytes which have been marked as allocated with
+    /// `Metrics::mark_external_allocation` have been since deallocated.
+    ///
+    /// This affects the GC pacing, marking external bytes as deallocated will reduce allocation
+    /// debt.
+    ///
+    /// It is safe, but may result in unspecified behavior (such as very weird or non-existent gc
+    /// pacing), if the amount of bytes marked for deallocation is greater than the number of bytes
+    /// marked for allocation.
     pub fn mark_external_deallocation(&self, bytes: usize) {
         cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
         cell_update(&self.0.external_debt, |d| d - bytes as f64);
     }
 
-    pub(crate) fn start_propagation(&self) {
+    pub(crate) fn start_cycle(&self) {
         let remembered_size_estimate = self.0.remembered_gc_bytes.get() as f64
             + self.0.remembered_gcs.get() as f64 / self.0.total_gcs.get() as f64
                 * self.0.total_external_bytes.get() as f64;

@@ -290,7 +290,7 @@ impl Context {
                         self.sweep_prev.set(None);
                         self.phase.set(Phase::Propagate);
                         self.root_needs_trace.set(true);
-                        self.metrics.start_propagation();
+                        self.metrics.start_cycle();
                         break;
                     }
                 }
