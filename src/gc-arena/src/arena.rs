@@ -154,9 +154,8 @@ pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
 pub struct Arena<R: for<'a> Rootable<'a>> {
-    // We rely on the implicit drop order here, `root` *must* be dropped before `context`!
-    root: Root<'static, R>,
     context: Box<Context>,
+    root: Root<'static, R>,
 }
 
 impl<R: for<'a> Rootable<'a>> Arena<R> {
