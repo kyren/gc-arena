@@ -485,9 +485,9 @@ fn test_collection_bounded() {
 
     arena.metrics().set_pacing(
         Pacing::default()
-            .set_pause_factor(1.0)
-            .set_timing_factor(1.0)
-            .set_min_sleep(256),
+            .with_pause_factor(1.0)
+            .with_timing_factor(1.0)
+            .with_min_sleep(256),
     );
     // Finish the current collection cycle so that the new min_sleep is used.
     arena.collect_all();
@@ -679,9 +679,9 @@ fn gc_pause_actually_pauses() {
 
     arena.metrics().set_pacing(
         Pacing::default()
-            .set_pause_factor(1.0)
-            .set_timing_factor(1.0)
-            .set_min_sleep(1024),
+            .with_pause_factor(1.0)
+            .with_timing_factor(1.0)
+            .with_min_sleep(1024),
     );
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
     // for exactly min_sleep, since the pause factor is 1.0 and 2x 256 bytes is 512 which is less
@@ -725,9 +725,9 @@ fn gc_external_allocation_affects_timing() {
 
     arena.metrics().set_pacing(
         Pacing::default()
-            .set_pause_factor(1.0)
-            .set_timing_factor(1.0)
-            .set_min_sleep(1024),
+            .with_pause_factor(1.0)
+            .with_timing_factor(1.0)
+            .with_min_sleep(1024),
     );
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
     // for exactly min_sleep, since the pause factor is 1.0 and 2x 256 bytes is 512 which is less

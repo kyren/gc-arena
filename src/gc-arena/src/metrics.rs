@@ -32,7 +32,7 @@ impl Pacing {
     /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
     /// beginning a new collection.
     #[inline]
-    pub fn set_pause_factor(mut self, pause_factor: f64) -> Pacing {
+    pub fn with_pause_factor(mut self, pause_factor: f64) -> Pacing {
         assert!(pause_factor >= 0.0);
         self.pause_factor = pause_factor;
         self
@@ -44,7 +44,7 @@ impl Pacing {
     /// finish its final phase of this collection after another 100KB has been allocated. Must be >=
     /// 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
     #[inline]
-    pub fn set_timing_factor(mut self, timing_factor: f64) -> Pacing {
+    pub fn with_timing_factor(mut self, timing_factor: f64) -> Pacing {
         assert!(timing_factor >= 0.0);
         self.timing_factor = timing_factor;
         self
@@ -53,7 +53,7 @@ impl Pacing {
     /// The minimum allocation amount during sleep before the arena starts collecting again. This is
     /// mostly useful when the heap is very small to prevent rapidly restarting collections.
     #[inline]
-    pub fn set_min_sleep(mut self, min_sleep: usize) -> Pacing {
+    pub fn with_min_sleep(mut self, min_sleep: usize) -> Pacing {
         self.min_sleep = min_sleep;
         self
     }
