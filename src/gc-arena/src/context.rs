@@ -154,6 +154,9 @@ impl Context {
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
+    //
+    // If we are currently in `Phase::Sleep`, this will transition the collector to
+    // `Phase::Propagate`.
     pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
         self.do_collection_inner(root, work)
     }
@@ -161,6 +164,12 @@ impl Context {
     fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) {
         let target_debt = self.metrics.allocation_debt() - work;
         let cc = unsafe { mem::transmute::<&Self, &Collection>(self) };
+
+        // Calling `Context::do_collection` always transitions away from `Phase::Sleep` to
+        // `Phase::Propagate`.
+        if self.phase.get() == Phase::Sleep {
+            self.phase.set(Phase::Propagate);
+        }
 
         while self.metrics.allocation_debt() > target_debt {
             match self.phase.get() {
@@ -288,12 +297,12 @@ impl Context {
                         }
                     } else {
                         self.sweep_prev.set(None);
-                        self.phase.set(Phase::Propagate);
+                        self.phase.set(Phase::Sleep);
                         self.root_needs_trace.set(true);
                         self.metrics.start_cycle();
-                        break;
                     }
                 }
+                Phase::Sleep => break,
             }
         }
     }
@@ -434,4 +443,5 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
 enum Phase {
     Propagate,
     Sweep,
+    Sleep,
 }
