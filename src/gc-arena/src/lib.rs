@@ -15,6 +15,7 @@ mod dynamic_roots;
 mod gc;
 mod gc_weak;
 pub mod lock;
+pub mod metrics;
 mod no_drop;
 mod static_collect;
 mod types;
@@ -27,7 +28,7 @@ pub use gc_arena_derive::*;
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
-    arena::{rootless_arena, Arena, ArenaParameters, Root, Rootable},
+    arena::{rootless_arena, Arena, Root, Rootable},
     collect::Collect,
     context::{Collection, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},

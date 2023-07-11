@@ -1,64 +1,11 @@
 use alloc::boxed::Box;
-use core::{f64, marker::PhantomData, usize};
+use core::{f64, marker::PhantomData};
 
 use crate::{
     context::{Context, Mutation},
+    metrics::Metrics,
     Collect,
 };
-
-/// Tuning parameters for a given garbage collected [`Arena`].
-#[derive(Debug, Clone)]
-pub struct ArenaParameters {
-    pub(crate) pause_factor: f64,
-    pub(crate) timing_factor: f64,
-    pub(crate) min_sleep: usize,
-}
-
-/// Creates a default ArenaParameters with `pause_factor` set to 0.5, `timing_factor` set to 1.5,
-/// and `min_sleep` set to 4096.
-impl Default for ArenaParameters {
-    fn default() -> ArenaParameters {
-        const PAUSE_FACTOR: f64 = 0.5;
-        const TIMING_FACTOR: f64 = 1.5;
-        const MIN_SLEEP: usize = 4096;
-
-        ArenaParameters {
-            pause_factor: PAUSE_FACTOR,
-            timing_factor: TIMING_FACTOR,
-            min_sleep: MIN_SLEEP,
-        }
-    }
-}
-
-impl ArenaParameters {
-    /// The garbage collector will wait until the live size reaches `<current heap size> + <previous
-    /// retained size> * pause_multiplier` before beginning a new collection. Must be >= 0.0,
-    /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
-    /// beginning a new collection.
-    pub fn set_pause_factor(mut self, pause_factor: f64) -> ArenaParameters {
-        assert!(pause_factor >= 0.0);
-        self.pause_factor = pause_factor;
-        self
-    }
-
-    /// The garbage collector will try and finish a collection by the time `<current heap size> *
-    /// timing_factor` additional bytes are allocated. For example, if the collection is started
-    /// when the arena has 100KB live data, and the timing_multiplier is 1.0, the collector should
-    /// finish its final phase of this collection after another 100KB has been allocated. Must be >=
-    /// 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
-    pub fn set_timing_factor(mut self, timing_factor: f64) -> ArenaParameters {
-        assert!(timing_factor >= 0.0);
-        self.timing_factor = timing_factor;
-        self
-    }
-
-    /// The minimum allocation amount during sleep before the arena starts collecting again. This is
-    /// mostly useful when the heap is very small to prevent rapidly restarting collections.
-    pub fn set_min_sleep(mut self, min_sleep: usize) -> ArenaParameters {
-        self.min_sleep = min_sleep;
-        self
-    }
-}
 
 /// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
 /// the root [`Collect`] instance in an [`Arena`].
@@ -161,12 +108,12 @@ pub struct Arena<R: for<'a> Rootable<'a>> {
 impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `&Mutation<'gc>` and returns the appropriate root.
-    pub fn new<F>(arena_parameters: ArenaParameters, f: F) -> Arena<R>
+    pub fn new<F>(f: F) -> Arena<R>
     where
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
     {
         unsafe {
-            let context = Box::new(Context::new(arena_parameters));
+            let context = Box::new(Context::new());
             // Note - we cast the `&Mutation` to a `'static` lifetime here,
             // instead of transmuting the root type returned by `f`. Transmuting the root
             // type is allowed in nightly versions of rust
@@ -181,12 +128,12 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
-    pub fn try_new<F, E>(arena_parameters: ArenaParameters, f: F) -> Result<Arena<R>, E>
+    pub fn try_new<F, E>(f: F) -> Result<Arena<R>, E>
     where
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Result<Root<'gc, R>, E>,
     {
         unsafe {
-            let context = Box::new(Context::new(arena_parameters));
+            let context = Box::new(Context::new());
             let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
             let root: Root<'static, R> = f(mc)?;
             Ok(Arena { context, root })
@@ -256,26 +203,9 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         })
     }
 
-    /// Return total currently used memory.
     #[inline]
-    pub fn total_allocated(&self) -> usize {
-        self.context.total_allocated()
-    }
-
-    /// Returns the size of the remembered set from the last completed sweep phase.
-    #[inline]
-    pub fn remembered_size(&self) -> usize {
-        self.context.last_remembered_size()
-    }
-
-    /// When the garbage collector is not sleeping, all allocated objects cause the arena to
-    /// accumulate "allocation debt". This debt is then be used to time incremental garbage
-    /// collection based on the tuning parameters set in `ArenaParameters`. The allocation debt is
-    /// measured in bytes, but will generally increase at a rate faster than that of allocation so
-    /// that collection will always complete.
-    #[inline]
-    pub fn allocation_debt(&self) -> f64 {
-        self.context.allocation_debt()
+    pub fn metrics(&self) -> &Metrics {
+        self.context.metrics()
     }
 
     /// Run the incremental garbage collector until the allocation debt is <= 0.0. There is no
@@ -284,7 +214,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            let debt = self.context.allocation_debt();
+            let debt = self.context.metrics().allocation_debt();
             if debt > 0.0 {
                 self.context.do_collection(&self.root, debt);
             }
@@ -292,11 +222,9 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     /// Run the current garbage collection cycle to completion, stopping once the garbage collector
-    /// has entered the sleeping phase. If the garbage collector is currently sleeping, starts a new
-    /// cycle and runs that cycle to completion.
+    /// has finished the sweep phase.
     #[inline]
     pub fn collect_all(&mut self) {
-        self.context.wake();
         unsafe {
             self.context.do_collection(&self.root, f64::INFINITY);
         }
@@ -311,7 +239,7 @@ where
     F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> R,
 {
     unsafe {
-        let context = Context::new(ArenaParameters::default());
+        let context = Context::new();
         f(context.mutation_context())
     }
 }
