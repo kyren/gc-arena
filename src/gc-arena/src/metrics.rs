@@ -119,16 +119,18 @@ impl Metrics {
     /// `Pacing`. The allocation debt is measured in bytes, but will generally increase at a rate
     /// faster than that of allocation so that collection will always complete.
     pub fn allocation_debt(&self) -> f64 {
+        // Estimate the amount of external memory that has been traced assuming that each Gc owns an
+        // even share of the external memory.
         let traced_external_estimate = self.0.traced_gcs.get() as f64
             / self.0.total_gcs.get() as f64
             * self.0.total_external_bytes.get() as f64;
-        let debt_estimate =
-            self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
+
+        let debt = self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
 
         let wakeup_amount = self.0.wakeup_amount.get();
         let wakeup_debt = wakeup_amount + wakeup_amount / self.0.pacing.get().timing_factor;
 
-        (debt_estimate - wakeup_debt).max(0.0)
+        (debt - wakeup_debt).max(0.0)
     }
 
     /// Call to mark that bytes have been externally allocated that are owned by an arena.
@@ -157,13 +159,17 @@ impl Metrics {
     }
 
     pub(crate) fn start_cycle(&self) {
-        let remembered_size_estimate = self.0.remembered_gc_bytes.get() as f64
-            + self.0.remembered_gcs.get() as f64 / self.0.total_gcs.get() as f64
-                * self.0.total_external_bytes.get() as f64;
+        // Estimate the amount of external memory that is remembered assuming that each Gc owns an
+        // even share of the external memory.
+        let remembered_external_size_estimate = self.0.remembered_gcs.get() as f64
+            / self.0.total_gcs.get() as f64
+            * self.0.total_external_bytes.get() as f64;
+
+        let remembered_size =
+            self.0.remembered_gc_bytes.get() as f64 + remembered_external_size_estimate;
 
         let pacing = self.0.pacing.get();
-        let wakeup_amount =
-            (remembered_size_estimate * pacing.pause_factor).max(pacing.min_sleep as f64);
+        let wakeup_amount = (remembered_size * pacing.pause_factor).max(pacing.min_sleep as f64);
 
         self.0.traced_gcs.set(0);
         self.0.remembered_gcs.set(0);
