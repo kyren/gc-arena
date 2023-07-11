@@ -1,3 +1,7 @@
+## [0.3.3]
+- Actually pause for the configured amount of time in the gc, rather than the
+  minimum.
+
 ## [0.3.2]
 - Implement `Eq`, `PartialEq`, `Ord`, `PartialOrd`, and `Hash` traits on `Gc<T>`
   similar to the traits on std smart pointers like `Rc<T>`.
