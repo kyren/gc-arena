@@ -70,7 +70,7 @@ struct MetricsInner {
 
     gc_debt: Cell<f64>,
     external_debt: Cell<f64>,
-    wakeup_debt: Cell<f64>,
+    wakeup_amount: Cell<f64>,
 }
 
 #[derive(Clone)]
@@ -124,7 +124,11 @@ impl Metrics {
             * self.0.total_external_bytes.get() as f64;
         let debt_estimate =
             self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
-        (debt_estimate - self.0.wakeup_debt.get()).max(0.0)
+
+        let wakeup_amount = self.0.wakeup_amount.get();
+        let wakeup_debt = wakeup_amount + wakeup_amount / self.0.pacing.get().timing_factor;
+
+        (debt_estimate - wakeup_debt).max(0.0)
     }
 
     /// Call to mark that bytes have been externally allocated that are owned by an arena.
@@ -160,14 +164,13 @@ impl Metrics {
         let pacing = self.0.pacing.get();
         let wakeup_amount =
             (remembered_size_estimate * pacing.pause_factor).max(pacing.min_sleep as f64);
-        let wakeup_debt = wakeup_amount + wakeup_amount / pacing.timing_factor;
 
         self.0.traced_gcs.set(0);
         self.0.remembered_gcs.set(0);
         self.0.remembered_gc_bytes.set(0);
         self.0.gc_debt.set(0.0);
         self.0.external_debt.set(0.0);
-        self.0.wakeup_debt.set(wakeup_debt);
+        self.0.wakeup_amount.set(wakeup_amount);
     }
 
     pub(crate) fn mark_gc_allocated(&self, bytes: usize) {
