@@ -328,7 +328,7 @@ impl Context {
                         let sleep = f64_to_usize(
                             self.last_remembered_size.get() as f64 * self.parameters.pause_factor,
                         )
-                        .min(self.parameters.min_sleep);
+                        .max(self.parameters.min_sleep);
 
                         self.wakeup_total.set(self.total_allocated.get() + sleep);
                     }
