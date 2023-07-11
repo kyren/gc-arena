@@ -1,13 +1,15 @@
-use alloc::{boxed::Box, rc::Rc, vec::Vec};
+use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     mem,
     ptr::NonNull,
 };
 
-use crate::arena::ArenaParameters;
-use crate::collect::Collect;
-use crate::types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant};
+use crate::{
+    collect::Collect,
+    metrics::Metrics,
+    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+};
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
 /// `Gc` pointers and internally mutating values held by `Gc` pointers.
@@ -19,8 +21,8 @@ pub struct Mutation<'gc> {
 
 impl<'gc> Mutation<'gc> {
     #[inline]
-    pub fn allocation(&self) -> &Allocation {
-        self.context.allocation()
+    pub fn metrics(&self) -> &Metrics {
+        self.context.metrics()
     }
 
     #[inline]
@@ -48,8 +50,8 @@ pub struct Collection {
 
 impl Collection {
     #[inline]
-    pub fn allocation(&self) -> &Allocation {
-        self.context.allocation()
+    pub fn metrics(&self) -> &Metrics {
+        self.context.metrics()
     }
 
     #[inline]
@@ -63,124 +65,8 @@ impl Collection {
     }
 }
 
-#[derive(Debug, Default)]
-struct AllocationInner {
-    parameters: ArenaParameters,
-
-    total_gc_bytes: Cell<usize>,
-    total_gcs: Cell<usize>,
-    traced_gcs: Cell<usize>,
-
-    remembered_gcs: Cell<usize>,
-    remembered_gc_bytes: Cell<usize>,
-
-    total_external_bytes: Cell<usize>,
-
-    gc_debt: Cell<f64>,
-    external_debt: Cell<f64>,
-    wakeup_debt: Cell<f64>,
-}
-
-#[derive(Clone)]
-pub struct Allocation(Rc<AllocationInner>);
-
-impl Allocation {
-    fn new(parameters: ArenaParameters) -> Self {
-        let this = Self(Rc::new(AllocationInner {
-            parameters,
-            ..Default::default()
-        }));
-        this.start_propagation();
-        this
-    }
-
-    pub fn total_gc_allocation(&self) -> usize {
-        self.0.total_gc_bytes.get()
-    }
-
-    pub fn total_external_allocation(&self) -> usize {
-        self.0.total_external_bytes.get()
-    }
-
-    pub fn total_allocation(&self) -> usize {
-        self.0
-            .total_gc_bytes
-            .get()
-            .saturating_add(self.0.total_external_bytes.get())
-    }
-
-    /// All arena allocation causes the arena to accumulate "allocation debt". This debt is
-    /// then used to time incremental garbage collection based on the tuning parameters set in
-    /// `ArenaParameters`. The allocation debt is measured in bytes, but will generally increase at
-    /// a rate faster than that of allocation so that collection will always complete.
-    pub fn allocation_debt(&self) -> f64 {
-        let traced_external_estimate = self.0.traced_gcs.get() as f64
-            / self.0.total_gcs.get() as f64
-            * self.0.total_external_bytes.get() as f64;
-        let debt_estimate =
-            self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
-        (debt_estimate - self.0.wakeup_debt.get()).max(0.0)
-    }
-
-    pub fn mark_external_allocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
-        cell_update(&self.0.external_debt, |d| {
-            d + bytes as f64 + bytes as f64 / self.0.parameters.timing_factor
-        });
-    }
-
-    pub fn mark_external_deallocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
-        cell_update(&self.0.external_debt, |d| d - bytes as f64);
-    }
-
-    fn start_propagation(&self) {
-        let remembered_size_estimate = self.remembered_set_estimate();
-        let wakeup_amount = (remembered_size_estimate * self.0.parameters.pause_factor)
-            .max(self.0.parameters.min_sleep as f64);
-        let wakeup_debt = wakeup_amount + wakeup_amount / self.0.parameters.timing_factor;
-
-        self.0.traced_gcs.set(0);
-        self.0.remembered_gcs.set(0);
-        self.0.remembered_gc_bytes.set(0);
-        self.0.gc_debt.set(0.0);
-        self.0.external_debt.set(0.0);
-        self.0.wakeup_debt.set(wakeup_debt);
-    }
-
-    fn mark_gc_allocated(&self, bytes: usize) {
-        cell_update(&self.0.total_gc_bytes, |b| b + bytes);
-        cell_update(&self.0.total_gcs, |c| c + 1);
-        cell_update(&self.0.gc_debt, |d| {
-            d + bytes as f64 + bytes as f64 / self.0.parameters.timing_factor
-        });
-    }
-
-    fn mark_gc_traced(&self, bytes: usize) {
-        cell_update(&self.0.traced_gcs, |c| c + 1);
-        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
-    }
-
-    fn mark_gc_deallocated(&self, bytes: usize) {
-        cell_update(&self.0.total_gc_bytes, |b| b - bytes);
-        cell_update(&self.0.total_gcs, |c| c - 1);
-        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
-    }
-
-    fn mark_gc_remembered(&self, bytes: usize) {
-        cell_update(&self.0.remembered_gcs, |c| c + 1);
-        cell_update(&self.0.remembered_gc_bytes, |b| b + bytes);
-    }
-
-    fn remembered_set_estimate(&self) -> f64 {
-        self.0.remembered_gc_bytes.get() as f64
-            + self.0.remembered_gcs.get() as f64 / self.0.total_gcs.get() as f64
-                * self.0.total_external_bytes.get() as f64
-    }
-}
-
 pub(crate) struct Context {
-    allocation: Allocation,
+    metrics: Metrics,
     phase: Cell<Phase>,
     root_needs_trace: Cell<bool>,
 
@@ -231,9 +117,9 @@ impl Drop for Context {
 }
 
 impl Context {
-    pub(crate) unsafe fn new(parameters: ArenaParameters) -> Context {
+    pub(crate) unsafe fn new() -> Context {
         Context {
-            allocation: Allocation::new(parameters),
+            metrics: Metrics::new(),
             phase: Cell::new(Phase::Propagate),
             root_needs_trace: Cell::new(true),
             all: Cell::new(None),
@@ -250,8 +136,8 @@ impl Context {
     }
 
     #[inline]
-    pub(crate) fn allocation(&self) -> &Allocation {
-        &self.allocation
+    pub(crate) fn metrics(&self) -> &Metrics {
+        &self.metrics
     }
 
     #[inline]
@@ -273,10 +159,10 @@ impl Context {
     }
 
     fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) {
-        let target_debt = self.allocation.allocation_debt() - work;
+        let target_debt = self.metrics.allocation_debt() - work;
         let cc = unsafe { mem::transmute::<&Self, &Collection>(self) };
 
-        while self.allocation.allocation_debt() > target_debt {
+        while self.metrics.allocation_debt() > target_debt {
             match self.phase.get() {
                 Phase::Propagate => {
                     // We look for an object first in the normal gray queue, then the "gray again"
@@ -285,8 +171,7 @@ impl Context {
                     // double count them. Processing "gray again" objects later also gives them more
                     // time to be mutated again without triggering another write barrier.
                     let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
-                        self.allocation
-                            .mark_gc_traced(gc_box.header().size_of_box());
+                        self.metrics.mark_gc_traced(gc_box.header().size_of_box());
                         Some(gc_box)
                     } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
                         Some(gc_box)
@@ -365,8 +250,7 @@ impl Context {
                                     debug_assert_eq!(self.all.get(), Some(sweep));
                                     self.all.set(next_box);
                                 }
-                                self.allocation
-                                    .mark_gc_deallocated(sweep_header.size_of_box());
+                                self.metrics.mark_gc_deallocated(sweep_header.size_of_box());
 
                                 // SAFETY: this object is white, and wasn't traced by a `GcWeak`
                                 // during this cycle, meaning it cannot have either strong or weak
@@ -392,8 +276,7 @@ impl Context {
                             // need to keep it but turn it back white.
                             GcColor::Black => {
                                 self.sweep_prev.set(Some(sweep));
-                                self.allocation
-                                    .mark_gc_remembered(sweep_header.size_of_box());
+                                self.metrics.mark_gc_remembered(sweep_header.size_of_box());
                                 sweep_header.set_color(GcColor::White);
                             }
                             // No gray objects should be in this part of the main list, they should
@@ -407,7 +290,7 @@ impl Context {
                         self.sweep_prev.set(None);
                         self.phase.set(Phase::Propagate);
                         self.root_needs_trace.set(true);
-                        self.allocation.start_propagation();
+                        self.metrics.start_propagation();
                         break;
                     }
                 }
@@ -422,7 +305,7 @@ impl Context {
         header.set_needs_trace(T::needs_trace());
 
         let alloc_size = header.size_of_box();
-        self.allocation.mark_gc_allocated(alloc_size);
+        self.metrics.mark_gc_allocated(alloc_size);
 
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
@@ -551,11 +434,4 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
 enum Phase {
     Propagate,
     Sweep,
-}
-
-// TODO: Use `Cell::update` when it is available, see:
-// https://github.com/rust-lang/rust/issues/50186
-#[inline]
-fn cell_update<T: Copy>(c: &Cell<T>, f: impl FnOnce(T) -> T) {
-    c.set(f(c.get()))
 }

@@ -6,7 +6,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::lock::RefLock;
 use gc_arena::{
-    unsafe_empty_collect, unsize, Arena, ArenaParameters, Collect, DynamicRootSet, Gc, GcWeak,
+    metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet, Gc, GcWeak,
     Rootable,
 };
 
@@ -18,7 +18,7 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| TestRoot {
+    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
         test: Gc::new(mc, 42),
     });
 
@@ -36,7 +36,7 @@ fn weak_allocation() {
         weak: GcWeak<'gc, i32>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
         let test = Gc::new(mc, 42);
         let weak = Gc::downgrade(test);
         assert!(weak.upgrade(mc).is_some());
@@ -87,7 +87,7 @@ fn dyn_sized_allocation() {
 
     let counter = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
         let array: [_; SIZE] = core::array::from_fn(|_| Gc::new(mc, counter.clone()));
         let slice = unsize!(Gc::new(mc, array) => [_]);
         TestRoot { slice }
@@ -121,7 +121,7 @@ fn repeated_allocation_deallocation() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
         TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
@@ -168,9 +168,8 @@ fn all_dropped() {
 
     let r = RefCounter(Rc::new(()));
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
-    });
+    let arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot(Gc::new(mc, RefLock::new(Vec::new()))));
 
     arena.mutate(|mc, root| {
         let mut v = root.0.unlock(mc).borrow_mut();
@@ -194,9 +193,8 @@ fn all_garbage_collected() {
 
     let r = RefCounter(Rc::new(()));
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(ArenaParameters::default(), |mc| {
-        TestRoot(Gc::new(mc, RefLock::new(Vec::new())))
-    });
+    let mut arena =
+        Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot(Gc::new(mc, RefLock::new(Vec::new()))));
 
     arena.mutate(|mc, root| {
         let mut v = root.0.unlock(mc).borrow_mut();
@@ -354,7 +352,7 @@ fn test_map() {
         some_complex_state: Vec<Gc<'gc, i32>>,
     }
 
-    let arena = Arena::<Rootable![Root<'_>]>::new(ArenaParameters::default(), |mc| Root {
+    let arena = Arena::<Rootable![Root<'_>]>::new(|mc| Root {
         some_complex_state: vec![Gc::new(mc, 42), Gc::new(mc, 69)],
     });
 
@@ -393,10 +391,9 @@ fn test_map() {
 
 #[test]
 fn test_dynamic_roots() {
-    let mut arena: Arena<Rootable![DynamicRootSet<'_>]> =
-        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+    let mut arena: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
-    let initial_size = arena.allocation().total_allocation();
+    let initial_size = arena.metrics().total_allocation();
 
     let root1 =
         arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'_, i32>]>(mc, Gc::new(mc, 12)));
@@ -412,7 +409,7 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.allocation().total_allocation() > initial_size);
+    assert!(arena.metrics().total_allocation() > initial_size);
 
     arena.mutate(|_, root_set| {
         let root1 = *root_set.fetch(&root1);
@@ -429,17 +426,15 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.allocation().total_allocation() == initial_size);
+    assert!(arena.metrics().total_allocation() == initial_size);
 }
 
 #[test]
 #[should_panic]
 fn test_dynamic_bad_set() {
-    let arena1: Arena<Rootable![DynamicRootSet<'_>]> =
-        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+    let arena1: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
-    let arena2: Arena<Rootable![DynamicRootSet<'_>]> =
-        Arena::new(ArenaParameters::default(), |mc| DynamicRootSet::new(mc));
+    let arena2: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -484,15 +479,18 @@ fn test_collection_bounded() {
         test: Gc<'gc, [u8; 256]>,
     }
 
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(
-        ArenaParameters::default()
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+        test: Gc::new(mc, [0; 256]),
+    });
+
+    arena.metrics().set_pacing(
+        Pacing::default()
             .set_pause_factor(1.0)
             .set_timing_factor(1.0)
             .set_min_sleep(256),
-        |mc| TestRoot {
-            test: Gc::new(mc, [0; 256]),
-        },
     );
+    // Finish the current collection cycle so that the new min_sleep is used.
+    arena.collect_all();
 
     for _ in 0..1024 {
         for _ in 0..4 {
@@ -500,8 +498,8 @@ fn test_collection_bounded() {
                 let _ = Gc::new(mc, [0u8; 256]);
             });
         }
-        assert!(arena.allocation().total_allocation() < 4096);
-        assert!(arena.allocation().allocation_debt() < 4096.0);
+        assert!(arena.metrics().total_allocation() < 4096);
+        assert!(arena.metrics().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
 
@@ -511,8 +509,8 @@ fn test_collection_bounded() {
                 let _ = mem::replace(&mut root.test, Gc::new(mc, [0u8; 256]));
             });
         }
-        assert!(arena.allocation().total_allocation() < 4096);
-        assert!(arena.allocation().allocation_debt() < 4096.0);
+        assert!(arena.metrics().total_allocation() < 4096);
+        assert!(arena.metrics().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
 }
@@ -597,7 +595,7 @@ fn okay_panic() {
         }
     }
 
-    let mut arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(ArenaParameters::default(), |mc| {
+    let mut arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(|mc| {
         Gc::new(
             mc,
             Test {
@@ -642,7 +640,7 @@ fn field_locks() {
         nested: Nested<'gc>,
     }
 
-    let arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(ArenaParameters::default(), |mc| {
+    let arena = Arena::<Rootable![Gc<'_, Test<'_>>]>::new(|mc| {
         Gc::new(
             mc,
             Test {
