@@ -6,8 +6,6 @@ use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
-#[cfg(feature = "std")]
-use core::hash::BuildHasher;
 use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
@@ -191,7 +189,7 @@ unsafe impl<K, V, S> Collect for HashMap<K, V, S>
 where
     K: Collect,
     V: Collect,
-    S: BuildHasher + 'static,
+    S: 'static,
 {
     #[inline]
     fn needs_trace() -> bool {
@@ -211,7 +209,7 @@ where
 unsafe impl<T, S> Collect for HashSet<T, S>
 where
     T: Collect,
-    S: BuildHasher + 'static,
+    S: 'static,
 {
     #[inline]
     fn needs_trace() -> bool {
