@@ -128,18 +128,24 @@ impl Metrics {
     /// faster than that of allocation so that collection will always complete.
     #[inline]
     pub fn allocation_debt(&self) -> f64 {
-        // Estimate the amount of external memory that has been traced assuming that each Gc owns an
-        // even share of the external memory.
-        let traced_external_estimate = self.0.traced_gcs.get() as f64
-            / self.0.total_gcs.get() as f64
-            * self.0.total_external_bytes.get() as f64;
+        let total_gcs = self.0.total_gcs.get();
+        if total_gcs == 0 {
+            // If we have no live `Gc`s, then there is no possible collection to do so always
+            // return zero debt.
+            0.0
+        } else {
+            // Estimate the amount of external memory that has been traced assuming that each Gc
+            // owns an even share of the external memory.
+            let traced_external_estimate = self.0.traced_gcs.get() as f64 / total_gcs as f64
+                * self.0.total_external_bytes.get() as f64;
 
-        let debt = self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
+            let debt = self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
 
-        let wakeup_amount = self.0.wakeup_amount.get();
-        let wakeup_debt = wakeup_amount + wakeup_amount / self.0.pacing.get().timing_factor;
+            let wakeup_amount = self.0.wakeup_amount.get();
+            let wakeup_debt = wakeup_amount + wakeup_amount / self.0.pacing.get().timing_factor;
 
-        (debt - wakeup_debt).max(0.0)
+            (debt - wakeup_debt).max(0.0)
+        }
     }
 
     /// Call to mark that bytes have been externally allocated that are owned by an arena.
@@ -170,17 +176,24 @@ impl Metrics {
     }
 
     pub(crate) fn start_cycle(&self) {
-        // Estimate the amount of external memory that is remembered assuming that each Gc owns an
-        // even share of the external memory.
-        let remembered_external_size_estimate = self.0.remembered_gcs.get() as f64
-            / self.0.total_gcs.get() as f64
-            * self.0.total_external_bytes.get() as f64;
-
-        let remembered_size =
-            self.0.remembered_gc_bytes.get() as f64 + remembered_external_size_estimate;
-
         let pacing = self.0.pacing.get();
-        let wakeup_amount = (remembered_size * pacing.pause_factor).max(pacing.min_sleep as f64);
+        let total_gcs = self.0.total_gcs.get();
+        let wakeup_amount = if total_gcs == 0 {
+            // If we have no live `Gc`s, then the root cannot possibly own any data, so we should
+            // sleep for `min_sleep.`
+            pacing.min_sleep as f64
+        } else {
+            // Estimate the amount of external memory that is remembered assuming that each Gc owns
+            // an even share of the external memory.
+            let remembered_external_size_estimate = self.0.remembered_gcs.get() as f64
+                / total_gcs as f64
+                * self.0.total_external_bytes.get() as f64;
+
+            let remembered_size =
+                self.0.remembered_gc_bytes.get() as f64 + remembered_external_size_estimate;
+
+            (remembered_size * pacing.pause_factor).max(pacing.min_sleep as f64)
+        };
 
         self.0.traced_gcs.set(0);
         self.0.remembered_gcs.set(0);
