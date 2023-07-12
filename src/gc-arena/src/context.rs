@@ -120,7 +120,7 @@ impl Context {
     pub(crate) unsafe fn new() -> Context {
         Context {
             metrics: Metrics::new(),
-            phase: Cell::new(Phase::Propagate),
+            phase: Cell::new(Phase::Sleep),
             root_needs_trace: Cell::new(true),
             all: Cell::new(None),
             sweep: Cell::new(None),
