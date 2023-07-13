@@ -104,12 +104,7 @@ unsafe impl Collect for Global {
     }
 }
 
-unsafe impl<T: Collect, A: Collect + Allocator> Collect for boxed::Box<T, A> {
-    #[inline]
-    fn needs_trace() -> bool {
-        T::needs_trace() || A::needs_trace()
-    }
-
+unsafe impl<T: Collect + ?Sized, A: Collect + Allocator> Collect for boxed::Box<T, A> {
     #[inline]
     fn trace(&self, cc: &Collection) {
         boxed::Box::allocator(self).trace(cc);
