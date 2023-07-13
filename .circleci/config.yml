@@ -39,6 +39,10 @@ jobs:
           command: |
               cargo build --manifest-path=src/gc-arena/Cargo.toml --no-default-features
       - run:
+          name: Check with combinations of optional features
+          command: |
+              cargo check --all --features tracing
+      - run:
           name: Run all tests
           command: cargo test --workspace
       - run:

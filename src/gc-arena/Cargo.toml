@@ -11,10 +11,12 @@ repository.workspace = true
 [features]
 default = ["std"]
 std = []
+tracing = ["dep:tracing"]
 
 [dependencies]
 gc-arena-derive = { path = "../gc-arena-derive", version = "0.3.3"}
 sptr = "0.3.2"
+tracing = { version = "0.1.37", optional = true, default-features = false }
 
 [dev-dependencies]
 rand = "0.8"
