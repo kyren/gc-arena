@@ -21,6 +21,12 @@ mod static_collect;
 mod types;
 mod unsize;
 
+#[cfg(feature = "allocator-api2")]
+pub mod allocator_api;
+
+#[cfg(feature = "hashbrown")]
+mod hashbrown;
+
 #[doc(hidden)]
 pub use gc_arena_derive::*;
 
