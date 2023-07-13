@@ -87,6 +87,12 @@ impl Metrics {
         this
     }
 
+    pub(crate) fn ptr_eq(a: &Metrics, b: &Metrics) -> bool {
+        let a = Rc::as_ptr(&a.0);
+        let b = Rc::as_ptr(&b.0);
+        a == b
+    }
+
     /// Sets the pacing parameters used by the collection algorithm.
     ///
     /// The factors that affect the gc pause time will not take effect until the start of the next

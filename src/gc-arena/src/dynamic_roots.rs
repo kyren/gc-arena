@@ -4,8 +4,11 @@ use alloc::{
 };
 use core::{fmt, mem};
 
-use crate::barrier::unlock;
 use crate::lock::RefLock;
+use crate::{
+    barrier::{unlock, Write},
+    metrics::Metrics,
+};
 use crate::{Collect, Gc, Mutation, Root, Rootable};
 
 /// A way of registering GC roots dynamically.
@@ -37,7 +40,7 @@ impl<'gc> DynamicRootSet<'gc> {
             mc,
             Inner {
                 handles: RefLock::new(Vec::new()),
-                set_id: Rc::new(SetId {}),
+                metrics: mc.metrics().clone(),
             },
         ))
     }
@@ -51,14 +54,8 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: &Mutation<'gc>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
-        let handle = Rc::new(Handle {
-            set_id: self.0.set_id.clone(),
-            root,
-        });
-
-        let weak_handle = Rc::<Handle<Root<'gc, R>>>::downgrade(&handle);
-        let handles = unlock!(Gc::write(mc, self.0), Inner, handles);
-        handles.borrow_mut().push(weak_handle);
+        let handle = Handle::new(&self.0.metrics, root);
+        Inner::adopt_handle(&Gc::write(mc, self.0), &handle);
 
         DynamicRoot {
             handle: unsafe {
@@ -99,9 +96,12 @@ impl<'gc> DynamicRootSet<'gc> {
     /// Tests if the given handle belongs to this root set.
     #[inline]
     pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> bool {
-        let ours = Rc::as_ptr(&self.0.set_id);
-        let theirs = Rc::as_ptr(&root.handle.set_id);
-        ours == theirs
+        // We test for whether the handle belongs to this root set based on whether or not the two
+        // instances of `Metrics` point to the same object.
+        //
+        // SAFETY: A unique `Metrics` instance is constructed once per arena and remains the same
+        // for the lifetime of the arena.
+        Metrics::ptr_eq(&self.0.metrics, &root.handle.metrics)
     }
 }
 
@@ -157,14 +157,38 @@ impl fmt::Display for MismatchedRootSet {
 #[cfg(feature = "std")]
 impl std::error::Error for MismatchedRootSet {}
 
-// The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
-struct SetId {}
-
 type HandleList<'gc> = Vec<Weak<Handle<dyn Collect + 'gc>>>;
 
 struct Inner<'gc> {
     handles: RefLock<HandleList<'gc>>,
-    set_id: Rc<SetId>,
+    metrics: Metrics,
+}
+
+fn size_of_handle_list<'gc>(list: &HandleList<'gc>) -> usize {
+    list.capacity() * mem::size_of::<Weak<Handle<dyn Collect + 'gc>>>()
+}
+
+impl<'gc> Inner<'gc> {
+    fn adopt_handle<R: Collect + 'gc>(this: &Write<Self>, handle: &Rc<Handle<R>>) {
+        let handles = unlock!(this, Inner, handles);
+        let mut handles = handles.borrow_mut();
+        let old_size = size_of_handle_list(&handles);
+        handles.push(Rc::<Handle<R>>::downgrade(handle));
+        let new_size = size_of_handle_list(&handles);
+
+        if new_size > old_size {
+            this.metrics.mark_external_allocation(new_size - old_size);
+        } else if old_size > new_size {
+            this.metrics.mark_external_deallocation(old_size - new_size);
+        }
+    }
+}
+
+impl<'gc> Drop for Inner<'gc> {
+    fn drop(&mut self) {
+        self.metrics
+            .mark_external_deallocation(size_of_handle_list(&self.handles.borrow()));
+    }
 }
 
 unsafe impl<'gc> Collect for Inner<'gc> {
@@ -186,8 +210,23 @@ unsafe impl<'gc> Collect for Inner<'gc> {
 }
 
 struct Handle<T: ?Sized> {
-    // Store a clone of `Rc<SetId>` so that we ensure the `Rc<SetId>` lives as long as any extant
-    // handle.
-    set_id: Rc<SetId>,
+    metrics: Metrics,
     root: T,
+}
+
+impl<T> Handle<T> {
+    fn new(metrics: &Metrics, root: T) -> Rc<Self> {
+        metrics.mark_external_allocation(mem::size_of::<T>());
+        Rc::new(Self {
+            metrics: metrics.clone(),
+            root,
+        })
+    }
+}
+
+impl<T: ?Sized> Drop for Handle<T> {
+    fn drop(&mut self) {
+        self.metrics
+            .mark_external_deallocation(mem::size_of_val(&self.root));
+    }
 }

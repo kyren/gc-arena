@@ -389,44 +389,47 @@ fn test_map() {
     });
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn test_dynamic_roots() {
+    let rc_a = Rc::new(12);
+    let rc_b = Rc::new("hello".to_owned());
+
     let mut arena: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
-    let initial_size = arena.metrics().total_allocation();
-
-    let root1 =
-        arena.mutate(|mc, root_set| root_set.stash::<Rootable![Gc<'_, i32>]>(mc, Gc::new(mc, 12)));
-
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct Root2<'gc>(Gc<'gc, i32>, Gc<'gc, bool>);
-
-    let root2 = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Root2<'_>]>(mc, Root2(Gc::new(mc, 27), Gc::new(mc, true)))
+    let root_a = arena.mutate(|mc, root_set| {
+        root_set.stash::<Rootable![Gc<'_, Rc<i32>>]>(mc, Gc::new(mc, rc_a.clone()))
     });
 
+    let root_b = arena.mutate(|mc, root_set| {
+        root_set.stash::<Rootable![Gc<'_, Rc<String>>]>(mc, Gc::new(mc, rc_b.clone()))
+    });
+
+    assert_eq!(Rc::strong_count(&rc_a), 2);
+    assert_eq!(Rc::strong_count(&rc_b), 2);
+
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.metrics().total_allocation() > initial_size);
+    assert_eq!(Rc::strong_count(&rc_a), 2);
+    assert_eq!(Rc::strong_count(&rc_b), 2);
 
     arena.mutate(|_, root_set| {
-        let root1 = *root_set.fetch(&root1);
-        assert_eq!(*root1, 12);
+        let root_a = *root_set.fetch(&root_a);
+        assert_eq!(**root_a, 12);
 
-        let root2 = root_set.fetch(&root2);
-        assert_eq!(*root2.0, 27);
-        assert_eq!(*root2.1, true);
+        let root_b = root_set.fetch(&root_b);
+        assert_eq!(root_b.as_str(), "hello");
     });
 
-    drop(root1);
-    drop(root2);
+    drop(root_a);
+    drop(root_b);
 
     arena.collect_all();
     arena.collect_all();
 
-    assert!(arena.metrics().total_allocation() == initial_size);
+    assert_eq!(Rc::strong_count(&rc_a), 1);
+    assert_eq!(Rc::strong_count(&rc_b), 1);
 }
 
 #[test]
