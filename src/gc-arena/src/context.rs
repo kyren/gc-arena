@@ -76,7 +76,7 @@ pub(crate) struct Context {
     // A linked list of all allocated `GcBox`es.
     all: Cell<Option<GcBox>>,
 
-    // A copy of the head of `all` at the end of `Phase::Propagate`.
+    // A copy of the head of `all` at the end of `Phase::Mark`.
     // During `Phase::Sweep`, we free all white allocations on this list.
     // Any allocations created *during* `Phase::Sweep` will be added to `all`,
     // but `sweep` will *not* be updated. This ensures that we keep allocations
@@ -88,9 +88,9 @@ pub(crate) struct Context {
     // the linked list.
     sweep_prev: Cell<Option<GcBox>>,
 
-    /// A queue of gray objects, used during `Phase::Propagate`.
+    /// A queue of gray objects, used during `Phase::Mark`.
     /// This holds traceable objects that have yet to be traced.
-    /// When we enter `Phase::Propagate`, we push `root` to this queue.
+    /// When we enter `Phase::Mark`, we push `root` to this queue.
     gray: RefCell<Vec<GcBox>>,
 
     // A queue of gray objects that became gray as a result
@@ -154,7 +154,7 @@ impl Context {
 
     #[inline]
     pub(crate) fn root_barrier(&self) {
-        if self.phase.get() == Phase::Propagate {
+        if self.phase.get() == Phase::Mark {
             self.root_needs_trace.set(true);
         }
     }
@@ -168,7 +168,7 @@ impl Context {
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to
-    // `Phase::Propagate`.
+    // `Phase::Mark`.
     pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
         self.do_collection_inner(root, work)
     }
@@ -180,15 +180,15 @@ impl Context {
         let mut entered = PhaseGuard::enter(
             self,
             // Calling `Context::do_collection` always transitions away from `Phase::Sleep` to
-            // `Phase::Propagate`.
-            (self.phase.get() == Phase::Sleep).then(|| Phase::Propagate),
+            // `Phase::Mark`.
+            (self.phase.get() == Phase::Sleep).then(|| Phase::Mark),
         );
 
         entered.log_progress("GC: running...");
 
         while debt > target_debt {
             match self.phase.get() {
-                Phase::Propagate => {
+                Phase::Mark => {
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue. Objects from the normal gray queue count as regular work, but objects
                     // which are gray a second time have already been counted as work, so we don't
@@ -351,7 +351,7 @@ impl Context {
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
         let header = gc_box.header();
-        if self.phase.get() == Phase::Propagate && header.color() == GcColor::Black {
+        if self.phase.get() == Phase::Mark && header.color() == GcColor::Black {
             header.set_color(GcColor::Gray);
 
             // Outline the actual enqueueing code (which is somewhat expensive and won't be
@@ -409,7 +409,7 @@ impl Context {
         //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
         //   or having created a new allocation.
         //
-        // * In `Phase::Propagate`:
+        // * In `Phase::Mark`:
         //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
         //   call, then it must have been stored somewhere, triggering a write barrier.
         //   This will ensure that the new `Gc`/`GcCell` gets traced (if it's now reachable)
@@ -420,7 +420,7 @@ impl Context {
         //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
         //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
         //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed
-        //   during the last `Phase::Propagate.`
+        //   during the last `Phase::Mark.`
         //
         //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this
         //   `Phase::Sweep`, and we must not upgrade it.
@@ -428,9 +428,9 @@ impl Context {
         //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
         //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is
         //   not `WhiteWeak` there cannot have been any `GcWeak/GcWeakCell`s during the
-        //   last `Phase::Propagate`, so the weak pointer must have been created during this
+        //   last `Phase::Mark`, so the weak pointer must have been created during this
         //   `Phase::Sweep`. This is only possible if the underlying allocation was freshly-created
-        //   - if the allocation existed during `Phase::Propagate` but was not traced, then it
+        //   - if the allocation existed during `Phase::Mark` but was not traced, then it
         //   must have been unreachable, which means that the user wouldn't have been able to call
         //   `downgrade`. Therefore, we can safely upgrade, knowing that the object will not be
         //   freed during this phase, despite being white.
@@ -452,7 +452,7 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Phase {
-    Propagate,
+    Mark,
     Sweep,
     Sleep,
     Drop,
