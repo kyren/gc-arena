@@ -41,6 +41,7 @@ impl<'gc> DynamicRootSet<'gc> {
             Inner {
                 handles: RefLock::new(Vec::new()),
                 metrics: mc.metrics().clone(),
+                set_id: Rc::new(SetId {}),
             },
         ))
     }
@@ -54,7 +55,11 @@ impl<'gc> DynamicRootSet<'gc> {
         mc: &Mutation<'gc>,
         root: Root<'gc, R>,
     ) -> DynamicRoot<R> {
-        let handle = Handle::new(&self.0.metrics, root);
+        let handle = Rc::new(Handle {
+            set_id: self.0.set_id.clone(),
+            root,
+        });
+
         Inner::adopt_handle(&Gc::write(mc, self.0), &handle);
 
         DynamicRoot {
@@ -96,12 +101,9 @@ impl<'gc> DynamicRootSet<'gc> {
     /// Tests if the given handle belongs to this root set.
     #[inline]
     pub fn contains<R: for<'r> Rootable<'r>>(&self, root: &DynamicRoot<R>) -> bool {
-        // We test for whether the handle belongs to this root set based on whether or not the two
-        // instances of `Metrics` point to the same object.
-        //
-        // SAFETY: A unique `Metrics` instance is constructed once per arena and remains the same
-        // for the lifetime of the arena.
-        Metrics::ptr_eq(&self.0.metrics, &root.handle.metrics)
+        let ours = Rc::as_ptr(&self.0.set_id);
+        let theirs = Rc::as_ptr(&root.handle.set_id);
+        ours == theirs
     }
 }
 
@@ -157,23 +159,39 @@ impl fmt::Display for MismatchedRootSet {
 #[cfg(feature = "std")]
 impl std::error::Error for MismatchedRootSet {}
 
-type HandleList<'gc> = Vec<Weak<Handle<dyn Collect + 'gc>>>;
+// The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
+struct SetId {}
 
-struct Inner<'gc> {
-    handles: RefLock<HandleList<'gc>>,
-    metrics: Metrics,
+struct HandleStore<'gc> {
+    handle: Weak<Handle<dyn Collect + 'gc>>,
+    root_size: usize,
 }
 
-fn size_of_handle_list<'gc>(list: &HandleList<'gc>) -> usize {
+struct Inner<'gc> {
+    handles: RefLock<Vec<HandleStore<'gc>>>,
+    metrics: Metrics,
+    set_id: Rc<SetId>,
+}
+
+fn size_of_handle_list<'gc>(list: &Vec<HandleStore<'gc>>) -> usize {
     list.capacity() * mem::size_of::<Weak<Handle<dyn Collect + 'gc>>>()
 }
 
 impl<'gc> Inner<'gc> {
-    fn adopt_handle<R: Collect + 'gc>(this: &Write<Self>, handle: &Rc<Handle<R>>) {
+    fn adopt_handle<T: Collect + 'gc>(this: &Write<Self>, handle: &Rc<Handle<T>>) {
+        // We count size_of::<T>() as part of the arena heap to encourage collection of the handle
+        // list. *Technically* this doesn't include the full size of the Rc allocation (strong and
+        // weak counts) but this does not matter very much.
+        let root_size = mem::size_of::<T>();
+        this.metrics.mark_external_allocation(root_size);
+
         let handles = unlock!(this, Inner, handles);
         let mut handles = handles.borrow_mut();
         let old_size = size_of_handle_list(&handles);
-        handles.push(Rc::<Handle<R>>::downgrade(handle));
+        handles.push(HandleStore {
+            handle: Rc::<Handle<T>>::downgrade(handle),
+            root_size,
+        });
         let new_size = size_of_handle_list(&handles);
 
         if new_size > old_size {
@@ -186,6 +204,9 @@ impl<'gc> Inner<'gc> {
 
 impl<'gc> Drop for Inner<'gc> {
     fn drop(&mut self) {
+        let handles = self.handles.borrow();
+        self.metrics
+            .mark_external_deallocation(handles.iter().map(|s| s.root_size).sum());
         self.metrics
             .mark_external_deallocation(size_of_handle_list(&self.handles.borrow()));
     }
@@ -198,11 +219,12 @@ unsafe impl<'gc> Collect for Inner<'gc> {
         // through the entire list of roots anyway, this is cheaper than filtering on e.g.
         // stashing new roots.
         let handles = unsafe { self.handles.as_ref_cell() };
-        handles.borrow_mut().retain(|handle| {
-            if let Some(handle) = handle.upgrade() {
+        handles.borrow_mut().retain(|store| {
+            if let Some(handle) = store.handle.upgrade() {
                 handle.root.trace(cc);
                 true
             } else {
+                cc.metrics().mark_external_deallocation(store.root_size);
                 false
             }
         });
@@ -210,23 +232,8 @@ unsafe impl<'gc> Collect for Inner<'gc> {
 }
 
 struct Handle<T: ?Sized> {
-    metrics: Metrics,
+    // Store a clone of `Rc<SetId>` so that we ensure the `Rc<SetId>` lives as long as any extant
+    // handle.
+    set_id: Rc<SetId>,
     root: T,
-}
-
-impl<T> Handle<T> {
-    fn new(metrics: &Metrics, root: T) -> Rc<Self> {
-        metrics.mark_external_allocation(mem::size_of::<T>());
-        Rc::new(Self {
-            metrics: metrics.clone(),
-            root,
-        })
-    }
-}
-
-impl<T: ?Sized> Drop for Handle<T> {
-    fn drop(&mut self) {
-        self.metrics
-            .mark_external_deallocation(mem::size_of_val(&self.root));
-    }
 }
