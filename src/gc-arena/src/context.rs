@@ -68,12 +68,15 @@ impl Collection {
 pub(crate) struct Context {
     metrics: Metrics,
     phase: Cell<Phase>,
+    #[cfg(feature = "tracing")]
+    phase_span: Cell<tracing::Span>,
+
     root_needs_trace: Cell<bool>,
 
     // A linked list of all allocated `GcBox`es.
     all: Cell<Option<GcBox>>,
 
-    // A copy of the head of `all` at the end of `Phase::Propagate`.
+    // A copy of the head of `all` at the end of `Phase::Mark`.
     // During `Phase::Sweep`, we free all white allocations on this list.
     // Any allocations created *during* `Phase::Sweep` will be added to `all`,
     // but `sweep` will *not* be updated. This ensures that we keep allocations
@@ -85,9 +88,9 @@ pub(crate) struct Context {
     // the linked list.
     sweep_prev: Cell<Option<GcBox>>,
 
-    /// A queue of gray objects, used during `Phase::Propagate`.
+    /// A queue of gray objects, used during `Phase::Mark`.
     /// This holds traceable objects that have yet to be traced.
-    /// When we enter `Phase::Propagate`, we push `root` to this queue.
+    /// When we enter `Phase::Mark`, we push `root` to this queue.
     gray: RefCell<Vec<GcBox>>,
 
     // A queue of gray objects that became gray as a result
@@ -112,15 +115,19 @@ impl Drop for Context {
             }
         }
 
+        let _guard = PhaseGuard::enter(&self, Some(Phase::Drop));
         DropAll(self.all.get());
     }
 }
 
 impl Context {
     pub(crate) unsafe fn new() -> Context {
+        let metrics = Metrics::new();
         Context {
-            metrics: Metrics::new(),
             phase: Cell::new(Phase::Sleep),
+            #[cfg(feature = "tracing")]
+            phase_span: Cell::new(PhaseGuard::span_for(&metrics, Phase::Sleep)),
+            metrics,
             root_needs_trace: Cell::new(true),
             all: Cell::new(None),
             sweep: Cell::new(None),
@@ -136,18 +143,24 @@ impl Context {
     }
 
     #[inline]
+    fn collection_context(&self) -> &Collection {
+        // SAFETY: `Collection` is `repr(transparent)`
+        unsafe { mem::transmute::<&Self, &Collection>(self) }
+    }
+
+    #[inline]
     pub(crate) fn metrics(&self) -> &Metrics {
         &self.metrics
     }
 
     #[inline]
     pub(crate) fn root_barrier(&self) {
-        if self.phase.get() == Phase::Propagate {
+        if self.phase.get() == Phase::Mark {
             self.root_needs_trace.set(true);
         }
     }
 
-    // Do some collection work until we have either reached the target amount of work or have
+    // Do some collection work until either the debt goes down below the target amount or we have
     // finished the gc sweep phase. The unit of "work" here is a byte count of objects either
     // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
     // 1000 units of work, whatever percentage of them are live or not.
@@ -156,24 +169,27 @@ impl Context {
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to
-    // `Phase::Propagate`.
-    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
-        self.do_collection_inner(root, work)
+    // `Phase::Mark`.
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, target_debt: f64) {
+        self.do_collection_inner(root, target_debt)
     }
 
-    fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) {
-        let target_debt = self.metrics.allocation_debt() - work;
-        let cc = unsafe { mem::transmute::<&Self, &Collection>(self) };
+    fn do_collection_inner<R: Collect>(&self, root: &R, mut target_debt: f64) {
+        let mut entered = PhaseGuard::enter(self, None);
 
-        // Calling `Context::do_collection` always transitions away from `Phase::Sleep` to
-        // `Phase::Propagate`.
-        if self.phase.get() == Phase::Sleep {
-            self.phase.set(Phase::Propagate);
+        if self.metrics.allocation_debt() <= target_debt {
+            entered.log_progress("GC: paused");
+            return;
         }
 
-        while self.metrics.allocation_debt() > target_debt {
+        loop {
             match self.phase.get() {
-                Phase::Propagate => {
+                Phase::Sleep => {
+                    // Immediately enter the mark phase; no need to update metrics here.
+                    entered.switch(Phase::Mark);
+                    continue;
+                }
+                Phase::Mark => {
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue. Objects from the normal gray queue count as regular work, but objects
                     // which are gray a second time have already been counted as work, so we don't
@@ -191,7 +207,6 @@ impl Context {
                     if let Some(gc_box) = next_gray {
                         // If we have an object in the gray queue, take one, trace it, and turn it
                         // black.
-                        // SAFETY: we know gray objects are always live.
 
                         // Our `Collect::trace` call may panic, and if it does the object will be
                         // lost from the gray queue but potentially incompletely traced. By catching
@@ -202,42 +217,37 @@ impl Context {
                         // give it some time to not panic before attempting to collect it again, and
                         // also this doesn't invalidate the collection debt math.
                         struct DropGuard<'a> {
-                            panicking: bool,
-                            this: &'a Context,
+                            cx: &'a Context,
                             gc_box: GcBox,
                         }
 
                         impl<'a> Drop for DropGuard<'a> {
                             fn drop(&mut self) {
-                                if self.panicking {
-                                    self.this.gray_again.borrow_mut().push(self.gc_box);
-                                }
+                                self.cx.gray_again.borrow_mut().push(self.gc_box);
                             }
                         }
 
-                        let mut guard = DropGuard {
-                            panicking: true,
-                            this: self,
-                            gc_box,
-                        };
-                        unsafe { gc_box.trace_value(cc) }
-                        guard.panicking = false;
-
+                        let guard = DropGuard { cx: self, gc_box };
+                        unsafe { gc_box.trace_value(self.collection_context()) }
                         gc_box.header().set_color(GcColor::Black);
+                        mem::forget(guard);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
                         // again" objects.
-                        root.trace(cc);
+                        root.trace(self.collection_context());
                         self.root_needs_trace.set(false);
                     } else {
                         // If we have no gray objects left, we enter the sweep phase.
-                        self.phase.set(Phase::Sweep);
+                        entered.switch(Phase::Sweep);
 
                         // Set `sweep to the current head of our `all` linked list. Any new
                         // allocations during the newly-entered `Phase:Sweep` will update `all`, but
                         // will *not* be reachable from `this.sweep`.
                         self.sweep.set(self.all.get());
+
+                        // No need to update metrics here.
+                        continue;
                     }
                 }
                 Phase::Sweep => {
@@ -297,12 +307,19 @@ impl Context {
                         }
                     } else {
                         self.sweep_prev.set(None);
-                        self.phase.set(Phase::Sleep);
                         self.root_needs_trace.set(true);
+                        entered.switch(Phase::Sleep);
                         self.metrics.start_cycle();
+                        // Collection is done, forcibly exit the loop.
+                        target_debt = f64::INFINITY;
                     }
                 }
-                Phase::Sleep => break,
+                Phase::Drop => unreachable!(),
+            }
+
+            if self.metrics.allocation_debt() <= target_debt {
+                entered.log_progress("GC: yielding...");
+                return;
             }
         }
     }
@@ -340,7 +357,7 @@ impl Context {
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn black obejcts to gray to prevent this.
         let header = gc_box.header();
-        if self.phase.get() == Phase::Propagate && header.color() == GcColor::Black {
+        if self.phase.get() == Phase::Mark && header.color() == GcColor::Black {
             header.set_color(GcColor::Gray);
 
             // Outline the actual enqueueing code (which is somewhat expensive and won't be
@@ -398,7 +415,7 @@ impl Context {
         //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
         //   or having created a new allocation.
         //
-        // * In `Phase::Propagate`:
+        // * In `Phase::Mark`:
         //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
         //   call, then it must have been stored somewhere, triggering a write barrier.
         //   This will ensure that the new `Gc`/`GcCell` gets traced (if it's now reachable)
@@ -409,7 +426,7 @@ impl Context {
         //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
         //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
         //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed
-        //   during the last `Phase::Propagate.`
+        //   during the last `Phase::Mark.`
         //
         //   Therefore, a `WhiteWeak` object is guaranteed to be deallocated during this
         //   `Phase::Sweep`, and we must not upgrade it.
@@ -417,9 +434,9 @@ impl Context {
         //   Conversely, it's always safe to upgrade a white object that is not `WhiteWeak`.
         //   In order to call `upgrade`, you must have a `GcWeak/GcWeakCell`. Since it is
         //   not `WhiteWeak` there cannot have been any `GcWeak/GcWeakCell`s during the
-        //   last `Phase::Propagate`, so the weak pointer must have been created during this
+        //   last `Phase::Mark`, so the weak pointer must have been created during this
         //   `Phase::Sweep`. This is only possible if the underlying allocation was freshly-created
-        //   - if the allocation existed during `Phase::Propagate` but was not traced, then it
+        //   - if the allocation existed during `Phase::Mark` but was not traced, then it
         //   must have been unreachable, which means that the user wouldn't have been able to call
         //   `downgrade`. Therefore, we can safely upgrade, knowing that the object will not be
         //   freed during this phase, despite being white.
@@ -441,7 +458,77 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 enum Phase {
-    Propagate,
+    Mark,
     Sweep,
     Sleep,
+    Drop,
+}
+
+/// Helper type for managing phase transitions.
+struct PhaseGuard<'a> {
+    cx: &'a Context,
+    #[cfg(feature = "tracing")]
+    span: tracing::span::EnteredSpan,
+}
+
+impl<'a> Drop for PhaseGuard<'a> {
+    fn drop(&mut self) {
+        #[cfg(feature = "tracing")]
+        {
+            let span = mem::replace(&mut self.span, tracing::Span::none().entered());
+            self.cx.phase_span.set(span.exit());
+        }
+    }
+}
+
+impl<'a> PhaseGuard<'a> {
+    fn enter(cx: &'a Context, phase: Option<Phase>) -> Self {
+        if let Some(phase) = phase {
+            cx.phase.set(phase);
+        }
+
+        Self {
+            cx,
+            #[cfg(feature = "tracing")]
+            span: {
+                let mut span = cx.phase_span.replace(tracing::Span::none());
+                if let Some(phase) = phase {
+                    span = Self::span_for(&cx.metrics, phase);
+                }
+                span.entered()
+            },
+        }
+    }
+
+    fn switch(&mut self, phase: Phase) {
+        self.cx.phase.set(phase);
+
+        #[cfg(feature = "tracing")]
+        {
+            let _ = mem::replace(&mut self.span, tracing::Span::none().entered());
+            self.span = Self::span_for(&self.cx.metrics, phase).entered();
+        }
+    }
+
+    fn log_progress(&mut self, #[allow(unused)] message: &str) {
+        // TODO: add more infos here
+        #[cfg(feature = "tracing")]
+        tracing::debug!(
+            target: "gc_arena",
+            parent: &self.span,
+            message,
+            phase = tracing::field::debug(self.cx.phase.get()),
+            allocated = self.cx.metrics.total_allocation(),
+        );
+    }
+
+    #[cfg(feature = "tracing")]
+    fn span_for(metrics: &Metrics, phase: Phase) -> tracing::Span {
+        tracing::debug_span!(
+            target: "gc_arena",
+            "gc_arena",
+            id = metrics.arena_id(),
+            ?phase,
+        )
+    }
 }
