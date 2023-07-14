@@ -214,10 +214,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            let debt = self.context.metrics().allocation_debt();
-            if debt > 0.0 {
-                self.context.do_collection(&self.root, debt);
-            }
+            self.context.do_collection(&self.root, 0.0);
         }
     }
 
@@ -226,7 +223,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn collect_all(&mut self) {
         unsafe {
-            self.context.do_collection(&self.root, f64::INFINITY);
+            self.context.do_collection(&self.root, f64::NEG_INFINITY);
         }
     }
 }

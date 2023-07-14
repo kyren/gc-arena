@@ -122,11 +122,12 @@ impl Drop for Context {
 
 impl Context {
     pub(crate) unsafe fn new() -> Context {
+        let metrics = Metrics::new();
         Context {
-            metrics: Metrics::new(),
             phase: Cell::new(Phase::Sleep),
             #[cfg(feature = "tracing")]
-            phase_span: Cell::new(tracing::Span::none()),
+            phase_span: Cell::new(PhaseGuard::span_for(&metrics, Phase::Sleep)),
+            metrics,
             root_needs_trace: Cell::new(true),
             all: Cell::new(None),
             sweep: Cell::new(None),
@@ -159,7 +160,7 @@ impl Context {
         }
     }
 
-    // Do some collection work until we have either reached the target amount of work or have
+    // Do some collection work until either the debt goes down below the target amount or we have
     // finished the gc sweep phase. The unit of "work" here is a byte count of objects either
     // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
     // 1000 units of work, whatever percentage of them are live or not.
@@ -169,25 +170,25 @@ impl Context {
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to
     // `Phase::Mark`.
-    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, work: f64) {
-        self.do_collection_inner(root, work)
+    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, target_debt: f64) {
+        self.do_collection_inner(root, target_debt)
     }
 
-    fn do_collection_inner<R: Collect>(&self, root: &R, work: f64) {
-        let mut debt = self.metrics.allocation_debt();
-        let target_debt = debt - work;
+    fn do_collection_inner<R: Collect>(&self, root: &R, mut target_debt: f64) {
+        let mut entered = PhaseGuard::enter(self, None);
 
-        let mut entered = PhaseGuard::enter(
-            self,
-            // Calling `Context::do_collection` always transitions away from `Phase::Sleep` to
-            // `Phase::Mark`.
-            (self.phase.get() == Phase::Sleep).then(|| Phase::Mark),
-        );
+        if self.metrics.allocation_debt() <= target_debt {
+            entered.log_progress("GC: paused");
+            return;
+        }
 
-        entered.log_progress("GC: running...");
-
-        while debt > target_debt {
+        loop {
             match self.phase.get() {
+                Phase::Sleep => {
+                    // Immediately enter the mark phase; no need to update metrics here.
+                    entered.switch(Phase::Mark);
+                    continue;
+                }
                 Phase::Mark => {
                     // We look for an object first in the normal gray queue, then the "gray again"
                     // queue. Objects from the normal gray queue count as regular work, but objects
@@ -244,6 +245,9 @@ impl Context {
                         // allocations during the newly-entered `Phase:Sweep` will update `all`, but
                         // will *not* be reachable from `this.sweep`.
                         self.sweep.set(self.all.get());
+
+                        // No need to update metrics here.
+                        continue;
                     }
                 }
                 Phase::Sweep => {
@@ -306,16 +310,18 @@ impl Context {
                         self.root_needs_trace.set(true);
                         entered.switch(Phase::Sleep);
                         self.metrics.start_cycle();
+                        // Collection is done, forcibly exit the loop.
+                        target_debt = f64::INFINITY;
                     }
                 }
-                Phase::Sleep => break,
                 Phase::Drop => unreachable!(),
             }
 
-            debt = self.metrics.allocation_debt();
+            if self.metrics.allocation_debt() <= target_debt {
+                entered.log_progress("GC: yielding...");
+                return;
+            }
         }
-
-        entered.log_progress("GC: yielding...");
     }
 
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
@@ -468,7 +474,10 @@ struct PhaseGuard<'a> {
 impl<'a> Drop for PhaseGuard<'a> {
     fn drop(&mut self) {
         #[cfg(feature = "tracing")]
-        self.cx.phase_span.set(self.exit());
+        {
+            let span = mem::replace(&mut self.span, tracing::Span::none().entered());
+            self.cx.phase_span.set(span.exit());
+        }
     }
 }
 
@@ -484,7 +493,7 @@ impl<'a> PhaseGuard<'a> {
             span: {
                 let mut span = cx.phase_span.replace(tracing::Span::none());
                 if let Some(phase) = phase {
-                    span = Self::span_for(cx, phase);
+                    span = Self::span_for(&cx.metrics, phase);
                 }
                 span.entered()
             },
@@ -496,8 +505,8 @@ impl<'a> PhaseGuard<'a> {
 
         #[cfg(feature = "tracing")]
         {
-            self.exit();
-            self.span = Self::span_for(self.cx, phase).entered();
+            let _ = mem::replace(&mut self.span, tracing::Span::none().entered());
+            self.span = Self::span_for(&self.cx.metrics, phase).entered();
         }
     }
 
@@ -512,23 +521,13 @@ impl<'a> PhaseGuard<'a> {
             allocated = self.cx.metrics.total_allocation(),
         );
     }
-}
 
-#[cfg(feature = "tracing")]
-impl<'a> PhaseGuard<'a> {
-    fn exit(&mut self) -> tracing::Span {
-        mem::replace(&mut self.span, tracing::Span::none().entered()).exit()
-    }
-
-    fn span_for(cx: &Context, phase: Phase) -> tracing::Span {
-        // The sleep phase doesn't have an explicit span.
-        if phase == Phase::Sleep {
-            return tracing::Span::none();
-        }
+    #[cfg(feature = "tracing")]
+    fn span_for(metrics: &Metrics, phase: Phase) -> tracing::Span {
         tracing::debug_span!(
             target: "gc_arena",
             "gc_arena",
-            id = cx.metrics.arena_id(),
+            id = metrics.arena_id(),
             ?phase,
         )
     }
