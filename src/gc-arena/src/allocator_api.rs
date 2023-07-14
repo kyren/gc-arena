@@ -20,12 +20,14 @@ pub struct MetricsAlloc<'gc, A = Global> {
 }
 
 impl<'gc> MetricsAlloc<'gc> {
+    #[inline]
     pub fn new(mc: &Mutation<'gc>) -> Self {
         Self::new_in(mc, Global)
     }
 }
 
 impl<'gc, A> MetricsAlloc<'gc, A> {
+    #[inline]
     pub fn new_in(mc: &Mutation<'gc>, allocator: A) -> Self {
         Self {
             metrics: mc.metrics().clone(),
@@ -36,23 +38,27 @@ impl<'gc, A> MetricsAlloc<'gc, A> {
 }
 
 unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
+    #[inline]
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let ptr = self.allocator.allocate(layout)?;
         self.metrics.mark_external_allocation(layout.size());
         Ok(ptr)
     }
 
+    #[inline]
     unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
         self.metrics.mark_external_deallocation(layout.size());
         self.allocator.deallocate(ptr, layout);
     }
 
+    #[inline]
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
         let ptr = self.allocator.allocate_zeroed(layout)?;
         self.metrics.mark_external_allocation(layout.size());
         Ok(ptr)
     }
 
+    #[inline]
     unsafe fn grow(
         &self,
         ptr: NonNull<u8>,
@@ -65,6 +71,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
         Ok(ptr)
     }
 
+    #[inline]
     unsafe fn grow_zeroed(
         &self,
         ptr: NonNull<u8>,
@@ -77,6 +84,7 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
         Ok(ptr)
     }
 
+    #[inline]
     unsafe fn shrink(
         &self,
         ptr: NonNull<u8>,
