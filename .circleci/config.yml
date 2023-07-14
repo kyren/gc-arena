@@ -44,9 +44,6 @@ jobs:
               cargo check --all --features tracing
               cargo check --all --features allocator-api2
               cargo check --all --features hashbrown
-              cargo check --all --features tracing,allocator-api2
-              cargo check --all --features tracing,hashbrown
-              cargo check --all --features allocator-api2,hashbrown
               cargo check --all --features tracing,allocator-api2,hashbrown
       - run:
           name: Run all tests
