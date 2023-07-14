@@ -4,8 +4,11 @@ use alloc::{
 };
 use core::{fmt, mem};
 
-use crate::barrier::unlock;
 use crate::lock::RefLock;
+use crate::{
+    barrier::{unlock, Write},
+    metrics::Metrics,
+};
 use crate::{Collect, Gc, Mutation, Root, Rootable};
 
 /// A way of registering GC roots dynamically.
@@ -37,6 +40,7 @@ impl<'gc> DynamicRootSet<'gc> {
             mc,
             Inner {
                 handles: RefLock::new(Vec::new()),
+                metrics: mc.metrics().clone(),
                 set_id: Rc::new(SetId {}),
             },
         ))
@@ -56,9 +60,7 @@ impl<'gc> DynamicRootSet<'gc> {
             root,
         });
 
-        let weak_handle = Rc::<Handle<Root<'gc, R>>>::downgrade(&handle);
-        let handles = unlock!(Gc::write(mc, self.0), Inner, handles);
-        handles.borrow_mut().push(weak_handle);
+        Inner::adopt_handle(&Gc::write(mc, self.0), &handle);
 
         DynamicRoot {
             handle: unsafe {
@@ -160,11 +162,54 @@ impl std::error::Error for MismatchedRootSet {}
 // The address of an allocated `SetId` type uniquely identifies a single `DynamicRootSet`.
 struct SetId {}
 
-type HandleList<'gc> = Vec<Weak<Handle<dyn Collect + 'gc>>>;
+struct HandleStore<'gc> {
+    handle: Weak<Handle<dyn Collect + 'gc>>,
+    root_size: usize,
+}
 
 struct Inner<'gc> {
-    handles: RefLock<HandleList<'gc>>,
+    handles: RefLock<Vec<HandleStore<'gc>>>,
+    metrics: Metrics,
     set_id: Rc<SetId>,
+}
+
+fn size_of_handle_list<'gc>(list: &Vec<HandleStore<'gc>>) -> usize {
+    list.capacity() * mem::size_of::<Weak<Handle<dyn Collect + 'gc>>>()
+}
+
+impl<'gc> Inner<'gc> {
+    fn adopt_handle<T: Collect + 'gc>(this: &Write<Self>, handle: &Rc<Handle<T>>) {
+        // We count size_of::<T>() as part of the arena heap to encourage collection of the handle
+        // list. *Technically* this doesn't include the full size of the Rc allocation (strong and
+        // weak counts) but this does not matter very much.
+        let root_size = mem::size_of::<T>();
+        this.metrics.mark_external_allocation(root_size);
+
+        let handles = unlock!(this, Inner, handles);
+        let mut handles = handles.borrow_mut();
+        let old_size = size_of_handle_list(&handles);
+        handles.push(HandleStore {
+            handle: Rc::<Handle<T>>::downgrade(handle),
+            root_size,
+        });
+        let new_size = size_of_handle_list(&handles);
+
+        if new_size > old_size {
+            this.metrics.mark_external_allocation(new_size - old_size);
+        } else if old_size > new_size {
+            this.metrics.mark_external_deallocation(old_size - new_size);
+        }
+    }
+}
+
+impl<'gc> Drop for Inner<'gc> {
+    fn drop(&mut self) {
+        let handles = self.handles.borrow();
+        self.metrics
+            .mark_external_deallocation(handles.iter().map(|s| s.root_size).sum());
+        self.metrics
+            .mark_external_deallocation(size_of_handle_list(&self.handles.borrow()));
+    }
 }
 
 unsafe impl<'gc> Collect for Inner<'gc> {
@@ -174,11 +219,12 @@ unsafe impl<'gc> Collect for Inner<'gc> {
         // through the entire list of roots anyway, this is cheaper than filtering on e.g.
         // stashing new roots.
         let handles = unsafe { self.handles.as_ref_cell() };
-        handles.borrow_mut().retain(|handle| {
-            if let Some(handle) = handle.upgrade() {
+        handles.borrow_mut().retain(|store| {
+            if let Some(handle) = store.handle.upgrade() {
                 handle.root.trace(cc);
                 true
             } else {
+                cc.metrics().mark_external_deallocation(store.root_size);
                 false
             }
         });
