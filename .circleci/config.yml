@@ -33,7 +33,7 @@ jobs:
               cargo fmt --all -- --check --color=auto
       - run:
           name: Build all targets
-          command: cargo build --workspace --all-targets
+          command: cargo build --all --all-targets
       - run:
           name: Build no_std targets
           command: |
@@ -42,19 +42,22 @@ jobs:
           name: Check with combinations of optional features
           command: |
               cargo check --all --features tracing
+              cargo check --all --features allocator-api2
+              cargo check --all --features hashbrown
+              cargo check --all --features tracing,allocator-api2,hashbrown
       - run:
           name: Run all tests
-          command: cargo test --workspace
+          command: cargo test --all
       - run:
           name: Run all tests under miri
           command: |
-            cargo +nightly miri test --workspace --tests --all-features -- --skip ui
+            cargo +nightly miri test --all --tests --all-features -- --skip ui
       - run:
           name: Run all tests under sanitizers
           command: |
-            RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
-            RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
-            RUSTFLAGS="-Z sanitizer=memory" cargo +nightly test --workspace --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
+            RUSTFLAGS="-Z sanitizer=address" cargo +nightly test --all --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
+            RUSTFLAGS="-Z sanitizer=leak" cargo +nightly test --all --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
+            RUSTFLAGS="-Z sanitizer=memory" cargo +nightly test --all --tests -Z build-std --target x86_64-unknown-linux-gnu --all-features -- --skip ui
       - save_cache:
           paths:
             - /usr/local/cargo/registry
