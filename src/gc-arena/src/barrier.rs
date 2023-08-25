@@ -90,6 +90,34 @@ impl<T: ?Sized> Write<T> {
     }
 }
 
+impl<T> Write<Option<T>> {
+    /// Converts from `&Write<Option<T>>` to `Option<&Write<T>>`.
+    #[inline(always)]
+    pub fn as_write(&self) -> Option<&Write<T>> {
+        // SAFETY: this is simple destructuring
+        unsafe {
+            match &self.__inner {
+                None => None,
+                Some(v) => Some(Write::assume(v)),
+            }
+        }
+    }
+}
+
+impl<T, E> Write<Result<T, E>> {
+    /// Converts from `&Write<Result<T, E>>` to `Result<&Write<T>, &Write<E>>`.
+    #[inline(always)]
+    pub fn as_write(&self) -> Result<&Write<T>, &Write<E>> {
+        // SAFETY: this is simple destructuring
+        unsafe {
+            match &self.__inner {
+                Ok(v) => Ok(Write::assume(v)),
+                Err(e) => Err(Write::assume(e)),
+            }
+        }
+    }
+}
+
 /// Types that support additional operations (typically, mutation) when behind a write barrier.
 pub trait Unlock {
     /// This will typically be a cell-like type providing some sort of interior mutability.
