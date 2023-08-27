@@ -322,6 +322,22 @@ unsafe impl<T: Collect, const N: usize> Collect for [T; N] {
     }
 }
 
+#[cfg(feature = "enum-map")]
+unsafe impl<K: enum_map::EnumArray<V> + Collect, V: Collect> Collect for enum_map::EnumMap<K, V> {
+    #[inline]
+    fn needs_trace() -> bool {
+        K::needs_trace() || V::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: &Collection) {
+        for (k, v) in self.iter() {
+            k.trace(cc);
+            v.trace(cc);
+        }
+    }
+}
+
 macro_rules! impl_tuple {
     () => (
         unsafe impl Collect for () {
