@@ -3,7 +3,6 @@ use alloc::collections::VecDeque;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::rc::Rc;
 use alloc::string::String;
-use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
@@ -270,7 +269,8 @@ where
     }
 }
 
-unsafe impl<T> Collect for Arc<T>
+#[cfg(target_has_atomic = "ptr")]
+unsafe impl<T> Collect for alloc::sync::Arc<T>
 where
     T: ?Sized + Collect,
 {
