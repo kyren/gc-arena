@@ -79,7 +79,10 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     }
 
     let Some(mode) = mode else {
-        panic!("{}", "deriving `Collect` requires a `#[collect(...)]` attribute");
+        panic!(
+            "{}",
+            "deriving `Collect` requires a `#[collect(...)]` attribute"
+        );
     };
 
     let where_clause = if mode == Mode::RequireStatic {
