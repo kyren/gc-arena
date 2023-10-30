@@ -8,13 +8,13 @@ error[E0277]: the trait bound `NotCollect: Collect` is not satisfied
   |     ^^^^^ the trait `Collect` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect`:
-            &'static T
-            ()
-            (A, B)
-            (A, B, C)
-            (A, B, C, D)
-            (A, B, C, D, E)
-            (A, B, C, D, E, F)
-            (A, B, C, D, E, F, G)
+            bool
+            char
+            isize
+            i8
+            i16
+            i32
+            i64
+            usize
           and $N others
   = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)

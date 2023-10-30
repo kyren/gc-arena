@@ -1,4 +1,6 @@
 [workspace]
+resolver = "2"
+
 members = [
     "src/gc-arena-derive/",
     "src/gc-arena/",
@@ -7,7 +9,7 @@ members = [
 [workspace.package]
 version = "0.3.3"
 authors = ["kyren <kerriganw@gmail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kyren/gc-arena"
