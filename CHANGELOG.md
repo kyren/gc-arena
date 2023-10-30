@@ -1,3 +1,27 @@
+## [0.4.0]
+
+This release adds the ability to track *external* allocations (allocations
+which are not stored in a `Gc<T>`) which also participate in pacing the garbage
+collector. There is now a new (feature-gated) type `allocator_api::MetricsAlloc`
+which implements the `allocator-api2::Allocator` trait which can be used to
+automatically track the external allocation of collection types.
+
+This release also adds (feature-gated) `tracing` support, which emits a span
+per GC phase (propagate, sweep, drop), and events when collection resumes and
+yields.
+
+## Release Highlights
+- Tracked external allocations API which participates in GC pacing.
+- Feature-gated support for a `allocator_api2::Allocator` implementation that
+  automatically tracks allocation.
+- Feature-gated support for `hashbrown` types, to automatically implement
+  `Collect` on them.
+- Feature-gated `tracing` support.
+- Implement `Collect` for `Box<T: ?Sized>`.
+- Add methods to project `Write<Option<T>>` and `Write<Result<T, E>>`.
+- Don't fail to build by trying to implement `Collect` on `Arc<T>` for platforms
+  without `Arc`.
+
 ## [0.3.3]
 - Actually pause for the configured amount of time in the gc, rather than the
   minimum.
