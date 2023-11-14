@@ -261,22 +261,22 @@ where
 
 unsafe impl<T> Collect for Rc<T>
 where
-    T: ?Sized + Collect,
+    T: ?Sized + 'static,
 {
     #[inline]
-    fn trace(&self, cc: &Collection) {
-        (**self).trace(cc);
+    fn needs_trace() -> bool {
+        false
     }
 }
 
 #[cfg(target_has_atomic = "ptr")]
 unsafe impl<T> Collect for alloc::sync::Arc<T>
 where
-    T: ?Sized + Collect,
+    T: ?Sized + 'static,
 {
     #[inline]
-    fn trace(&self, cc: &Collection) {
-        (**self).trace(cc);
+    fn needs_trace() -> bool {
+        false
     }
 }
 
