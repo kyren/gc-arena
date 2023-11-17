@@ -5,7 +5,7 @@ use core::cell::Cell;
 #[derive(Debug, Copy, Clone)]
 pub struct Pacing {
     pub(crate) pause_factor: f64,
-    pub(crate) timing_factor: f64,
+    pub(crate) debit_factor: f64,
     pub(crate) min_sleep: usize,
 }
 
@@ -20,7 +20,7 @@ impl Default for Pacing {
 
         Pacing {
             pause_factor: PAUSE_FACTOR,
-            timing_factor: TIMING_FACTOR,
+            debit_factor: timing_to_debit_factor(TIMING_FACTOR),
             min_sleep: MIN_SLEEP,
         }
     }
@@ -45,8 +45,7 @@ impl Pacing {
     /// 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
     #[inline]
     pub fn with_timing_factor(mut self, timing_factor: f64) -> Pacing {
-        assert!(timing_factor >= 0.0);
-        self.timing_factor = timing_factor;
+        self.debit_factor = timing_to_debit_factor(timing_factor);
         self
     }
 
@@ -169,20 +168,7 @@ impl Metrics {
             + traced_external_estimate
             + self.0.freed_external_bytes.get() as f64;
 
-        // Debits count for `1.0 + 1.0 / timing_factor` times their actual value. This means that
-        // if `wakeup_amount` is 100KB, and `timing_factor` is 1.0, then it will take 100KB more
-        // allocation before the collector finishes a cycle... when the cycle_debits hit 100KB, the
-        // cycle_credits must be 200KB to get back to 0 debt, and since the total heap size is now
-        // 200KB, this is a full cycle.
-        //
-        // Lowering `timing_factor` makes the collector behave more like a stop-the-world collector,
-        // and raising it slows the collector down. This factor is configured this way because the
-        // lowest allowable value (0.0) is a sensible stop-the-world behavior, and higher (finite)
-        // values are slower but still valid. If `debit_factor` ended up being <= 1.0, then we could
-        // not be sure that collection would ever *finish*.
-        let debit_factor = 1.0 + 1.0 / self.0.pacing.get().timing_factor;
-
-        let debt = cycle_debits * debit_factor - cycle_credits;
+        let debt = cycle_debits * self.0.pacing.get().debit_factor - cycle_credits;
 
         debt.max(0.0)
     }
@@ -277,4 +263,22 @@ impl Metrics {
 #[inline]
 fn cell_update<T: Copy>(c: &Cell<T>, f: impl FnOnce(T) -> T) {
     c.set(f(c.get()))
+}
+
+// Computes the `debit_factor` (aka, the amount that debits are multiplied by) from the
+// `timing_factor` configured by the user. It should always be > 1.0.
+//
+// Debits count for `1.0 + 1.0 / timing_factor` times their actual value. This means that if
+// `wakeup_amount` is 100KB, and `timing_factor` is 1.0, then it will take 100KB more allocation
+// before the collector finishes a cycle... when the cycle_debits hit 100KB, the cycle_credits must
+// be 200KB to get back to 0 debt, and since the total heap size is now 200KB, this is a full cycle.
+//
+// Lowering `timing_factor` makes the collector behave more like a stop-the-world collector, and
+// raising it slows the collector down. This factor is configured this way because the lowest
+// allowable value (0.0) is a sensible stop-the-world behavior, and higher (finite) values are
+// slower but still valid. If `debit_factor` ended up being <= 1.0, then we could not be sure that
+// collection would ever *finish*.
+fn timing_to_debit_factor(timing_factor: f64) -> f64 {
+    assert!(timing_factor >= 0.0);
+    1.0 + 1.0 / timing_factor
 }
