@@ -63,18 +63,22 @@ impl Pacing {
 struct MetricsInner {
     pacing: Cell<Pacing>,
 
-    total_gc_bytes: Cell<usize>,
     total_gcs: Cell<usize>,
+    total_gc_bytes: Cell<usize>,
+    total_external_bytes: Cell<usize>,
+
+    wakeup_amount: Cell<f64>,
+
+    allocated_gc_bytes: Cell<usize>,
     traced_gcs: Cell<usize>,
+    traced_gc_bytes: Cell<usize>,
+    freed_gc_bytes: Cell<usize>,
 
     remembered_gcs: Cell<usize>,
     remembered_gc_bytes: Cell<usize>,
 
-    total_external_bytes: Cell<usize>,
-
-    gc_debt: Cell<f64>,
-    external_debt: Cell<f64>,
-    wakeup_amount: Cell<f64>,
+    allocated_external_bytes: Cell<usize>,
+    freed_external_bytes: Cell<usize>,
 }
 
 #[derive(Clone)]
@@ -140,20 +144,47 @@ impl Metrics {
         if total_gcs == 0 {
             // If we have no live `Gc`s, then there is no possible collection to do so always
             // return zero debt.
-            0.0
-        } else {
-            // Estimate the amount of external memory that has been traced assuming that each Gc
-            // owns an even share of the external memory.
-            let traced_external_estimate = self.0.traced_gcs.get() as f64 / total_gcs as f64
-                * self.0.total_external_bytes.get() as f64;
-
-            let debt = self.0.gc_debt.get() + self.0.external_debt.get() - traced_external_estimate;
-
-            let wakeup_amount = self.0.wakeup_amount.get();
-            let wakeup_debt = wakeup_amount + wakeup_amount / self.0.pacing.get().timing_factor;
-
-            (debt - wakeup_debt).max(0.0)
+            return 0.0;
         }
+
+        // Every allocation in a cycle is a debit.
+        let raw_cycle_debits =
+            self.0.allocated_gc_bytes.get() as f64 + self.0.allocated_external_bytes.get() as f64;
+
+        // We do not begin collection at all until the allocations in a cycle reach the wakeup
+        // amount.
+        let cycle_debits = raw_cycle_debits - self.0.wakeup_amount.get();
+        if cycle_debits <= 0.0 {
+            return 0.0;
+        }
+
+        // Estimate the amount of external memory that has been traced assuming that each Gc
+        // owns an even share of the external memory.
+        let traced_external_estimate = self.0.traced_gcs.get() as f64 / total_gcs as f64
+            * self.0.total_external_bytes.get() as f64;
+
+        // Tracing or freeing memory counts as a credit.
+        let cycle_credits = self.0.traced_gc_bytes.get() as f64
+            + self.0.freed_gc_bytes.get() as f64
+            + traced_external_estimate
+            + self.0.freed_external_bytes.get() as f64;
+
+        // Debits count for `1.0 + 1.0 / timing_factor` times their actual value. This means that
+        // if `wakeup_amount` is 100KB, and `timing_factor` is 1.0, then it will take 100KB more
+        // allocation before the collector finishes a cycle... when the cycle_debits hit 100KB, the
+        // cycle_credits must be 200KB to get back to 0 debt, and since the total heap size is now
+        // 200KB, this is a full cycle.
+        //
+        // Lowering `timing_factor` makes the collector behave more like a stop-the-world collector,
+        // and raising it slows the collector down. This factor is configured this way because the
+        // lowest allowable value (0.0) is a sensible stop-the-world behavior, and higher (finite)
+        // values are slower but still valid. If `debit_factor` ended up being <= 1.0, then we could
+        // not be sure that collection would ever *finish*.
+        let debit_factor = 1.0 + 1.0 / self.0.pacing.get().timing_factor;
+
+        let debt = cycle_debits * debit_factor - cycle_credits;
+
+        debt.max(0.0)
     }
 
     /// Call to mark that bytes have been externally allocated that are owned by an arena.
@@ -163,8 +194,8 @@ impl Metrics {
     #[inline]
     pub fn mark_external_allocation(&self, bytes: usize) {
         cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
-        cell_update(&self.0.external_debt, |d| {
-            d + bytes as f64 + bytes as f64 / self.0.pacing.get().timing_factor
+        cell_update(&self.0.allocated_external_bytes, |b| {
+            b.saturating_add(bytes)
         });
     }
 
@@ -180,7 +211,7 @@ impl Metrics {
     #[inline]
     pub fn mark_external_deallocation(&self, bytes: usize) {
         cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
-        cell_update(&self.0.external_debt, |d| d - bytes as f64);
+        cell_update(&self.0.freed_external_bytes, |b| b.saturating_add(bytes));
     }
 
     pub(crate) fn start_cycle(&self) {
@@ -203,34 +234,35 @@ impl Metrics {
             (remembered_size * pacing.pause_factor).max(pacing.min_sleep as f64)
         };
 
+        self.0.wakeup_amount.set(wakeup_amount);
+        self.0.allocated_gc_bytes.set(0);
+        self.0.freed_gc_bytes.set(0);
         self.0.traced_gcs.set(0);
+        self.0.traced_gc_bytes.set(0);
         self.0.remembered_gcs.set(0);
         self.0.remembered_gc_bytes.set(0);
-        self.0.gc_debt.set(0.0);
-        self.0.external_debt.set(0.0);
-        self.0.wakeup_amount.set(wakeup_amount);
+        self.0.allocated_external_bytes.set(0);
+        self.0.freed_external_bytes.set(0);
     }
 
     #[inline]
     pub(crate) fn mark_gc_allocated(&self, bytes: usize) {
-        cell_update(&self.0.total_gc_bytes, |b| b + bytes);
         cell_update(&self.0.total_gcs, |c| c + 1);
-        cell_update(&self.0.gc_debt, |d| {
-            d + bytes as f64 + bytes as f64 / self.0.pacing.get().timing_factor
-        });
+        cell_update(&self.0.total_gc_bytes, |b| b + bytes);
+        cell_update(&self.0.allocated_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
     pub(crate) fn mark_gc_traced(&self, bytes: usize) {
-        cell_update(&self.0.traced_gcs, |c| c + 1);
-        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
+        cell_update(&self.0.traced_gcs, |c| c.saturating_add(1));
+        cell_update(&self.0.traced_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
     pub(crate) fn mark_gc_deallocated(&self, bytes: usize) {
-        cell_update(&self.0.total_gc_bytes, |b| b - bytes);
         cell_update(&self.0.total_gcs, |c| c - 1);
-        cell_update(&self.0.gc_debt, |d| d - bytes as f64);
+        cell_update(&self.0.total_gc_bytes, |b| b - bytes);
+        cell_update(&self.0.freed_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]

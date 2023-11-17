@@ -767,6 +767,63 @@ fn gc_external_allocation_affects_timing() {
 }
 
 #[test]
+fn zero_timing_factor_stops_the_world() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 256]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+        test: Gc::new(mc, [0; 256]),
+    });
+
+    arena.metrics().set_pacing(
+        Pacing::default()
+            .with_pause_factor(1.5)
+            .with_timing_factor(0.0)
+            .with_min_sleep(1024),
+    );
+    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
+    // for exactly min_sleep, since the pause factor is 1.5 and 2.5x 256 bytes is 640 which is less
+    // than 1024.
+    arena.collect_all();
+
+    // We should be asleep, aka the debt should be zero.
+    assert!(arena.metrics().allocation_debt() == 0.0);
+
+    for _ in 0..8 {
+        arena.metrics().mark_external_allocation(100);
+    }
+
+    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
+    // 224 bytes).
+    assert!(arena.metrics().allocation_debt() == 0.0);
+
+    for _ in 0..3 {
+        arena.metrics().mark_external_allocation(100);
+    }
+
+    // Our debt should now be infinite, because this acts like a stop-the-world collector.
+    let debt = arena.metrics().allocation_debt();
+    assert!(debt > 0.0 && debt.is_infinite());
+
+    // This should do a full collection.
+    arena.collect_debt();
+
+    // And we should be back asleep.
+    assert!(arena.metrics().allocation_debt() == 0.0);
+
+    // The total allocations alive after the last full collection were at least 1100 bytes, so
+    // allocation 1600 bytes (which is less than 1100 * 1.5) should not wake the collector.
+    for _ in 0..12 {
+        arena.metrics().mark_external_allocation(100);
+    }
+
+    assert!(arena.metrics().allocation_debt() == 0.0);
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
