@@ -220,7 +220,7 @@ impl CollectVtable {
 /// user-facing `Gc`s to freely cast their pointer to it.
 #[repr(C)]
 pub(crate) struct GcBoxInner<T: ?Sized> {
-    header: GcBoxHeader,
+    pub(crate) header: GcBoxHeader,
     /// The typed value stored in this `GcBox`.
     pub(crate) value: mem::ManuallyDrop<T>,
 }

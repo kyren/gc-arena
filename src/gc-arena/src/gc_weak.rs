@@ -47,8 +47,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// Note that calling `upgrade` may still fail even when this method returns `false`.
     #[inline]
     pub fn is_dropped(self) -> bool {
-        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
-        !ptr.header().is_live()
+        !unsafe { self.inner.ptr.as_ref() }.header.is_live()
     }
 
     #[inline]

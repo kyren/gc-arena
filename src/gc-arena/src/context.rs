@@ -39,6 +39,16 @@ impl<'gc> Mutation<'gc> {
     pub(crate) fn upgrade(&self, gc_box: GcBox) -> bool {
         self.context.upgrade(gc_box)
     }
+
+    #[inline]
+    pub(crate) fn register_finalizer(
+        &self,
+        finalizer: NonNull<GcBoxInner<dyn Finalizer<'gc> + 'gc>>,
+    ) {
+        let finalizer: NonNull<GcBoxInner<dyn Finalizer<'static>>> =
+            unsafe { mem::transmute(finalizer) };
+        self.context.finalizers.borrow_mut().push(finalizer);
+    }
 }
 
 /// Handle value given by arena callbacks during garbage collection, which must be passed through
@@ -63,6 +73,17 @@ impl Collection {
     pub(crate) fn trace_weak(&self, gc_box: GcBox) {
         self.context.trace_weak(gc_box)
     }
+}
+
+// Internal trait for `Gc` pointers that will have a method called on them that is guaranteed to
+// occur at the *end* of the mark phase.
+//
+// Finalizers will always be called in a predictable order, in reverse order of registration.
+//
+// Finalizers may invoke write barriers, and doing so will make collection process the `gray_again`
+// queue before moving back to calling additional finalizers.
+pub(crate) trait Finalizer<'gc> {
+    fn finalize(&self, mc: &Mutation<'gc>);
 }
 
 pub(crate) struct Context {
@@ -96,6 +117,9 @@ pub(crate) struct Context {
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
     gray_again: RefCell<Vec<GcBox>>,
+
+    // Registered objects that will have finalizer methods called at the end of the mark phase.
+    finalizers: RefCell<Vec<NonNull<GcBoxInner<dyn Finalizer<'static>>>>>,
 }
 
 impl Drop for Context {
@@ -134,6 +158,7 @@ impl Context {
             sweep_prev: Cell::new(None),
             gray: RefCell::new(Vec::new()),
             gray_again: RefCell::new(Vec::new()),
+            finalizers: RefCell::new(Vec::new()),
         }
     }
 
@@ -190,47 +215,7 @@ impl Context {
                     continue;
                 }
                 Phase::Mark => {
-                    // We look for an object first in the normal gray queue, then the "gray again"
-                    // queue. Objects from the normal gray queue count as regular work, but objects
-                    // which are gray a second time have already been counted as work, so we don't
-                    // double count them. Processing "gray again" objects later also gives them more
-                    // time to be mutated again without triggering another write barrier.
-                    let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
-                        self.metrics.mark_gc_traced(gc_box.header().size_of_box());
-                        Some(gc_box)
-                    } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
-                        Some(gc_box)
-                    } else {
-                        None
-                    };
-
-                    if let Some(gc_box) = next_gray {
-                        // If we have an object in the gray queue, take one, trace it, and turn it
-                        // black.
-
-                        // Our `Collect::trace` call may panic, and if it does the object will be
-                        // lost from the gray queue but potentially incompletely traced. By catching
-                        // a panic during `Arena::collect()`, this could lead to memory unsafety.
-                        //
-                        // So, if the `Collect::trace` call panics, we need to add the popped object
-                        // back to the `gray_again` queue. If the panic is caught, this will maybe
-                        // give it some time to not panic before attempting to collect it again, and
-                        // also this doesn't invalidate the collection debt math.
-                        struct DropGuard<'a> {
-                            cx: &'a Context,
-                            gc_box: GcBox,
-                        }
-
-                        impl<'a> Drop for DropGuard<'a> {
-                            fn drop(&mut self) {
-                                self.cx.gray_again.borrow_mut().push(self.gc_box);
-                            }
-                        }
-
-                        let guard = DropGuard { cx: self, gc_box };
-                        unsafe { gc_box.trace_value(self.collection_context()) }
-                        gc_box.header().set_color(GcColor::Black);
-                        mem::forget(guard);
+                    if self.trace_grays() {
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
@@ -238,12 +223,38 @@ impl Context {
                         root.trace(self.collection_context());
                         self.root_needs_trace.set(false);
                     } else {
-                        // If we have no gray objects left, we enter the sweep phase.
+                        // We are done with the mark phase and are about to enter the sweep phase,
+                        // we need to call every registered finalizer and trace any newly gray
+                        // pointers from them.
+
+                        let finalizer_len = self.finalizers.borrow().len();
+                        // Finalizers registered later are called earlier in the process than
+                        // finalizers that are registered earlier.
+                        for i in (0..finalizer_len).rev() {
+                            unsafe {
+                                self.finalizers.borrow()[i]
+                                    .as_ref()
+                                    .value
+                                    .finalize(self.mutation_context());
+                            }
+
+                            while self.trace_grays() {}
+                        }
+
+                        // Clear out any dead finalizers.
+                        self.finalizers.borrow_mut().retain(|f| {
+                            let color = unsafe { f.as_ref() }.header.color();
+                            debug_assert!(color != GcColor::Gray);
+                            color == GcColor::Black
+                        });
+
+                        // If we have no gray objects or finalizers left, we enter the sweep
+                        // phase.
                         entered.switch(Phase::Sweep);
 
                         // Set `sweep to the current head of our `all` linked list. Any new
-                        // allocations during the newly-entered `Phase:Sweep` will update `all`, but
-                        // will *not* be reachable from `this.sweep`.
+                        // allocations during the newly-entered `Phase:Sweep` will update `all`,
+                        // but will *not* be reachable from `this.sweep`.
                         self.sweep.set(self.all.get());
 
                         // No need to update metrics here.
@@ -322,6 +333,56 @@ impl Context {
                 return;
             }
         }
+    }
+
+    // Traces any gray values in the `gray` or `gray_again` queues, returns false if there were no
+    // gray values to trace.
+    fn trace_grays(&self) -> bool {
+        // We look for an object first in the normal gray queue, then the "gray again"
+        // queue. Objects from the normal gray queue count as regular work, but objects
+        // which are gray a second time have already been counted as work, so we don't
+        // double count them. Processing "gray again" objects later also gives them more
+        // time to be mutated again without triggering another write barrier.
+        let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
+            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            Some(gc_box)
+        } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
+            Some(gc_box)
+        } else {
+            None
+        };
+
+        let Some(gc_box) = next_gray else {
+            return false;
+        };
+
+        // If we have an object in the gray queue, take one, trace it, and turn it
+        // black.
+
+        // Our `Collect::trace` call may panic, and if it does the object will be
+        // lost from the gray queue but potentially incompletely traced. By catching
+        // a panic during `Arena::collect()`, this could lead to memory unsafety.
+        //
+        // So, if the `Collect::trace` call panics, we need to add the popped object
+        // back to the `gray_again` queue. If the panic is caught, this will maybe
+        // give it some time to not panic before attempting to collect it again, and
+        // also this doesn't invalidate the collection debt math.
+        struct DropGuard<'a> {
+            cx: &'a Context,
+            gc_box: GcBox,
+        }
+
+        impl<'a> Drop for DropGuard<'a> {
+            fn drop(&mut self) {
+                self.cx.gray_again.borrow_mut().push(self.gc_box);
+            }
+        }
+
+        let guard = DropGuard { cx: self, gc_box };
+        unsafe { gc_box.trace_value(self.collection_context()) }
+        gc_box.header().set_color(GcColor::Black);
+        mem::forget(guard);
+        true
     }
 
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
@@ -422,7 +483,7 @@ impl Context {
         //   before we transition to `Phase::Sweep`.
         //
         // * In `Phase::Sweep`:
-        //   If the allocation is `WhiteWeak`, then it's impossile for it to have been freshly-
+        //   If the allocation is `WhiteWeak`, then it's impossible for it to have been freshly-
         //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
         //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
         //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed
