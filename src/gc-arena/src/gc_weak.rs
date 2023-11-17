@@ -42,13 +42,33 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         }
     }
 
+    /// Try to trace a weak pointer as though it is a strong pointer.
+    ///
+    /// If this weak pointer is alive, then this traces through the weak pointer and keeps it alive
+    /// as though it were a strong pointer. If the pointer is alive, this method returns the strong
+    /// pointer and since this pointer is known to be alive for this cycle, it may be adopted by any
+    /// other pointer without a write barrier.
+    ///
+    /// If the pointer is not alive, this method will return `None` and is equivalent to calling
+    /// `GcWeak::trace`.
+    #[inline]
+    pub fn trace_strong(&self, cc: &Collection) -> Option<Gc<'gc, T>> {
+        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
+        if ptr.header().is_live() {
+            cc.trace(ptr);
+            Some(self.inner)
+        } else {
+            cc.trace_weak(ptr);
+            None
+        }
+    }
+
     /// Returns whether the value referenced by this `GcWeak` has been dropped.
     ///
     /// Note that calling `upgrade` may still fail even when this method returns `false`.
     #[inline]
     pub fn is_dropped(self) -> bool {
-        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
-        !ptr.header().is_live()
+        !unsafe { self.inner.ptr.as_ref() }.header.is_live()
     }
 
     #[inline]

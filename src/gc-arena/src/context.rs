@@ -96,6 +96,9 @@ pub(crate) struct Context {
     // A queue of gray objects that became gray as a result
     // of a `write_barrier` call.
     gray_again: RefCell<Vec<GcBox>>,
+
+    // A queue of gray objects that are to be traced atomically at the very end of the mark phase.
+    gray_at_end: RefCell<Vec<GcBox>>,
 }
 
 impl Drop for Context {
@@ -134,6 +137,7 @@ impl Context {
             sweep_prev: Cell::new(None),
             gray: RefCell::new(Vec::new()),
             gray_again: RefCell::new(Vec::new()),
+            gray_at_end: RefCell::new(Vec::new()),
         }
     }
 
@@ -204,33 +208,11 @@ impl Context {
                         None
                     };
 
-                    if let Some(gc_box) = next_gray {
+                    if let Some(next_gray) = next_gray {
                         // If we have an object in the gray queue, take one, trace it, and turn it
                         // black.
 
-                        // Our `Collect::trace` call may panic, and if it does the object will be
-                        // lost from the gray queue but potentially incompletely traced. By catching
-                        // a panic during `Arena::collect()`, this could lead to memory unsafety.
-                        //
-                        // So, if the `Collect::trace` call panics, we need to add the popped object
-                        // back to the `gray_again` queue. If the panic is caught, this will maybe
-                        // give it some time to not panic before attempting to collect it again, and
-                        // also this doesn't invalidate the collection debt math.
-                        struct DropGuard<'a> {
-                            cx: &'a Context,
-                            gc_box: GcBox,
-                        }
-
-                        impl<'a> Drop for DropGuard<'a> {
-                            fn drop(&mut self) {
-                                self.cx.gray_again.borrow_mut().push(self.gc_box);
-                            }
-                        }
-
-                        let guard = DropGuard { cx: self, gc_box };
-                        unsafe { gc_box.trace_value(self.collection_context()) }
-                        gc_box.header().set_color(GcColor::Black);
-                        mem::forget(guard);
+                        self.do_trace_gray(next_gray);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
@@ -238,6 +220,27 @@ impl Context {
                         root.trace(self.collection_context());
                         self.root_needs_trace.set(false);
                     } else {
+                        // We need to atomically trace all of the `gray_at_end` pointers.
+                        loop {
+                            let next_gray = if let Some(gc_box) = self.gray.borrow_mut().pop() {
+                                self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+                                Some(gc_box)
+                            } else if let Some(gc_box) = self.gray_again.borrow_mut().pop() {
+                                Some(gc_box)
+                            } else if let Some(gc_box) = self.gray_at_end.borrow_mut().pop() {
+                                self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+                                Some(gc_box)
+                            } else {
+                                None
+                            };
+
+                            if let Some(next_gray) = next_gray {
+                                self.do_trace_gray(next_gray);
+                            } else {
+                                break;
+                            }
+                        }
+
                         // If we have no gray objects left, we enter the sweep phase.
                         entered.switch(Phase::Sweep);
 
@@ -324,6 +327,36 @@ impl Context {
         }
     }
 
+    // Traces a gray ptr and turns it black, with a drop guard that places it back in the
+    // `gray_again` queue.
+    fn do_trace_gray(&self, gc_box: GcBox) {
+        debug_assert!(gc_box.header().color() == GcColor::Gray);
+
+        // Our `Collect::trace` call may panic, and if it does the object will be
+        // lost from the gray queue but potentially incompletely traced. By catching
+        // a panic during `Arena::collect()`, this could lead to memory unsafety.
+        //
+        // So, if the `Collect::trace` call panics, we need to add the popped object
+        // back to the `gray_again` queue. If the panic is caught, this will maybe
+        // give it some time to not panic before attempting to collect it again, and
+        // also this doesn't invalidate the collection debt math.
+        struct DropGuard<'a> {
+            cx: &'a Context,
+            gc_box: GcBox,
+        }
+
+        impl<'a> Drop for DropGuard<'a> {
+            fn drop(&mut self) {
+                self.cx.gray_again.borrow_mut().push(self.gc_box);
+            }
+        }
+
+        let guard = DropGuard { cx: self, gc_box };
+        unsafe { gc_box.trace_value(self.collection_context()) }
+        gc_box.header().set_color(GcColor::Black);
+        mem::forget(guard);
+    }
+
     fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
@@ -379,9 +412,13 @@ impl Context {
             GcColor::White | GcColor::WhiteWeak => {
                 if header.needs_trace() {
                     // A white traceable object is not in the gray queue, becomes gray and enters
-                    // the normal gray queue.
+                    // the gray queue.
                     header.set_color(GcColor::Gray);
-                    self.gray.borrow_mut().push(gc_box);
+                    if header.trace_at_end() {
+                        self.gray_at_end.borrow_mut().push(gc_box);
+                    } else {
+                        self.gray.borrow_mut().push(gc_box);
+                    }
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
                     header.set_color(GcColor::Black);
@@ -422,7 +459,7 @@ impl Context {
         //   before we transition to `Phase::Sweep`.
         //
         // * In `Phase::Sweep`:
-        //   If the allocation is `WhiteWeak`, then it's impossile for it to have been freshly-
+        //   If the allocation is `WhiteWeak`, then it's impossible for it to have been freshly-
         //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
         //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
         //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed

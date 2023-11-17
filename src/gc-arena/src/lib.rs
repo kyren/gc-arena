@@ -12,6 +12,7 @@ mod collect;
 mod collect_impl;
 mod context;
 mod dynamic_roots;
+pub mod finalize_queue;
 mod gc;
 mod gc_weak;
 pub mod lock;

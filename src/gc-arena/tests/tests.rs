@@ -1,4 +1,5 @@
 use core::{cell::Cell, mem};
+use gc_arena::finalize_queue::FinalizeQueue;
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
@@ -764,6 +765,54 @@ fn gc_external_allocation_affects_timing() {
 
     // This should have payed off some debt.
     assert!(arena.metrics().allocation_debt() < debt_high_mark);
+}
+
+#[test]
+fn finalize_queue() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        finalize_queue: FinalizeQueue<'gc, u8>,
+        test: Gc<'gc, u8>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+        finalize_queue: FinalizeQueue::new(mc),
+        test: Gc::new(mc, 4),
+    });
+
+    arena.mutate(|mc, root| {
+        root.finalize_queue.register(Gc::new(mc, 1));
+        root.finalize_queue.register(Gc::new(mc, 2));
+        root.finalize_queue.register(Gc::new(mc, 3));
+        root.finalize_queue.register(root.test);
+        root.finalize_queue.register(Gc::new(mc, 5));
+        root.finalize_queue.register(Gc::new(mc, 6));
+    });
+
+    arena.collect_all();
+
+    arena.mutate_root(|mc, root| {
+        let mut v = Vec::new();
+        while let Some(p) = root.finalize_queue.poll() {
+            v.push(*p);
+        }
+        v.sort();
+        assert_eq!(v, &[1, 2, 3, 5, 6]);
+        root.test = Gc::new(mc, 7);
+        root.finalize_queue.register(root.test);
+    });
+
+    arena.collect_all();
+
+    arena.mutate_root(|_, root| {
+        let mut v = Vec::new();
+        while let Some(p) = root.finalize_queue.poll() {
+            v.push(*p);
+        }
+        v.sort();
+        assert_eq!(v, &[4]);
+    });
 }
 
 #[test]

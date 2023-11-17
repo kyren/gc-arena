@@ -83,6 +83,7 @@ pub(crate) struct GcBoxHeader {
     /// - bits 0 & 1 for the current `GcColor`;
     /// - bit 2 for the `needs_trace` flag;
     /// - bit 3 for the `is_live` flag.
+    /// - bit 4 for the `trace_at_end` flag.
     tagged_vtable: Cell<*const CollectVtable>,
 }
 
@@ -157,7 +158,12 @@ impl GcBoxHeader {
     }
     #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
-        tagged_ptr::get::<0x4, _>(self.tagged_vtable.get()) != 0x0
+        tagged_ptr::get_bool::<0x4, _>(self.tagged_vtable.get())
+    }
+
+    #[inline]
+    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
+        tagged_ptr::set_bool::<0x4, _>(&self.tagged_vtable, needs_trace);
     }
 
     /// Determines whether or not we've dropped the `dyn Collect` value
@@ -168,17 +174,22 @@ impl GcBoxHeader {
     /// (since we've already done it).
     #[inline]
     pub(crate) fn is_live(&self) -> bool {
-        tagged_ptr::get::<0x8, _>(self.tagged_vtable.get()) != 0x0
-    }
-
-    #[inline]
-    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        tagged_ptr::set_bool::<0x4, _>(&self.tagged_vtable, needs_trace);
+        tagged_ptr::get_bool::<0x8, _>(self.tagged_vtable.get())
     }
 
     #[inline]
     pub(crate) fn set_live(&self, alive: bool) {
         tagged_ptr::set_bool::<0x8, _>(&self.tagged_vtable, alive);
+    }
+
+    #[inline]
+    pub(crate) fn trace_at_end(&self) -> bool {
+        tagged_ptr::get_bool::<0x10, _>(self.tagged_vtable.get())
+    }
+
+    #[inline]
+    pub(crate) fn set_trace_at_end(&self, trace_at_end: bool) {
+        tagged_ptr::set_bool::<0x10, _>(&self.tagged_vtable, trace_at_end);
     }
 }
 
@@ -186,7 +197,7 @@ impl GcBoxHeader {
 ///
 /// We use a custom vtable instead of `dyn Collect` for extra flexibility.
 /// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
-#[repr(align(16))]
+#[repr(align(32))]
 struct CollectVtable {
     /// The layout of the `GcBox` the GC'd value is stored in.
     box_layout: Layout,
@@ -220,7 +231,7 @@ impl CollectVtable {
 /// user-facing `Gc`s to freely cast their pointer to it.
 #[repr(C)]
 pub(crate) struct GcBoxInner<T: ?Sized> {
-    header: GcBoxHeader,
+    pub(crate) header: GcBoxHeader,
     /// The typed value stored in this `GcBox`.
     pub(crate) value: mem::ManuallyDrop<T>,
 }
@@ -313,10 +324,12 @@ mod tagged_ptr {
     }
 
     #[inline(always)]
+    pub(super) fn get_bool<const MASK: usize, T>(tagged_ptr: *const T) -> bool {
+        get::<MASK, T>(tagged_ptr) != 0x0
+    }
+
+    #[inline(always)]
     pub(super) fn set_bool<const MASK: usize, T>(pcell: &Cell<*const T>, value: bool) {
-        check_mask!(T, MASK);
-        let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 });
-        pcell.set(ptr)
+        set::<MASK, T>(pcell, if value { MASK } else { 0 });
     }
 }
