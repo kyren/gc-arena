@@ -6,7 +6,7 @@ extern crate std;
 
 extern crate alloc;
 
-mod arena;
+pub mod arena;
 pub mod barrier;
 mod collect;
 mod collect_impl;
@@ -34,9 +34,9 @@ pub use gc_arena_derive::*;
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
-    arena::{rootless_arena, Arena, Root, Rootable},
+    arena::{rootless_arena, Arena, CollectorPhase, Root, Rootable},
     collect::Collect,
-    context::{Collection, Mutation},
+    context::{Collection, Finalization, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
     gc::Gc,
     gc_weak::GcWeak,
