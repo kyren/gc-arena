@@ -36,7 +36,7 @@ pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__Coerc
 pub use self::{
     arena::{rootless_arena, Arena, CollectionPhase, Root, Rootable},
     collect::Collect,
-    context::{Collection, Mutation},
+    context::{Collection, Finalization, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
     gc::Gc,
     gc_weak::GcWeak,
