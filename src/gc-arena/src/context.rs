@@ -2,6 +2,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     mem,
+    ops::Deref,
     ptr::NonNull,
 };
 
@@ -41,6 +42,32 @@ impl<'gc> Mutation<'gc> {
     }
 }
 
+/// Handle value given to finalization callbacks in `MarkedArena`.
+///
+/// Derefs to `Mutation<'gc>` to allow for arbitrary mutation, but adds additional powers to examine
+/// the state of the fully marked arena.
+#[repr(transparent)]
+pub struct Finalization<'gc> {
+    context: Context,
+    _invariant: Invariant<'gc>,
+}
+
+impl<'gc> Deref for Finalization<'gc> {
+    type Target = Mutation<'gc>;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: Finalization and Mutation are #[repr(transparent)]
+        unsafe { mem::transmute::<&Self, &Mutation>(&self) }
+    }
+}
+
+impl<'gc> Finalization<'gc> {
+    #[inline]
+    pub(crate) fn resurrect(&self, gc_box: GcBox) {
+        self.context.resurrect(gc_box)
+    }
+}
+
 /// Handle value given by arena callbacks during garbage collection, which must be passed through
 /// `Collect::trace` implementations.
 #[repr(transparent)]
@@ -63,6 +90,14 @@ impl Collection {
     pub(crate) fn trace_weak(&self, gc_box: GcBox) {
         self.context.trace_weak(gc_box)
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum Phase {
+    Mark,
+    Sweep,
+    Sleep,
+    Drop,
 }
 
 pub(crate) struct Context {
@@ -149,6 +184,11 @@ impl Context {
     }
 
     #[inline]
+    pub(crate) unsafe fn finalization_context<'gc>(&self) -> &Finalization<'gc> {
+        mem::transmute::<&Self, &Finalization>(&self)
+    }
+
+    #[inline]
     pub(crate) fn metrics(&self) -> &Metrics {
         &self.metrics
     }
@@ -158,6 +198,18 @@ impl Context {
         if self.phase.get() == Phase::Mark {
             self.root_needs_trace.set(true);
         }
+    }
+
+    #[inline]
+    pub(crate) fn phase(&self) -> Phase {
+        self.phase.get()
+    }
+
+    #[inline]
+    pub(crate) fn gray_remaining(&self) -> bool {
+        !self.gray.borrow().is_empty()
+            || !self.gray_again.borrow().is_empty()
+            || self.root_needs_trace.get()
     }
 
     // Do some collection work until either the debt goes down below the target amount or we have
@@ -170,11 +222,21 @@ impl Context {
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to
     // `Phase::Mark`.
-    pub(crate) unsafe fn do_collection<R: Collect>(&self, root: &R, target_debt: f64) {
-        self.do_collection_inner(root, target_debt)
+    pub(crate) unsafe fn do_collection<R: Collect>(
+        &self,
+        root: &R,
+        target_debt: f64,
+        stop_before_sweep: bool,
+    ) {
+        self.do_collection_inner(root, target_debt, stop_before_sweep)
     }
 
-    fn do_collection_inner<R: Collect>(&self, root: &R, mut target_debt: f64) {
+    fn do_collection_inner<R: Collect>(
+        &self,
+        root: &R,
+        mut target_debt: f64,
+        stop_before_sweep: bool,
+    ) {
         let mut entered = PhaseGuard::enter(self, None);
 
         if self.metrics.allocation_debt() <= target_debt {
@@ -238,16 +300,20 @@ impl Context {
                         root.trace(self.collection_context());
                         self.root_needs_trace.set(false);
                     } else {
-                        // If we have no gray objects left, we enter the sweep phase.
-                        entered.switch(Phase::Sweep);
+                        if stop_before_sweep {
+                            target_debt = f64::INFINITY;
+                        } else {
+                            // If we have no gray objects left, we enter the sweep phase.
+                            entered.switch(Phase::Sweep);
 
-                        // Set `sweep to the current head of our `all` linked list. Any new
-                        // allocations during the newly-entered `Phase:Sweep` will update `all`, but
-                        // will *not* be reachable from `this.sweep`.
-                        self.sweep.set(self.all.get());
+                            // Set `sweep to the current head of our `all` linked list. Any new
+                            // allocations during the newly-entered `Phase:Sweep` will update `all`, but
+                            // will *not* be reachable from `this.sweep`.
+                            self.sweep.set(self.all.get());
 
-                        // No need to update metrics here.
-                        continue;
+                            // No need to update metrics here.
+                            continue;
+                        }
                     }
                 }
                 Phase::Sweep => {
@@ -422,7 +488,7 @@ impl Context {
         //   before we transition to `Phase::Sweep`.
         //
         // * In `Phase::Sweep`:
-        //   If the allocation is `WhiteWeak`, then it's impossile for it to have been freshly-
+        //   If the allocation is `WhiteWeak`, then it's impossible for it to have been freshly-
         //   created during this `Phase::Sweep`. `WhiteWeak` is only  set when a white `GcWeak/
         //   GcWeakCell` is traced. A `GcWeak/GcWeakCell` must be created from an existing `Gc/
         //   GcCell` via `downgrade()`, so `WhiteWeak` means that a `GcWeak` / `GcWeakCell` existed
@@ -445,6 +511,16 @@ impl Context {
         }
         true
     }
+
+    #[inline]
+    fn resurrect(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        debug_assert_eq!(self.phase.get(), Phase::Mark);
+        if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
+            header.set_color(GcColor::Gray);
+            self.gray.borrow_mut().push(gc_box);
+        }
+    }
 }
 
 // SAFETY: the gc_box must never be accessed after calling this function.
@@ -454,14 +530,6 @@ unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
         gc_box.drop_in_place();
     }
     gc_box.dealloc();
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum Phase {
-    Mark,
-    Sweep,
-    Sleep,
-    Drop,
 }
 
 /// Helper type for managing phase transitions.

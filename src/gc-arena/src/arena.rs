@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::{f64, marker::PhantomData};
 
 use crate::{
-    context::{Context, Mutation},
+    context::{Context, Finalization, Mutation, Phase},
     metrics::Metrics,
     Collect,
 };
@@ -80,6 +80,21 @@ macro_rules! Rootable {
 
 /// A helper type alias for a `Rootable::Root` for a specific lifetime.
 pub type Root<'a, R> = <R as Rootable<'a>>::Root;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum CollectionPhase {
+    /// The arena is done with a collection cycle and is waiting to be restarted.
+    Sleeping,
+    /// The arena is currently tracing objects from the root to determine reachability.
+    Marking,
+    /// The arena has finished tracing, all reachable objects are marked. This may transition
+    /// back to `Marking` if write barriers occur.
+    Marked,
+    /// The arena has determined a set of unreachable objects and has started collecting them.
+    /// At this point, marking is no longer taking place so the root may have reachable, unmarked
+    /// pointers
+    Collecting,
+}
 
 /// A generic, garbage collected arena.
 ///
@@ -208,22 +223,113 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         self.context.metrics()
     }
 
-    /// Run the incremental garbage collector until the allocation debt is <= 0.0. There is no
-    /// minimum unit of work enforced here, so it may be faster to only call this method when the
-    /// allocation debt is above some threshold.
     #[inline]
-    pub fn collect_debt(&mut self) {
-        unsafe {
-            self.context.do_collection(&self.root, 0.0);
+    pub fn collection_phase(&self) -> CollectionPhase {
+        match self.context.phase() {
+            Phase::Mark => {
+                if self.context.gray_remaining() {
+                    CollectionPhase::Marking
+                } else {
+                    CollectionPhase::Marked
+                }
+            }
+            Phase::Sweep => CollectionPhase::Collecting,
+            Phase::Sleep => CollectionPhase::Sleeping,
+            Phase::Drop => unreachable!(),
         }
     }
 
-    /// Run the current garbage collection cycle to completion, stopping once the garbage collector
-    /// has finished the sweep phase.
+    /// Run incremental garbage collection until the allocation debt is <= 0.0.
+    ///
+    /// There is no minimum unit of work enforced here, so it may be faster to only call this method
+    /// when the allocation debt is above some threshold.
+    ///
+    /// This method will always return at least once when collection enters the `Sleeping` phase,
+    /// i.e. it will never transition from the `Collecting` phase to the `Marking` phase without
+    /// returning in-between.
+    #[inline]
+    pub fn collect_debt(&mut self) {
+        unsafe {
+            self.context.do_collection(&self.root, 0.0, false);
+        }
+    }
+
+    /// Run only the *marking* part of incremental garbage collection until allocation debt is
+    /// <= 0.0.
+    ///
+    /// This does *not* transition collection past the `Marked` phase. Does nothing if the
+    /// collection phase is `Marked` or `Collecting`, otherwise acts like `Arena::collect_debt`.
+    #[inline]
+    pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
+        if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
+            unsafe {
+                self.context.do_collection(&self.root, 0.0, true);
+            }
+        }
+
+        debug_assert!(self.context.phase() == Phase::Mark);
+        if !self.context.gray_remaining() {
+            Some(MarkedArena(self))
+        } else {
+            None
+        }
+    }
+
+    /// Run the current garbage collection cycle to completion, stopping once garbage collection
+    /// has restarted in the sleep phase. If the collector is currently in the sleep phase, this
+    /// restarts the collection and performs a full collection before transitioning back to the
+    /// sleep phase.
     #[inline]
     pub fn collect_all(&mut self) {
         unsafe {
-            self.context.do_collection(&self.root, f64::NEG_INFINITY);
+            self.context
+                .do_collection(&self.root, f64::NEG_INFINITY, false);
+        }
+    }
+
+    /// Runs all of the remaining *marking* part of the current garbage collection cycle.
+    ///
+    /// Similarly to `Arena::mark_debt`, this does not transition collection  past the `Marked`
+    /// phase, and does nothing if the collector is currently in the `Marked` phase or the
+    /// `Collecting` phase.
+    #[inline]
+    pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
+        if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
+            unsafe {
+                self.context
+                    .do_collection(&self.root, f64::NEG_INFINITY, true);
+            }
+        }
+
+        debug_assert!(self.context.phase() == Phase::Mark);
+        if !self.context.gray_remaining() {
+            Some(MarkedArena(self))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
+
+impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
+    /// Examine the state of a fully marked arena.
+    ///
+    /// Allows you to determine whether `GcWeak` pointers are "dead" (aka, soon-to-be-dropped) and
+    /// potentially resurrect them for this cycle.
+    ///
+    /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this
+    /// callback, any mutation that keeps a `GcWeak` can immediately invalidate this.
+    #[inline]
+    pub fn finalize<F, T>(self, f: F) -> T
+    where
+        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
+    {
+        unsafe {
+            let mc: &'static Finalization<'_> =
+                &*(self.0.context.finalization_context() as *const _);
+            let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
+            f(mc, root)
         }
     }
 }

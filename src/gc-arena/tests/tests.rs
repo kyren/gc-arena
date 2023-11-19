@@ -4,10 +4,9 @@ use rand::distributions::Distribution;
 #[cfg(feature = "std")]
 use std::{collections::HashMap, rc::Rc};
 
-use gc_arena::lock::RefLock;
 use gc_arena::{
-    metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet, Gc, GcWeak,
-    Rootable,
+    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet,
+    Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -821,6 +820,61 @@ fn zero_timing_factor_stops_the_world() {
     }
 
     assert!(arena.metrics().allocation_debt() == 0.0);
+}
+
+#[test]
+fn basic_finalization() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        a: Gc<'gc, u8>,
+        b: Gc<'gc, u8>,
+        c: GcWeak<'gc, u8>,
+        d: GcWeak<'gc, u8>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
+        let a = Gc::new(mc, 1);
+        let b = Gc::new(mc, 2);
+        TestRoot {
+            a,
+            b,
+            c: Gc::downgrade(a),
+            d: Gc::downgrade(b),
+        }
+    });
+
+    arena.mutate_root(|mc, root| {
+        root.a = Gc::new(mc, 3);
+    });
+
+    arena.mark_all().unwrap().finalize(|fc, root| {
+        assert!(!root.c.is_dropped());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
+        root.c.resurrect(fc);
+    });
+
+    arena
+        .mark_all()
+        .unwrap()
+        .finalize(|fc, root| root.c.resurrect(fc).is_some());
+
+    arena.collect_all();
+
+    arena.mark_all().unwrap().finalize(|fc, root| {
+        assert!(!root.c.is_dropped());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
+    });
+
+    arena.collect_all();
+
+    arena.mark_all().unwrap().finalize(|fc, root| {
+        assert!(root.c.is_dropped());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
+    });
 }
 
 #[test]
