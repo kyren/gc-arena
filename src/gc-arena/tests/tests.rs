@@ -5,8 +5,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, CollectionPhase,
-    DynamicRootSet, Gc, GcWeak, Rootable,
+    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet,
+    Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -848,48 +848,32 @@ fn basic_finalization() {
         root.a = Gc::new(mc, 3);
     });
 
-    arena.mark_all();
-    assert_eq!(arena.collection_phase(), CollectionPhase::Marked);
-
-    arena.mutate(|mc, root| {
+    arena.mark_all().unwrap().finalize(|fc, root| {
         assert!(!root.c.is_dropped());
-        assert!(!root.c.is_marked());
-        assert!(root.d.is_marked());
-        assert!(root.c.mark(mc).is_some());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
+        root.c.resurrect(fc);
     });
-    // Will be in `CollectionPhase::Marked` because `Gc<u8>` does not need tracing, but either is
-    // legal.
-    assert!(matches!(
-        arena.collection_phase(),
-        CollectionPhase::Marking | CollectionPhase::Marked
-    ));
 
-    arena.mark_all();
-    assert_eq!(arena.collection_phase(), CollectionPhase::Marked);
-
-    arena.mutate(|mc, root| assert!(root.c.mark(mc).is_some()));
+    arena
+        .mark_all()
+        .unwrap()
+        .finalize(|fc, root| root.c.resurrect(fc).is_some());
 
     arena.collect_all();
-    assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
 
-    arena.mark_all();
-    assert_eq!(arena.collection_phase(), CollectionPhase::Marked);
-
-    arena.mutate(|_, root| {
+    arena.mark_all().unwrap().finalize(|fc, root| {
         assert!(!root.c.is_dropped());
-        assert!(!root.c.is_marked());
-        assert!(root.d.is_marked());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
     });
 
     arena.collect_all();
-    assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
 
-    arena.mark_all();
-
-    arena.mutate(|_, root| {
+    arena.mark_all().unwrap().finalize(|fc, root| {
         assert!(root.c.is_dropped());
-        assert!(!root.c.is_marked());
-        assert!(root.d.is_marked());
+        assert!(root.c.is_dead(fc));
+        assert!(!root.d.is_dead(fc));
     });
 }
 

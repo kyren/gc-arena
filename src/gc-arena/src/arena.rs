@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::{f64, marker::PhantomData};
 
 use crate::{
-    context::{Context, Mutation, Phase},
+    context::{Context, Finalization, Mutation, Phase},
     metrics::Metrics,
     Collect,
 };
@@ -260,11 +260,18 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// This does *not* transition collection past the `Marked` phase. Does nothing if the
     /// collection phase is `Marked` or `Collecting`, otherwise acts like `Arena::collect_debt`.
     #[inline]
-    pub fn mark_debt(&mut self) {
+    pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
                 self.context.do_collection(&self.root, 0.0, true);
             }
+        }
+
+        debug_assert!(self.context.phase() == Phase::Mark);
+        if !self.context.gray_remaining() {
+            Some(MarkedArena(self))
+        } else {
+            None
         }
     }
 
@@ -286,12 +293,43 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     /// phase, and does nothing if the collector is currently in the `Marked` phase or the
     /// `Collecting` phase.
     #[inline]
-    pub fn mark_all(&mut self) {
+    pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
                 self.context
                     .do_collection(&self.root, f64::NEG_INFINITY, true);
             }
+        }
+
+        debug_assert!(self.context.phase() == Phase::Mark);
+        if !self.context.gray_remaining() {
+            Some(MarkedArena(self))
+        } else {
+            None
+        }
+    }
+}
+
+pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
+
+impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
+    /// Examine the state of a fully marked arena.
+    ///
+    /// Allows you to determine whether `GcWeak` pointers are "dead" (aka, soon-to-be-dropped) and
+    /// potentially resurrect them for this cycle.
+    ///
+    /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this
+    /// callback, any mutation that keeps a `GcWeak` can immediately invalidate this.
+    #[inline]
+    pub fn finalize<F, T>(self, f: F) -> T
+    where
+        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
+    {
+        unsafe {
+            let mc: &'static Finalization<'_> =
+                &*(self.0.context.finalization_context() as *const _);
+            let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
+            f(mc, root)
         }
     }
 }
