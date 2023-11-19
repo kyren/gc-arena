@@ -319,7 +319,7 @@ pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
 
 impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
     #[inline]
-    pub fn finalize<F, T>(&self, f: F) -> T
+    pub fn finalize<F, T>(self, f: F) -> T
     where
         F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
     {
