@@ -4,7 +4,7 @@ use core::{f64, marker::PhantomData};
 use crate::{
     context::{Context, Mutation, Phase},
     metrics::Metrics,
-    Collect, Finalization,
+    Collect,
 };
 
 /// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce
@@ -82,18 +82,18 @@ macro_rules! Rootable {
 pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum CollectorPhase {
-    /// The collector is done with a collection cycle and is waiting to be restarted.
-    Sleep,
-    /// The collector is currently tracing objects from the root to determine reachability.
+pub enum CollectionPhase {
+    /// The arena is done with a collection cycle and is waiting to be restarted.
+    Sleeping,
+    /// The arena is currently tracing objects from the root to determine reachability.
     Marking,
-    /// The collector has finished tracing, all reachable objects are marked. This may transition
+    /// The arena has finished tracing, all reachable objects are marked. This may transition
     /// back to `Marking` if write barriers occur.
     Marked,
-    /// The collector has determined a set of unreachable objects and has started collecting them.
+    /// The arena has determined a set of unreachable objects and has started collecting them.
     /// At this point, marking is no longer taking place so the root may have reachable, unmarked
     /// pointers
-    Collection,
+    Collecting,
 }
 
 /// A generic, garbage collected arena.
@@ -224,29 +224,29 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     #[inline]
-    pub fn phase(&self) -> CollectorPhase {
+    pub fn collection_phase(&self) -> CollectionPhase {
         match self.context.phase() {
             Phase::Mark => {
                 if self.context.gray_remaining() {
-                    CollectorPhase::Marking
+                    CollectionPhase::Marking
                 } else {
-                    CollectorPhase::Marked
+                    CollectionPhase::Marked
                 }
             }
-            Phase::Sweep => CollectorPhase::Collection,
-            Phase::Sleep => CollectorPhase::Sleep,
+            Phase::Sweep => CollectionPhase::Collecting,
+            Phase::Sleep => CollectionPhase::Sleeping,
             Phase::Drop => unreachable!(),
         }
     }
 
-    /// Run the incremental garbage collector until the allocation debt is <= 0.0.
+    /// Run incremental garbage collection until the allocation debt is <= 0.0.
     ///
     /// There is no minimum unit of work enforced here, so it may be faster to only call this method
     /// when the allocation debt is above some threshold.
     ///
-    /// This method will always return at least once when the collector enters the `Sleep` phase,
-    /// i.e. it will never transition from the `Collection` phase to the `Marking` phase without
-    /// returning.
+    /// This method will always return at least once when collection enters the `Sleeping` phase,
+    /// i.e. it will never transition from the `Collecting` phase to the `Marking` phase without
+    /// returning in-between.
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
@@ -254,33 +254,21 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         }
     }
 
-    /// Run only the *marking* part of the incremental garbage collector until allocation debt is
+    /// Run only the *marking* part of incremental garbage collection until allocation debt is
     /// <= 0.0.
     ///
-    /// This does *not* transition the collector past the `MarkFinished` phase. Does nothing
-    /// if the collector phase is `MarkFinished` or `Collecting`, otherwise acts like
-    /// `Arena::collect_debt`.
-    ///
-    /// If after collecting debt this arena is now fully marked, then a `MarkedArena` type will
-    /// be returned. This allows calling `MarkedArena::finalize` to examine the state of the fully
-    /// marked root.
+    /// This does *not* transition collection past the `Marked` phase. Does nothing if the
+    /// collection phase is `Marked` or `Collecting`, otherwise acts like `Arena::collect_debt`.
     #[inline]
-    pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
+    pub fn mark_debt(&mut self) {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
                 self.context.do_collection(&self.root, 0.0, true);
             }
         }
-
-        debug_assert!(self.context.phase() == Phase::Mark);
-        if !self.context.gray_remaining() {
-            Some(MarkedArena(self))
-        } else {
-            None
-        }
     }
 
-    /// Run the current garbage collection cycle to completion, stopping once the garbage collector
+    /// Run the current garbage collection cycle to completion, stopping once garbage collection
     /// has restarted in the sleep phase. If the collector is currently in the sleep phase, this
     /// restarts the collection and performs a full collection before transitioning back to the
     /// sleep phase.
@@ -294,40 +282,16 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 
     /// Runs all of the remaining *marking* part of the current garbage collection cycle.
     ///
-    /// Similarly to `Arena::mark_debt`, this does not transition the collector past the
-    /// `MarkFinished` phase, and does nothing if the collector is currently in the `MarkFinished`
-    /// phase or the `Collection` phase.
+    /// Similarly to `Arena::mark_debt`, this does not transition collection  past the `Marked`
+    /// phase, and does nothing if the collector is currently in the `Marked` phase or the
+    /// `Collecting` phase.
     #[inline]
-    pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
+    pub fn mark_all(&mut self) {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
                 self.context
                     .do_collection(&self.root, f64::NEG_INFINITY, true);
             }
-        }
-
-        debug_assert!(self.context.phase() == Phase::Mark);
-        if !self.context.gray_remaining() {
-            Some(MarkedArena(self))
-        } else {
-            None
-        }
-    }
-}
-
-pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
-
-impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
-    #[inline]
-    pub fn finalize<F, T>(self, f: F) -> T
-    where
-        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
-    {
-        unsafe {
-            let mc: &'static Finalization<'_> =
-                &*(self.0.context.finalization_context() as *const _);
-            let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
-            f(mc, root)
         }
     }
 }

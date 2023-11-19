@@ -1,7 +1,7 @@
 use crate::collect::Collect;
 use crate::gc::Gc;
-use crate::types::GcBox;
-use crate::{Collection, Finalization, Mutation};
+use crate::types::{GcBox, GcColor};
+use crate::{Collection, Mutation};
 
 use core::fmt::{self, Debug};
 
@@ -36,10 +36,8 @@ unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
 impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     #[inline]
     pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
-        unsafe {
-            let ptr = GcBox::erase(self.inner.ptr);
-            mc.upgrade(ptr).then(|| self.inner)
-        }
+        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
+        mc.upgrade(ptr).then(|| self.inner)
     }
 
     /// Returns whether the value referenced by this `GcWeak` has been dropped.
@@ -47,46 +45,43 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// Note that calling `upgrade` may still fail even when this method returns `false`.
     #[inline]
     pub fn is_dropped(self) -> bool {
+        !unsafe { self.inner.ptr.as_ref() }.header.is_live()
+    }
+
+    /// Returns true if this pointer has been marked during this collection cycle and the held value
+    /// will not be dropped.
+    ///
+    /// If this method returns `false`, it does not necessarily imply that the held value *will* be
+    /// dropped this cycle, only that it hasn't been marked *yet* as part of the `Marking` phase.
+    ///
+    /// This method is most useful when called when the arena is precisely in the `Marked` state. IF
+    /// the arena is fully marked AND this method returns `false` AND the arena does not transition
+    /// back to `Marking` due to a write barrier or `GcWeak::mark`, then you can know that the
+    /// object pointed to by this `GcWeak` is destined to be dropped during the current cycle's
+    /// `Collecting` phase.
+    #[inline]
+    pub fn is_marked(self) -> bool {
+        matches!(
+            unsafe { self.inner.ptr.as_ref() }.header.color(),
+            GcColor::Gray | GcColor::Black
+        )
+    }
+
+    /// Manually mark a `GcWeak` during marking.
+    ///
+    /// If the pointer can be manually marked, marks it and returns a strong version of the pointer,
+    /// otherwise `None`.
+    ///
+    /// May return `None` if the arena is in the wrong phase of the collection cycle *or* if the
+    /// pointed-to value has already been dropped.
+    ///
+    /// Will mark pointers if called in the `Marking` *or* the `Marked` phase, but if called in the
+    /// `Marked` phase *and* the pointer was not already marked, it may transition the collection
+    /// phase back to `Marking` (for transitively held objects).
+    #[inline]
+    pub fn mark(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
         let ptr = unsafe { GcBox::erase(self.inner.ptr) };
-        !ptr.header().is_live()
-    }
-
-    /// Returns true when a pointer is *dead* during finalization.
-    ///
-    /// This is a weaker condition than being *dropped*, as the pointer *may* still be valid. Being
-    /// *dead* means that there were no strong pointers pointing to this weak pointer that were
-    /// found by the marking phase, and if it is not already dropped, it *will* be dropped as soon
-    /// as collection resumes.
-    ///
-    /// If the pointer is still valid, it may be resurrected using `GcWeak::upgrade` or
-    /// GcWeak::resurrect`.
-    ///
-    /// NOTE: This returns true when the pointer was destined to be collected at the **start** of
-    /// the current finalization callback. Resurrecting one weak pointer can transitively resurrect
-    /// others, and this method does not reflect this from within the same finalization call! If
-    /// transitive resurrection is important, you may have to carefully call finalize multiple times
-    /// for one collection cycle with marking stages in-between, and in the precise order that you
-    /// want.
-    #[inline]
-    pub fn is_dead(self, fc: &Finalization<'gc>) -> bool {
-        unsafe { fc.is_dead(GcBox::erase(self.inner.ptr)) }
-    }
-
-    /// Resurrect a dead `GcWeak` and keep it alive.
-    ///
-    /// Acts like `GcWeak::upgrade` with one extra behavior. Even if the returned strong pointer is
-    /// not stored anywhere, this will still prevent this weak pointer from being freed during this
-    /// collection cycle.
-    #[inline]
-    pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
-        if let Some(p) = self.upgrade(&fc) {
-            unsafe {
-                fc.resurrect(GcBox::erase(p.ptr));
-            }
-            Some(p)
-        } else {
-            None
-        }
+        mc.mark(ptr).then(|| self.inner)
     }
 
     #[inline]

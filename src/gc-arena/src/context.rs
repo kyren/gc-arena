@@ -2,7 +2,6 @@ use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
     mem,
-    ops::Deref,
     ptr::NonNull,
 };
 
@@ -40,36 +39,10 @@ impl<'gc> Mutation<'gc> {
     pub(crate) fn upgrade(&self, gc_box: GcBox) -> bool {
         self.context.upgrade(gc_box)
     }
-}
-
-/// Handle value given to callbacks in arena finalization methods.
-///
-/// Derefs to `Mutation<'gc>` to allow for arbitrary mutation, but adds additional powers only
-/// available during finalization.
-#[repr(transparent)]
-pub struct Finalization<'gc> {
-    context: Context,
-    _invariant: Invariant<'gc>,
-}
-
-impl<'gc> Deref for Finalization<'gc> {
-    type Target = Mutation<'gc>;
-
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: Finalization and Mutation are #[repr(transparent)]
-        unsafe { mem::transmute::<&Self, &Mutation>(&self) }
-    }
-}
-
-impl<'gc> Finalization<'gc> {
-    #[inline]
-    pub(crate) fn is_dead(&self, gc_box: GcBox) -> bool {
-        self.context.is_dead(gc_box)
-    }
 
     #[inline]
-    pub(crate) fn resurrect(&self, gc_box: GcBox) {
-        self.context.resurrect(gc_box)
+    pub(crate) fn mark(&self, gc_box: GcBox) -> bool {
+        self.context.mark(gc_box)
     }
 }
 
@@ -180,11 +153,6 @@ impl Context {
     #[inline]
     pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
         mem::transmute::<&Self, &Mutation>(&self)
-    }
-
-    #[inline]
-    pub(crate) unsafe fn finalization_context<'gc>(&self) -> &Finalization<'gc> {
-        mem::transmute::<&Self, &Finalization>(&self)
     }
 
     #[inline]
@@ -443,23 +411,6 @@ impl Context {
     }
 
     #[inline]
-    fn resurrect(&self, gc_box: GcBox) {
-        let header = gc_box.header();
-        debug_assert_eq!(self.phase.get(), Phase::Mark);
-        if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
-            header.set_color(GcColor::Gray);
-            self.gray.borrow_mut().push(gc_box);
-        }
-    }
-
-    #[inline]
-    fn is_dead(&self, gc_box: GcBox) -> bool {
-        let header = gc_box.header();
-        debug_assert_eq!(self.phase.get(), Phase::Mark);
-        matches!(header.color(), GcColor::White | GcColor::WhiteWeak)
-    }
-
-    #[inline]
     fn trace(&self, gc_box: GcBox) {
         let header = gc_box.header();
         match header.color() {
@@ -532,6 +483,18 @@ impl Context {
             return false;
         }
         true
+    }
+
+    /// Manually mark a value during mutation *iff* we are in `Phase::Mark` and the value is live.
+    /// Returns true if the value is now marked, false otherwise.
+    #[inline]
+    fn mark(&self, gc_box: GcBox) -> bool {
+        if self.phase.get() == Phase::Mark && gc_box.header().is_live() {
+            self.trace(gc_box);
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -34,9 +34,9 @@ pub use gc_arena_derive::*;
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
-    arena::{rootless_arena, Arena, CollectorPhase, Root, Rootable},
+    arena::{rootless_arena, Arena, CollectionPhase, Root, Rootable},
     collect::Collect,
-    context::{Collection, Finalization, Mutation},
+    context::{Collection, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
     gc::Gc,
     gc_weak::GcWeak,
