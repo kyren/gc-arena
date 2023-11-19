@@ -47,12 +47,14 @@ just this.
 
 ## Current status and TODOs
 
-Currently this crate is still pretty WIP, but is basically usable and safe.
+Basically usable and safe! It is used by [Ruffle](https://github.com/ruffle-rs/ruffle)
+as well as some other projects (like my own [piccolo](https://github.com/kyren/piccolo),
+for which it was originally designed)
 
 The collection algorithm is an incremental mark-and-sweep algorithm very similar
-to the one in PUC-Rio Lua 5.3, and is optimized primarily for low pause time.
-During mutation, allocation "debt" is accumulated, and this "debt" determines
-the amount of work that the next call to `Arena::collect` will do.
+to the one in PUC-Rio Lua, and is optimized primarily for low pause time. During
+mutation, allocation "debt" is accumulated, and this "debt" determines the
+amount of work that the next call to `Arena::collect` will do.
 
 The pointers held in arenas (spelled `Gc<'gc, T>`) are zero-cost raw pointers.
 They implement `Copy` and are pointer sized, and no bookkeeping at all is done
@@ -62,25 +64,17 @@ Some notable current limitations:
 
 * Allocating DSTs is currently somewhat painful due to limitations in Rust. It
   is possible to  have `Gc` pointers to DSTs, and there is a replacement for
-  unstable `Unsize` coercion, but allocating space for arbitrarily sized DSTs is
-  currently pretty weird.
+  unstable `Unsize` coercion, but there is no support for directly allocating
+  arbitrarily sized DSTs.
 
-* There is currently no system for object finalization. This is not terribly
-  difficult to implement, depending on the system, but it would require picking
-  a particular set of edge-case finalization behavior. Implementing `Drop` for
-  a type held inside a `Gc` ofc still works as normal though, so the actual need
-  for genuine "finalization" is unclear.
+* There is no support at all for multi-threaded allocation and collection.
+  The basic lifetime and safety techniques here would still work in an arena
+  supporting multi-threading, but this crate does not support this. It is
+  optimized for single threaded use and multiple, independent arenas.
   
-* A harder to solve limitation is that there is currently no system for multi-
-  threaded allocation and collection. The basic lifetime and safety techniques
-  here would still work in an arena supporting multi-threading, but this crate
-  does not support this. It is optimized for single threaded use and multiple,
-  independent arenas.
-  
-* Another limitiation is that the `Collect` trait does not provide a mechanism
-  to move objects once they are allocated, so this limits the types of
-  collectors that could be written. This is achievable but no work has been done
-  towards this.
+* The `Collect` trait does not provide a mechanism to move objects once they are
+  allocated, so this limits the types of collectors that could be written. This
+  is achievable but no work has been done towards this.
   
 * The crate is currently pretty light on documentation and examples.
 
