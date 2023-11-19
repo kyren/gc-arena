@@ -47,9 +47,11 @@ just this.
 
 ## Current status and TODOs
 
-Basically usable and safe! It is used by [Ruffle](https://github.com/ruffle-rs/ruffle)
-as well as some other projects (like my own [piccolo](https://github.com/kyren/piccolo),
-for which it was originally designed)
+Basically usable and safe! It is used by the Adobe Flash Player emulator
+[Ruffle](https://github.com/ruffle-rs/ruffle) for its ActionScript VM as well
+as some other projects (like my own stackless Lua interpreter
+[piccolo](https://github.com/kyren/piccolo), for which the crate was originally
+designed)
 
 The collection algorithm is an incremental mark-and-sweep algorithm very similar
 to the one in PUC-Rio Lua, and is optimized primarily for low pause time. During
