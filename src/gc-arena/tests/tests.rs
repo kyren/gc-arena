@@ -878,6 +878,38 @@ fn basic_finalization() {
 }
 
 #[test]
+fn transitive_death() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        a: Option<Gc<'gc, Gc<'gc, u8>>>,
+        b: GcWeak<'gc, Gc<'gc, u8>>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
+        let a = Gc::new(mc, Gc::new(mc, 1));
+        let b = Gc::downgrade(a);
+        TestRoot { a: Some(a), b }
+    });
+
+    arena.mark_all().unwrap().finalize(|fc, root| {
+        assert!(!root.b.is_dead(fc));
+        assert!(!Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
+    });
+
+    arena.collect_all();
+
+    arena.mutate_root(|_, root| {
+        root.a = None;
+    });
+
+    arena.mark_all().unwrap().finalize(|fc, root| {
+        assert!(root.b.is_dead(fc));
+        assert!(Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
