@@ -49,7 +49,7 @@ just this.
 
 Basically usable and safe! It is used by the Adobe Flash Player emulator
 [Ruffle](https://github.com/ruffle-rs/ruffle) for its ActionScript VM as well
-as some other projects (like my own stackless Lua interpreter
+as some other projects (like my own stackless Lua runtime
 [piccolo](https://github.com/kyren/piccolo), for which the crate was originally
 designed)
 
