@@ -1,7 +1,7 @@
 use crate::collect::Collect;
 use crate::context::Finalization;
 use crate::gc::Gc;
-use crate::types::{GcBox, GcColor};
+use crate::types::GcBox;
 use crate::{Collection, Mutation};
 
 use core::fmt::{self, Debug};
@@ -59,29 +59,29 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// If the pointer is still valid, it may be resurrected using `GcWeak::upgrade` or
     /// GcWeak::resurrect`.
     ///
-    /// NOTE: This returns true if the pointer was destined to be collected at the **start** of
-    /// the current finalization callback. Resurrecting one weak pointer can transitively resurrect
-    /// others, and this method does not reflect this from within the same finalization call! If
-    /// transitive resurrection is important, you may have to carefully call finalize multiple times
-    /// for one collection cycle with marking stages in-between, and in the precise order that you
-    /// want.
+    /// NOTE: This returns true if the pointer was destined to be collected at the **start** of the
+    /// current finalization callback. Resurrecting one pointer can transitively resurrect others,
+    /// and this method does not reflect this from within the same finalization call! If transitive
+    /// resurrection is important, you may have to carefully call finalize multiple times for one
+    /// collection cycle with marking stages in-between, and in the precise order that you want.
     #[inline]
-    pub fn is_dead(self, _: &Finalization<'gc>) -> bool {
-        let inner = unsafe { self.inner.ptr.as_ref() };
-        matches!(inner.header.color(), GcColor::White | GcColor::WhiteWeak)
+    pub fn is_dead(self, fc: &Finalization<'gc>) -> bool {
+        Gc::is_dead(fc, self.inner)
     }
 
-    /// Resurrect a dead `GcWeak` and keep it alive.
+    /// Manually marks a dead (but non-dropped) `GcWeak` as strongly reachable and keeps it alive.
     ///
-    /// Acts like `GcWeak::upgrade` with one extra behavior. Even if the returned strong pointer is
-    /// not stored anywhere, this will still prevent this weak pointer from being freed during this
-    /// collection cycle.
+    /// This is similar to a write barrier in that it moves the collection phase back to `Marking`
+    /// if it is not already there. All transitively held pointers from this will also be marked as
+    /// reachable once marking resumes.
+    ///
+    /// Returns the upgraded `Gc` pointer as a convenience. Whether or not the strong pointer is
+    /// stored anywhere, the value and all transitively reachable values are still guaranteed to not
+    /// be dropped this collection cycle.
     #[inline]
     pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
         if let Some(p) = self.upgrade(&fc) {
-            unsafe {
-                fc.resurrect(GcBox::erase(p.ptr));
-            }
+            Gc::resurrect(fc, p);
             Some(p)
         } else {
             None

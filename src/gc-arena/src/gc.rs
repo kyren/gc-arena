@@ -12,7 +12,8 @@ use crate::{
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
-    types::{GcBox, GcBoxInner, Invariant},
+    types::{GcBox, GcBoxInner, GcColor, Invariant},
+    Finalization,
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
@@ -172,6 +173,29 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         unsafe {
             let inner = gc.ptr.as_ptr();
             core::ptr::addr_of!((*inner).value) as *const T
+        }
+    }
+
+    /// Returns true when a pointer is *dead* during finalization. This is equivalent to
+    /// `GcWeak::is_dead` for strong pointers.
+    ///
+    /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
+    /// pointers reachable only through other weak pointers that can be dead.
+    #[inline]
+    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T>) -> bool {
+        let inner = unsafe { gc.ptr.as_ref() };
+        matches!(inner.header.color(), GcColor::White | GcColor::WhiteWeak)
+    }
+
+    /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
+    ///
+    /// Equivalent to `GcWeak::mark` for strong pointers. Manually marks this pointer and all
+    /// transitively held pointers as reachable, thus keeping them from being dropped this
+    /// collection cycle.
+    #[inline]
+    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T>) {
+        unsafe {
+            fc.resurrect(GcBox::erase(gc.ptr));
         }
     }
 }
