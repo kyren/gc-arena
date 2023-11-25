@@ -2,7 +2,7 @@
 [![docs.rs](https://docs.rs/gc-arena/badge.svg)](https://docs.rs/gc-arena)
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/gc-arena.svg)](https://circleci.com/gh/kyren/gc-arena)
 
-This repo is home to the `gc-arena` crate, which provide Rust with garbage
+This repo is home to the `gc-arena` crate, which provides Rust with garbage
 collected arenas and a means of safely interacting with them.
 
 ### gc-arena
