@@ -319,7 +319,8 @@ impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
     /// potentially resurrect them for this cycle.
     ///
     /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this
-    /// callback, any mutation that keeps a `GcWeak` can immediately invalidate this.
+    /// callback, any mutation that resurrects a pointer or triggers a write barrier can immediately
+    /// invalidate this.
     #[inline]
     pub fn finalize<F, T>(self, f: F) -> T
     where
