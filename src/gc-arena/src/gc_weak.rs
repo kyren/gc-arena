@@ -88,9 +88,15 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         }
     }
 
+    /// Returns true if two `GcWeak`s point to the same allocation.
+    ///
+    /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
+    /// pointers.
     #[inline]
     pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
-        this.as_ptr() == other.as_ptr()
+        // TODO: Equivalent to `core::ptr::addr_eq`:
+        // https://github.com/rust-lang/rust/issues/116324
+        this.as_ptr() as *const () == other.as_ptr() as *const ()
     }
 
     #[inline]
