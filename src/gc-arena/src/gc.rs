@@ -189,8 +189,8 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
     ///
-    /// Equivalent to `GcWeak::mark` for strong pointers. Manually marks this pointer and all
-    /// transitively held pointers as reachable, thus keeping them from being dropped this
+    /// Equivalent to `GcWeak::resurrect` for strong pointers. Manually marks this pointer and
+    /// all transitively held pointers as reachable, thus keeping them from being dropped this
     /// collection cycle.
     #[inline]
     pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T>) {
