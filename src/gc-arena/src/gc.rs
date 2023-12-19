@@ -163,9 +163,15 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         }
     }
 
+    /// Returns true if two `Gc`s point to the same allocation.
+    ///
+    /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
+    /// pointers.
     #[inline]
     pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
-        Gc::as_ptr(this) == Gc::as_ptr(other)
+        // TODO: Equivalent to `core::ptr::addr_eq`:
+        // https://github.com/rust-lang/rust/issues/116324
+        Gc::as_ptr(this) as *const () == Gc::as_ptr(other) as *const ()
     }
 
     #[inline]
