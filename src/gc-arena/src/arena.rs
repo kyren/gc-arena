@@ -17,6 +17,10 @@ pub trait Rootable<'a>: 'static {
     type Root: Collect + 'a;
 }
 
+impl<'a> Rootable<'a> for () {
+    type Root = ();
+}
+
 /// A marker type used by the `Rootable!` macro instead of a bare trait object.
 ///
 /// Prevents having to include extra ?Sized bounds on every `for<'a> Rootable<'a>`.
@@ -127,19 +131,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     where
         F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> Root<'gc, R>,
     {
-        unsafe {
-            let context = Box::new(Context::new());
-            // Note - we cast the `&Mutation` to a `'static` lifetime here,
-            // instead of transmuting the root type returned by `f`. Transmuting the root
-            // type is allowed in nightly versions of rust
-            // (see https://github.com/rust-lang/rust/pull/101520#issuecomment-1252016235)
-            // but is not yet stable. Casting the `&Mutation` is completely invisible
-            // to the callback `f` (since it needs to handle an arbitrary lifetime),
-            // and lets us stay compatible with older versions of Rust
-            let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
-            let root: Root<'static, R> = f(mc);
-            Arena { context, root }
-        }
+        Self::try_new::<_, ()>(move |mc| Ok(f(mc))).unwrap()
     }
 
     /// Similar to `new`, but allows for constructor that can fail.
@@ -149,6 +141,13 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     {
         unsafe {
             let context = Box::new(Context::new());
+            // Note - we cast the `&Mutation` to a `'static` lifetime here,
+            // instead of transmuting the root type returned by `f`. Transmuting the root
+            // type is allowed in nightly versions of rust
+            // (see https://github.com/rust-lang/rust/pull/101520#issuecomment-1252016235)
+            // but is not yet stable. Casting the `&Mutation` is completely invisible
+            // to the callback `f` (since it needs to handle an arbitrary lifetime),
+            // and lets us stay compatible with older versions of Rust
             let mc: &'static Mutation<'_> = &*(context.mutation_context() as *const _);
             let root: Root<'static, R> = f(mc)?;
             Ok(Arena { context, root })
@@ -191,15 +190,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         self,
         f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2> {
-        self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
-            f(mc, self.root)
-        };
-        Arena {
-            context: self.context,
-            root: new_root,
-        }
+        Self::try_map_root(self, move |mc, root| Result::<_, ()>::Ok(f(mc, root))).unwrap()
     }
 
     #[inline]
@@ -269,7 +260,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 
         debug_assert!(self.context.phase() == Phase::Mark);
         if !self.context.gray_remaining() {
-            Some(MarkedArena(self))
+            Some(MarkedArena::new(self))
         } else {
             None
         }
@@ -303,34 +294,128 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 
         debug_assert!(self.context.phase() == Phase::Mark);
         if !self.context.gray_remaining() {
-            Some(MarkedArena(self))
+            Some(MarkedArena::new(self))
         } else {
             None
         }
     }
 }
 
-pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
+/// Proxy type that indicates that an arena is fully marked and allows you to examine its marked
+/// state.
+///
+/// Callbacks get a `Finalization` context type which allows you to determine whether `GcWeak`
+/// pointers are "dead" (aka, soon-to-be-dropped) and potentially resurrect them for this GC cycle.
+///
+/// The `Finalization` context type also allows unrestricted *mutation* (it derefs to `Mutation`),
+/// which means that the arena is only known to be fully marked at the *beginning* of callbacks
+/// provided here. Methods are also provided to examine / mutate the arena, then immediately
+/// *re-mark* it to re-examine it.
+///
+/// Contains ephemeral state of type `S` which is of the `'gc` lifetime. The purpose of this state
+/// is to keep track of temporary values only used during finalization, and it is *not* considered
+/// owned by the arena "root". This allows keeping logical state during finalization that does not
+/// itself incur the cost of object re-marking. This is safe to do, since a `MarkedArena` is never
+/// in the `Collecting` phase, and thus cannot ever free pointers held by the ephemeral state.
+pub struct MarkedArena<'a, R, S = ()>(&'a mut Arena<R>, Root<'static, S>)
+where
+    R: for<'b> Rootable<'b>,
+    S: for<'b> Rootable<'b>;
 
-impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
-    /// Examine the state of a fully marked arena.
-    ///
-    /// Allows you to determine whether `GcWeak` pointers are "dead" (aka, soon-to-be-dropped) and
-    /// potentially resurrect them for this cycle.
-    ///
-    /// Note that the arena is guaranteed to be *fully marked* only at the *beginning* of this
-    /// callback, any mutation that resurrects a pointer or triggers a write barrier can immediately
-    /// invalidate this.
+impl<'a, R> MarkedArena<'a, R>
+where
+    R: for<'b> Rootable<'b>,
+{
+    fn new(arena: &'a mut Arena<R>) -> Self {
+        debug_assert!(arena.context.phase() == Phase::Mark);
+        debug_assert!(!arena.context.gray_remaining());
+        Self(arena, ())
+    }
+}
+
+impl<'a, R, S> MarkedArena<'a, R, S>
+where
+    R: for<'b> Rootable<'b>,
+    S: for<'b> Rootable<'b>,
+{
+    /// Examine the state of the fully marked arena, potentially mutating it, then immediately fully
+    /// re-mark the arena.
     #[inline]
-    pub fn finalize<F, T>(self, f: F) -> T
+    pub fn step(
+        self,
+        f: impl for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>, &mut Root<'gc, S>),
+    ) -> MarkedArena<'a, R, S> {
+        Self::try_step(self, move |fc, root, state| {
+            Result::<_, ()>::Ok(f(fc, root, state))
+        })
+        .unwrap()
+    }
+
+    /// A version of [`MarkedArena::step`] with failure.
+    #[inline]
+    pub fn try_step<E>(
+        self,
+        f: impl for<'gc> FnOnce(
+            &'gc Finalization<'gc>,
+            &'gc Root<'gc, R>,
+            &mut Root<'gc, S>,
+        ) -> Result<(), E>,
+    ) -> Result<MarkedArena<'a, R, S>, E> {
+        self.try_map_state(move |fc, root, mut state| {
+            f(fc, root, &mut state)?;
+            Ok(state)
+        })
+    }
+
+    /// A version of [`MarkedArena::step`] that changes the held state type.
+    #[inline]
+    pub fn map_state<S2: for<'b> Rootable<'b>>(
+        self,
+        f: impl for<'gc> FnOnce(
+            &'gc Finalization<'gc>,
+            &'gc Root<'gc, R>,
+            Root<'gc, S>,
+        ) -> Root<'gc, S2>,
+    ) -> MarkedArena<'a, R, S2> {
+        Self::try_map_state(self, move |fc, root, state| {
+            Result::<_, ()>::Ok(f(fc, root, state))
+        })
+        .unwrap()
+    }
+
+    /// A version of [`MarkedArena::map_state`] with failure.
+    #[inline]
+    pub fn try_map_state<S2: for<'b> Rootable<'b>, E>(
+        self,
+        f: impl for<'gc> FnOnce(
+            &'gc Finalization<'gc>,
+            &'gc Root<'gc, R>,
+            Root<'gc, S>,
+        ) -> Result<Root<'gc, S2>, E>,
+    ) -> Result<MarkedArena<'a, R, S2>, E> {
+        unsafe {
+            let mc: &'static Finalization<'_> =
+                &*(self.0.context.finalization_context() as *const _);
+            let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
+            let s2 = f(mc, root, self.1)?;
+            let arena = self.0.mark_all().unwrap().0;
+            Ok(MarkedArena(arena, s2))
+        }
+    }
+
+    /// Examine the state of the fully marked arena, potentially mutating it.
+    ///
+    /// Consumes the `MarkedArena` as the arena is no longer left in a fully marked state.
+    #[inline]
+    pub fn finish<F, T>(self, f: F) -> T
     where
-        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>) -> T,
+        F: for<'gc> FnOnce(&'gc Finalization<'gc>, &'gc Root<'gc, R>, Root<'gc, S>) -> T,
     {
         unsafe {
             let mc: &'static Finalization<'_> =
                 &*(self.0.context.finalization_context() as *const _);
             let root: &'static Root<'_, R> = &*(&self.0.root as *const _);
-            f(mc, root)
+            f(mc, root, self.1)
         }
     }
 }

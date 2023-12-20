@@ -848,7 +848,7 @@ fn basic_finalization() {
         root.a = Gc::new(mc, 3);
     });
 
-    arena.mark_all().unwrap().finalize(|fc, root| {
+    arena.mark_all().unwrap().finish(|fc, root, _| {
         assert!(root.c.upgrade(&fc).is_some());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
@@ -858,11 +858,11 @@ fn basic_finalization() {
     arena
         .mark_all()
         .unwrap()
-        .finalize(|fc, root| root.c.resurrect(fc).is_some());
+        .finish(|fc, root, _| root.c.resurrect(fc).is_some());
 
     arena.collect_all();
 
-    arena.mark_all().unwrap().finalize(|fc, root| {
+    arena.mark_all().unwrap().finish(|fc, root, _| {
         assert!(root.c.upgrade(&fc).is_some());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
@@ -870,7 +870,7 @@ fn basic_finalization() {
 
     arena.collect_all();
 
-    arena.mark_all().unwrap().finalize(|fc, root| {
+    arena.mark_all().unwrap().finish(|fc, root, _| {
         assert!(root.c.upgrade(&fc).is_none());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
@@ -892,7 +892,7 @@ fn transitive_death() {
         TestRoot { a: Some(a), b }
     });
 
-    arena.mark_all().unwrap().finalize(|fc, root| {
+    arena.mark_all().unwrap().finish(|fc, root, _| {
         assert!(!root.b.is_dead(fc));
         assert!(!Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
     });
@@ -903,7 +903,7 @@ fn transitive_death() {
         root.a = None;
     });
 
-    arena.mark_all().unwrap().finalize(|fc, root| {
+    arena.mark_all().unwrap().finish(|fc, root, _| {
         assert!(root.b.is_dead(fc));
         assert!(Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
     });
