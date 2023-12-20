@@ -290,6 +290,7 @@ impl Context {
                         }
 
                         let guard = DropGuard { cx: self, gc_box };
+                        debug_assert!(gc_box.header().is_live());
                         unsafe { gc_box.trace_value(self.collection_context()) }
                         gc_box.header().set_color(GcColor::Black);
                         mem::forget(guard);
@@ -447,6 +448,7 @@ impl Context {
                     // A white traceable object is not in the gray queue, becomes gray and enters
                     // the normal gray queue.
                     header.set_color(GcColor::Gray);
+                    debug_assert!(header.is_live());
                     self.gray.borrow_mut().push(gc_box);
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
@@ -516,6 +518,7 @@ impl Context {
     fn resurrect(&self, gc_box: GcBox) {
         let header = gc_box.header();
         debug_assert_eq!(self.phase.get(), Phase::Mark);
+        debug_assert!(header.is_live());
         if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
             header.set_color(GcColor::Gray);
             self.gray.borrow_mut().push(gc_box);

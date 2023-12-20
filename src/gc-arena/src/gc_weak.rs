@@ -41,11 +41,10 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         mc.upgrade(ptr).then(|| self.inner)
     }
 
-    /// Returns whether the value referenced by this `GcWeak` has been dropped.
-    ///
-    /// Note that calling `upgrade` may still fail even when this method returns `false`.
+    /// During collection, return whether the value referenced by this `GcWeak` has already been
+    /// dropped.
     #[inline]
-    pub fn is_dropped(self) -> bool {
+    pub fn is_dropped(self, _cc: &Collection) -> bool {
         !unsafe { self.inner.ptr.as_ref() }.header.is_live()
     }
 
@@ -80,9 +79,11 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// be dropped this collection cycle.
     #[inline]
     pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
-        if let Some(p) = self.upgrade(&fc) {
-            Gc::resurrect(fc, p);
-            Some(p)
+        // SAFETY: We know that we are currently marking, so any non-dropped pointer is safe to
+        // resurrect.
+        if unsafe { self.inner.ptr.as_ref() }.header.is_live() {
+            Gc::resurrect(fc, self.inner);
+            Some(self.inner)
         } else {
             None
         }
@@ -121,7 +122,7 @@ impl<'gc, T: 'gc> GcWeak<'gc, T> {
     ///
     /// SAFETY:
     /// The provided pointer must have been obtained from `GcWeak::as_ptr` or `Gc::as_ptr`, and
-    /// the pointer must not have been *fully* collected yet (it may be a dropped but live weak
+    /// the pointer must not have been *fully* collected yet (it may be a dropped but valid weak
     /// pointer).
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> GcWeak<'gc, T> {
