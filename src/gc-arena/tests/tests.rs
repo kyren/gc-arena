@@ -5,8 +5,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet,
-    Gc, GcWeak, Rootable,
+    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, CollectionPhase,
+    DynamicRootSet, Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -907,6 +907,28 @@ fn transitive_death() {
         assert!(root.b.is_dead(fc));
         assert!(Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
     });
+}
+
+#[test]
+fn trace_strong() {
+    struct WeakAreStrong<'gc>(GcWeak<'gc, u8>);
+
+    unsafe impl<'gc> Collect for WeakAreStrong<'gc> {
+        fn trace(&self, cc: &gc_arena::Collection) {
+            self.0.trace_strong(cc);
+        }
+    }
+
+    let mut arena = Arena::<Rootable![WeakAreStrong<'_>]>::new(|mc| {
+        WeakAreStrong(Gc::downgrade(Gc::new(mc, 4)))
+    });
+
+    assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
+    arena.collect_all();
+
+    arena.mutate(|mc, root| {
+        assert!(root.0.upgrade(mc).is_some());
+    })
 }
 
 #[test]

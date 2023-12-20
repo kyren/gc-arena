@@ -49,6 +49,21 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
         !unsafe { self.inner.ptr.as_ref() }.header.is_live()
     }
 
+    /// Trace this `GcWeak` as though it were a `Gc`, marking the held value as strongly reachable.
+    ///
+    /// If the held value is already dropped, then this is equivalent to `GcWeak::trace`.
+    ///
+    /// This method is useful for treating a `GcWeak` as either strong or weak depending on some
+    /// runtime condition.
+    #[inline]
+    pub fn trace_strong(&self, cc: &Collection) {
+        if self.is_dropped() {
+            self.trace(cc);
+        } else {
+            self.inner.trace(cc);
+        }
+    }
+
     /// Returns true when a pointer is *dead* during finalization.
     ///
     /// This is a weaker condition than being *dropped*, as the pointer *may* still be valid. Being
@@ -80,9 +95,11 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// be dropped this collection cycle.
     #[inline]
     pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
-        if let Some(p) = self.upgrade(&fc) {
-            Gc::resurrect(fc, p);
-            Some(p)
+        // SAFETY: We know that we are currently marking, so any non-dropped pointer is safe to
+        // resurrect.
+        if !self.is_dropped() {
+            Gc::resurrect(fc, self.inner);
+            Some(self.inner)
         } else {
             None
         }
