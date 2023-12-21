@@ -55,6 +55,20 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     ///
     /// This method is useful for treating a `GcWeak` as either strong or weak depending on some
     /// runtime condition.
+    ///
+    /// NOTE: It is always sound to replace any call to `GcWeak::trace` with a call to
+    /// `GcWeak::trace_strong` in an implementation of `Collect::trace`, but there is an important
+    /// point to remember. Since this allows you to trace a pointer strongly or weakly depending
+    /// on an arbitrary condition, this condition does not *necessarily* have to be tied to a write
+    /// barrier for this pointer, meaning that changing this logical condition may not cause an
+    /// object to be re-traced if it has already been traced this cycle. Changing this logical
+    /// condition (for example, an `is_strong` flag) may not reflect how the garbage collector
+    /// *currently* sees the object unless a write barrier on this object is also triggered at the
+    /// same time, causing it to be re-traced (This can never lead to UB because the held pointers
+    /// are still `GcWeak`, it will only lead to `GcWeak::upgrade` returning `None`). You may need
+    /// to manually call `Gc::write` on this pointer if some kind of "external" condition changes
+    /// from weak to strong *and* you want to ensure that all currently non-dropped `GcWeak`
+    /// pointers will definitely not be dropped.
     #[inline]
     pub fn trace_strong(&self, cc: &Collection) {
         if self.is_dropped() {
