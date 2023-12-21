@@ -849,7 +849,7 @@ fn basic_finalization() {
     });
 
     arena.mark_all().unwrap().finalize(|fc, root| {
-        assert!(!root.c.is_dropped());
+        assert!(root.c.upgrade(&fc).is_some());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
         root.c.resurrect(fc);
@@ -863,7 +863,7 @@ fn basic_finalization() {
     arena.collect_all();
 
     arena.mark_all().unwrap().finalize(|fc, root| {
-        assert!(!root.c.is_dropped());
+        assert!(root.c.upgrade(&fc).is_some());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
     });
@@ -871,7 +871,7 @@ fn basic_finalization() {
     arena.collect_all();
 
     arena.mark_all().unwrap().finalize(|fc, root| {
-        assert!(root.c.is_dropped());
+        assert!(root.c.upgrade(&fc).is_none());
         assert!(root.c.is_dead(fc));
         assert!(!root.d.is_dead(fc));
     });
