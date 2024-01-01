@@ -1,3 +1,36 @@
+## [0.5.0]
+
+This release adds the concept of "finalization" to arenas. At the end of the
+"mark" phase, at the moment that an arena is considered "fully marked" and
+is ready to transition to the "sweep" phase, the "fully marked" arena can be
+examined with some special powers...
+
+`MarkedArena::finalize` can be called to check which pointers are considered
+"dead" for this collection cycle. A "dead" pointer is one that is destined
+(without further changes) to be freed during the next "sweep" phase. You can
+"resurrect" these pointers either through normal root mutation before entering
+the "sweep" phase, or more simply by calling explicit `resurrect` methods
+on those pointers. Any resurrection, whether through mutation or `resurrect`
+methods, immediately makes the arena no longer *fully* marked, but the arena can
+then be re-marked and re-examined.
+
+This simple, safe API (examining a "fully marked" arena for potentially dead
+pointers, performing mutation, then potentially re-marking and re-examining)
+is enough to implement quite complex garbage collector behavior. It can be used
+to implement "finalizer" methods on objects, "ephemeron tables", Java-style
+"reference queues" and more.
+
+## Release Highlights
+* New `Finalization` API.
+* New API to query the current phase of the collector.
+* Fixup the pacing algorithm for correctness and simplicity. Makes
+  `Pacing::with_timing_factor(0.0)` actually work correctly for stop-the-world
+  collection.
+* `GcWeak::is_dropped` now works only during collection, not mutation.
+* Add more trait impls to `StaticCollect`.
+* `Gc::ptr_eq` and `GcWeak::ptr_eq` now ignore metadata of `dyn` pointers,
+  matching the behavior of `Rc::ptr_eq` and `Arc::ptr_eq`.
+
 ## [0.4.0]
 
 This release adds the ability to track *external* allocations (allocations
