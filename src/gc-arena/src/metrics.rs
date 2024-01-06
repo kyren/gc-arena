@@ -1,7 +1,7 @@
 use alloc::rc::Rc;
 use core::cell::Cell;
 
-/// Tuning parameters for a given garbage collected [`Arena`].
+/// Tuning parameters for a given garbage collected [`crate::Arena`].
 #[derive(Debug, Copy, Clone)]
 pub struct Pacing {
     pub(crate) pause_factor: f64,

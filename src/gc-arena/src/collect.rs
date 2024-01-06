@@ -9,15 +9,16 @@ use crate::context::Collection;
 ///   2. Held `Gc` pointers must not be accessed inside `Drop::drop` since during drop any such
 ///      pointer may be dangling.
 ///   3. Internal mutability *must* not be used to adopt new `Gc` pointers without calling
-///      `Gc::write_barrier` during the same arena mutation.
+///      `Gc::write` during the same arena mutation.
 ///
 /// It is, however, possible to implement this trait safely by procedurally deriving it (see
 /// [`gc_arena_derive::Collect`]), which requires that every field in the structure also implement
-/// `Collect`, and implements a safe, empty version of `Drop`. Internally mutable types like
+/// `Collect`, and ensures that `Drop` cannot safely be implemented. Internally mutable types like
 /// `Cell` and `RefCell` do not implement `Collect` in such a way that it is possible to store
 /// `Gc` pointers inside them, so the write barrier requirement cannot be broken when procedurally
-/// deriving `Collect`. A safe way of providing internal mutability in this case is to use `GcCell`,
-/// which provides internal mutability while ensuring that the write barrier is always executed.
+/// deriving `Collect`. A safe way of providing internal mutability in this case is to use
+/// [`crate::lock::Lock<T>`] and [`crate::lock::RefLock<T>`], which provides internal mutability
+/// while ensuring that the write barrier is always executed.
 pub unsafe trait Collect {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
     /// to call, you may implement this method and return false. The default implementation returns
