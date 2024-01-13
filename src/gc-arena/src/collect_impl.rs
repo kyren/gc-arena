@@ -28,7 +28,6 @@ macro_rules! unsafe_empty_collect {
 
 /// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
 /// simple empty `Collect` implementation.
-/// `Collect` implementation.
 #[macro_export]
 macro_rules! static_collect {
     ($type:ty) => {
