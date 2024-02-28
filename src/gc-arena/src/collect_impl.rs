@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
-use alloc::collections::VecDeque;
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::{LinkedList, VecDeque};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -169,6 +169,20 @@ unsafe impl<T: Collect> Collect for Vec<T> {
 }
 
 unsafe impl<T: Collect> Collect for VecDeque<T> {
+    #[inline]
+    fn needs_trace() -> bool {
+        T::needs_trace()
+    }
+
+    #[inline]
+    fn trace(&self, cc: &Collection) {
+        for t in self {
+            t.trace(cc)
+        }
+    }
+}
+
+unsafe impl<T: Collect> Collect for LinkedList<T> {
     #[inline]
     fn needs_trace() -> bool {
         T::needs_trace()
