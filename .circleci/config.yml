@@ -37,7 +37,7 @@ jobs:
       - run:
           name: Build no_std targets
           command: |
-              cargo build --manifest-path=src/gc-arena/Cargo.toml --no-default-features
+              cargo build --no-default-features
       - run:
           name: Check with combinations of optional features
           command: |
