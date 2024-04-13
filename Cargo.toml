@@ -2,8 +2,7 @@
 resolver = "2"
 
 members = [
-    "src/gc-arena-derive/",
-    "src/gc-arena/",
+    "derive",
 ]
 
 [workspace.package]
@@ -13,3 +12,30 @@ edition = "2021"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kyren/gc-arena"
+
+[package]
+name = "gc-arena"
+description = "safe, incrementally garbage collected arenas"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[features]
+default = ["std"]
+std = []
+tracing = ["dep:tracing"]
+allocator-api2 = ["dep:allocator-api2", "hashbrown?/allocator-api2"]
+
+[dependencies]
+allocator-api2 = { version = "0.2", optional = true, default-features = false, features = ["alloc"] }
+gc-arena-derive = { path = "./derive", version = "0.5.0"}
+hashbrown = { version = "0.14", optional = true, default-features = false }
+sptr = "0.3.2"
+tracing = { version = "0.1.37", optional = true, default-features = false }
+
+[dev-dependencies]
+rand = "0.8"
+trybuild = "1.0"
