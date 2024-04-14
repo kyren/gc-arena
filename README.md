@@ -87,7 +87,7 @@ The ideas here are mostly not mine, much of the design is borrowed heavily from
 and the idea of using "generativity" comes from [You can't spell trust without
 Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).
 
-## License ##
+## License
 
 Everything in this repository is licensed under either of:
 
