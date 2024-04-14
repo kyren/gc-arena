@@ -6,7 +6,8 @@ use gc_arena::{lock::RefLock, Arena, Collect, Gc, Mutation, Rootable};
 // to trace our inner `prev`, `next`, or `value`.
 #[derive(Copy, Clone, Collect)]
 // For safety, we agree to not implement `Drop`. We could also use
-// `#[collect(unsafe_drop)]` or `#[collect(require_static)]` here instead.`
+// `#[collect(unsafe_drop)]` or `#[collect(require_static)]` (if our type were
+// 'static) here instead.`
 #[collect(no_drop)]
 struct Node<'gc, T: 'gc> {
     // The representation of the `prev` and `next` fields is a plain machine
@@ -54,7 +55,7 @@ fn node_join<'gc, T>(mc: &Mutation<'gc>, left: NodePtr<'gc, T>, right: NodePtr<'
 }
 
 // Use a `NodePtr` as a cursor, move forward through a linked list by following
-//`next` pointers.
+// `next` pointers.
 //
 // Returns `true` if there was a `next` pointer and the target node has been
 // changed.
@@ -68,7 +69,7 @@ fn node_rotate_right<'gc, T>(node: &mut NodePtr<'gc, T>) -> bool {
 }
 
 // Use a `NodePtr` as a cursor, move backward through a linked list by following
-//`prev` pointers.
+// `prev` pointers.
 //
 // Returns `true` if there was a `prev` pointer and the target node has been
 // changed.
