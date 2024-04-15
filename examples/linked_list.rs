@@ -7,7 +7,7 @@ use gc_arena::{lock::RefLock, Arena, Collect, Gc, Mutation, Rootable};
 #[derive(Copy, Clone, Collect)]
 // For safety, we agree to not implement `Drop`. We could also use
 // `#[collect(unsafe_drop)]` or `#[collect(require_static)]` (if our type were
-// 'static) here instead.`
+// 'static) here instead.
 #[collect(no_drop)]
 struct Node<'gc, T: 'gc> {
     // The representation of the `prev` and `next` fields is a plain machine
