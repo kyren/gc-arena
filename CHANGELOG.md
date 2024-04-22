@@ -1,3 +1,12 @@
+## [0.5.1]
+
+* Correct the behavior of `Arena::mark_debt` and `Arena::mark_all`
+  to do what their documentation suggest and do nothing during
+  `CollectionPhase::Collecting`
+* Implement `Collect` for `std::collections::LinkedList`
+* Make `StaticCollect<T>` `#[repr(transparent)]`, to support sound casting from
+  `Gc<StaticCollect<T>>` to `Gc<T>`.
+
 ## [0.5.0]
 
 This release adds the concept of "finalization" to arenas. At the end of the
