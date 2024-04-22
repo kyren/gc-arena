@@ -5,8 +5,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, DynamicRootSet,
-    Gc, GcWeak, Rootable,
+    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, CollectionPhase,
+    DynamicRootSet, Gc, GcWeak, Rootable,
 };
 
 #[test]
@@ -907,6 +907,74 @@ fn transitive_death() {
         assert!(root.b.is_dead(fc));
         assert!(Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
     });
+}
+
+#[test]
+fn test_phases() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 1024 * 64]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
+        let test = Gc::new(mc, [0; 1024 * 64]);
+        TestRoot { test }
+    });
+    arena.collect_all();
+
+    // The collector must start out in the sleeping phase.
+    assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
+
+    while arena.collection_phase() == CollectionPhase::Sleeping {
+        // Keep accumulating debt to keep the collector moving.
+        arena.mutate(|mc, _| {
+            Gc::new(mc, 0);
+        });
+        // This cannot move past the Marked phase.
+        arena.mark_debt();
+    }
+
+    // Assert that the collector has woken up into the Marking / Marked phase.
+    assert!(matches!(
+        arena.collection_phase(),
+        CollectionPhase::Marking | CollectionPhase::Marked
+    ));
+
+    loop {
+        // Keep accumulating debt to keep the collector moving.
+        arena.mutate(|mc, _| {
+            Gc::new(mc, 0);
+        });
+
+        // If `mark_debt()` returns, we know we must be in the Marked phase.
+        if arena.mark_debt().is_some() {
+            assert!(arena.collection_phase() == CollectionPhase::Marked);
+            break;
+        }
+    }
+
+    while matches!(
+        arena.collection_phase(),
+        CollectionPhase::Marked | CollectionPhase::Collecting
+    ) {
+        // Keep accumulating debt to keep the collector moving.
+        arena.mutate(|mc, _| {
+            Gc::new(mc, 0);
+        });
+        // This should not move from Collecting to Marking in one call, it must pass through
+        // Sleeping.
+        arena.collect_debt();
+
+        if arena.collection_phase() == CollectionPhase::Collecting {
+            // Assert that mark_debt() and mark_all() do nothing while in the Collecting phase.
+            assert!(arena.mark_debt().is_none());
+            assert!(arena.mark_all().is_none());
+        }
+    }
+
+    // We must end back up at Sleeping.
+    assert!(arena.collection_phase() == CollectionPhase::Sleeping);
 }
 
 #[test]

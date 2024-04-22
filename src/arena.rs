@@ -267,8 +267,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
             }
         }
 
-        debug_assert!(self.context.phase() == Phase::Mark);
-        if !self.context.gray_remaining() {
+        if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
             Some(MarkedArena(self))
         } else {
             None
@@ -301,8 +300,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
             }
         }
 
-        debug_assert!(self.context.phase() == Phase::Mark);
-        if !self.context.gray_remaining() {
+        if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
             Some(MarkedArena(self))
         } else {
             None
