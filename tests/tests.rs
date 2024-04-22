@@ -947,17 +947,21 @@ fn test_phases() {
             Gc::new(mc, 0);
         });
 
-        // If `mark_debt()` returns, we know we must be in the Marked phase.
-        if arena.mark_debt().is_some() {
-            assert!(arena.collection_phase() == CollectionPhase::Marked);
+        if let Some(marked) = arena.mark_debt() {
+            // Manually transition to the Collecting phase.
+            marked.collect();
+            assert!(arena.collection_phase() == CollectionPhase::Collecting);
             break;
         }
     }
 
-    while matches!(
-        arena.collection_phase(),
-        CollectionPhase::Marked | CollectionPhase::Collecting
-    ) {
+    if arena.collection_phase() == CollectionPhase::Collecting {
+        // Assert that mark_debt() and mark_all() do nothing while in the Collecting phase.
+        assert!(arena.mark_debt().is_none());
+        assert!(arena.mark_all().is_none());
+    }
+
+    while arena.collection_phase() == CollectionPhase::Collecting {
         // Keep accumulating debt to keep the collector moving.
         arena.mutate(|mc, _| {
             Gc::new(mc, 0);
@@ -965,12 +969,6 @@ fn test_phases() {
         // This should not move from Collecting to Marking in one call, it must pass through
         // Sleeping.
         arena.collect_debt();
-
-        if arena.collection_phase() == CollectionPhase::Collecting {
-            // Assert that mark_debt() and mark_all() do nothing while in the Collecting phase.
-            assert!(arena.mark_debt().is_none());
-            assert!(arena.mark_all().is_none());
-        }
     }
 
     // We must end back up at Sleeping.

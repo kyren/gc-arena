@@ -212,6 +212,22 @@ impl Context {
             || self.root_needs_trace.get()
     }
 
+    // If possible, transition from the Mark phase to the Sweep phase
+    #[inline]
+    pub(crate) fn enter_sweep(&self) -> bool {
+        if self.phase.get() == Phase::Mark && !self.gray_remaining() {
+            // If we have no gray objects left, we enter the sweep phase.
+            let _guard = PhaseGuard::enter(&self, Some(Phase::Sweep));
+            // Set `sweep to the current head of our `all` linked list. Any new allocations during
+            // the newly-entered `Phase:Sweep` will update `all`, but will *not* be reachable from
+            // `this.sweep`.
+            self.sweep.set(self.all.get());
+            true
+        } else {
+            false
+        }
+    }
+
     // Do some collection work until either the debt goes down below the target amount or we have
     // finished the gc sweep phase. The unit of "work" here is a byte count of objects either
     // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
@@ -308,8 +324,8 @@ impl Context {
                             entered.switch(Phase::Sweep);
 
                             // Set `sweep to the current head of our `all` linked list. Any new
-                            // allocations during the newly-entered `Phase:Sweep` will update `all`, but
-                            // will *not* be reachable from `this.sweep`.
+                            // allocations during the newly-entered `Phase:Sweep` will update `all`,
+                            // but will *not* be reachable from `this.sweep`.
                             self.sweep.set(self.all.get());
 
                             // No need to update metrics here.

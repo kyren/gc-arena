@@ -331,6 +331,13 @@ impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
             f(mc, root)
         }
     }
+
+    /// Immediately transition the arena out of `CollectionPhase::Marked` to
+    /// `CollectionPhase::Collecting`.
+    #[inline]
+    pub fn collect(self) {
+        assert!(self.0.context.enter_sweep());
+    }
 }
 
 /// Create a temporary arena without a root object and perform the given operation on it. No garbage
