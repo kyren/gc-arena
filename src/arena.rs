@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::{f64, marker::PhantomData};
 
 use crate::{
-    context::{Context, Finalization, Mutation, Phase},
+    context::{Context, EarlyStop, Finalization, Mutation, Phase},
     metrics::Metrics,
     Collect,
 };
@@ -250,7 +250,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            self.context.do_collection(&self.root, 0.0, false);
+            self.context.do_collection(&self.root, 0.0, None);
         }
     }
 
@@ -263,7 +263,8 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
-                self.context.do_collection(&self.root, 0.0, true);
+                self.context
+                    .do_collection(&self.root, 0.0, Some(EarlyStop::BeforeSweep));
             }
         }
 
@@ -282,7 +283,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     pub fn collect_all(&mut self) {
         unsafe {
             self.context
-                .do_collection(&self.root, f64::NEG_INFINITY, false);
+                .do_collection(&self.root, f64::NEG_INFINITY, None);
         }
     }
 
@@ -295,8 +296,11 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
             unsafe {
-                self.context
-                    .do_collection(&self.root, f64::NEG_INFINITY, true);
+                self.context.do_collection(
+                    &self.root,
+                    f64::NEG_INFINITY,
+                    Some(EarlyStop::BeforeSweep),
+                );
             }
         }
 
@@ -308,7 +312,7 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 }
 
-pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a Arena<R>);
+pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a mut Arena<R>);
 
 impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
     /// Examine the state of a fully marked arena.
@@ -335,8 +339,15 @@ impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
     /// Immediately transition the arena out of `CollectionPhase::Marked` to
     /// `CollectionPhase::Collecting`.
     #[inline]
-    pub fn collect(self) {
-        assert!(self.0.context.enter_sweep());
+    pub fn start_collecting(self) {
+        unsafe {
+            self.0.context.do_collection(
+                &self.0.root,
+                f64::NEG_INFINITY,
+                Some(EarlyStop::AfterSweep),
+            );
+        }
+        assert_eq!(self.0.context.phase(), Phase::Sweep);
     }
 }
 

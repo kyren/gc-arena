@@ -949,7 +949,7 @@ fn test_phases() {
 
         if let Some(marked) = arena.mark_debt() {
             // Manually transition to the Collecting phase.
-            marked.collect();
+            marked.start_collecting();
             assert!(arena.collection_phase() == CollectionPhase::Collecting);
             break;
         }
