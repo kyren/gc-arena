@@ -92,12 +92,18 @@ impl Collection {
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Phase {
     Mark,
     Sweep,
     Sleep,
     Drop,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum EarlyStop {
+    BeforeSweep,
+    AfterSweep,
 }
 
 pub(crate) struct Context {
@@ -213,33 +219,32 @@ impl Context {
     }
 
     // Do some collection work until either the debt goes down below the target amount or we have
-    // finished the gc sweep phase. The unit of "work" here is a byte count of objects either
-    // turned black or freed, so to completely collect a heap with 1000 bytes of objects should take
-    // 1000 units of work, whatever percentage of them are live or not.
+    // finished the gc sweep phase. The unit of "work" here is a byte count of objects either turned
+    // black or freed, so to completely collect a heap with 1000 bytes of objects should take 1000
+    // units of work, whatever percentage of them are live or not.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
     //
-    // If we are currently in `Phase::Sleep`, this will transition the collector to
-    // `Phase::Mark`.
+    // If we are currently in `Phase::Sleep`, this will transition the collector to `Phase::Mark`.
     pub(crate) unsafe fn do_collection<R: Collect>(
         &self,
         root: &R,
         target_debt: f64,
-        stop_before_sweep: bool,
+        early_stop: Option<EarlyStop>,
     ) {
-        self.do_collection_inner(root, target_debt, stop_before_sweep)
+        self.do_collection_inner(root, target_debt, early_stop)
     }
 
     fn do_collection_inner<R: Collect>(
         &self,
         root: &R,
         mut target_debt: f64,
-        stop_before_sweep: bool,
+        early_stop: Option<EarlyStop>,
     ) {
         let mut entered = PhaseGuard::enter(self, None);
 
-        if self.metrics.allocation_debt() <= target_debt {
+        if !(self.metrics.allocation_debt() > target_debt) {
             entered.log_progress("GC: paused");
             return;
         }
@@ -301,15 +306,15 @@ impl Context {
                         root.trace(self.collection_context());
                         self.root_needs_trace.set(false);
                     } else {
-                        if stop_before_sweep {
+                        if early_stop == Some(EarlyStop::BeforeSweep) {
                             target_debt = f64::INFINITY;
                         } else {
                             // If we have no gray objects left, we enter the sweep phase.
                             entered.switch(Phase::Sweep);
 
                             // Set `sweep to the current head of our `all` linked list. Any new
-                            // allocations during the newly-entered `Phase:Sweep` will update `all`, but
-                            // will *not* be reachable from `this.sweep`.
+                            // allocations during the newly-entered `Phase:Sweep` will update `all`,
+                            // but will *not* be reachable from `this.sweep`.
                             self.sweep.set(self.all.get());
 
                             // No need to update metrics here.
@@ -318,7 +323,9 @@ impl Context {
                     }
                 }
                 Phase::Sweep => {
-                    if let Some(mut sweep) = self.sweep.get() {
+                    if early_stop == Some(EarlyStop::AfterSweep) {
+                        target_debt = f64::INFINITY;
+                    } else if let Some(mut sweep) = self.sweep.get() {
                         let sweep_header = sweep.header();
 
                         let next_box = sweep_header.next();
@@ -384,7 +391,7 @@ impl Context {
                 Phase::Drop => unreachable!(),
             }
 
-            if self.metrics.allocation_debt() <= target_debt {
+            if !(self.metrics.allocation_debt() > target_debt) {
                 entered.log_progress("GC: yielding...");
                 return;
             }
