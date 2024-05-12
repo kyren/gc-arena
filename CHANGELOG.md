@@ -1,5 +1,8 @@
-## [0.5.1]
+## [0.5.2]
+* Add the ability to transition from a fully marked arena immediately into
+  `CollectionPhase::Collecting`.
 
+## [0.5.1]
 * Correct the behavior of `Arena::mark_debt` and `Arena::mark_all`
   to do what their documentation suggest and do nothing during
   `CollectionPhase::Collecting`
