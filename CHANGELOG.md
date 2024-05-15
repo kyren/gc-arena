@@ -1,3 +1,6 @@
+## [0.5.3]
+* Adds a `Collect` impl for `hashbrown::HashTable`.
+
 ## [0.5.2]
 * Add the ability to transition from a fully marked arena immediately into
   `CollectionPhase::Collecting`.
