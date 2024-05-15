@@ -45,6 +45,25 @@ mod inner {
             }
         }
     }
+
+    unsafe impl<T, A> Collect for hashbrown::HashTable<T, A>
+    where
+        T: Collect,
+        A: Allocator + Clone + Collect,
+    {
+        #[inline]
+        fn needs_trace() -> bool {
+            T::needs_trace() || A::needs_trace()
+        }
+
+        #[inline]
+        fn trace(&self, cc: &Collection) {
+            self.allocator().trace(cc);
+            for v in self {
+                v.trace(cc);
+            }
+        }
+    }
 }
 
 #[cfg(not(feature = "allocator-api2"))]
@@ -75,6 +94,23 @@ mod inner {
     where
         T: Collect,
         S: 'static,
+    {
+        #[inline]
+        fn needs_trace() -> bool {
+            T::needs_trace()
+        }
+
+        #[inline]
+        fn trace(&self, cc: &Collection) {
+            for v in self {
+                v.trace(cc);
+            }
+        }
+    }
+
+    unsafe impl<T> Collect for hashbrown::HashTable<T>
+    where
+        T: Collect,
     {
         #[inline]
         fn needs_trace() -> bool {
