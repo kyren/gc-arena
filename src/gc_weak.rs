@@ -56,7 +56,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// as collection resumes.
     ///
     /// If the pointer is still valid, it may be resurrected using `GcWeak::upgrade` or
-    /// GcWeak::resurrect`.
+    /// `GcWeak::resurrect`.
     ///
     /// NOTE: This returns true if the pointer was destined to be collected at the **start** of the
     /// current finalization callback. Resurrecting one pointer can transitively resurrect others,

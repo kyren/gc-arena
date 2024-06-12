@@ -67,7 +67,7 @@ macro_rules! make_lock_wrapper {
             /// pointers may be adopted by this type as a result of the interior mutability
             /// afforded by directly accessing the inner [`
             #[doc = stringify!($unlocked_type)]
-            /// `], unless the write barrier for the containing [`Gc`] pointer is invoked manuall
+            /// `], unless the write barrier for the containing [`Gc`] pointer is invoked manually
             /// before collection is triggered.
             #[inline]
             pub unsafe fn $unsafe_unlock_method(&self) -> &$unlocked_type<T> {
