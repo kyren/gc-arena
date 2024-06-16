@@ -81,7 +81,7 @@ macro_rules! Rootable {
 /// A helper type alias for a `Rootable::Root` for a specific lifetime.
 pub type Root<'a, R> = <R as Rootable<'a>>::Root;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CollectionPhase {
     /// The arena is done with a collection cycle and is waiting to be restarted.
     Sleeping,
