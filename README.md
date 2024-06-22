@@ -2,14 +2,15 @@
 [![docs.rs](https://docs.rs/gc-arena/badge.svg)](https://docs.rs/gc-arena)
 [![Build Status](https://img.shields.io/circleci/project/github/kyren/gc-arena.svg)](https://circleci.com/gh/kyren/gc-arena)
 
+## gc-arena
+
 This repo is home to the `gc-arena` crate, which provides Rust with garbage
 collected arenas and a means of safely interacting with them.
 
-### gc-arena
-
 The `gc-arena` crate, along with its helper crate `gc-arena-derive`, provides
-safe allocation with cycle-detecting garbage collection within a closed "arena".
-There are two techniques at play that make this system sound:
+allocation with safe, incremental, exact, cycle-detecting garbage collection
+within a closed "arena". There are two techniques at play that make this system
+sound:
 
 * Garbage collected objects are traced using the `Collect` trait, which must
   be implemented correctly to ensure that all reachable objects are found. This
@@ -38,6 +39,11 @@ accessible garbage collector, rather it *only* allows for limited garbage
 collection in isolated garbage collected arenas. All garbage collected pointers
 must forever live inside only this arena, and pointers from different arenas are
 prevented from being stored in the wrong arena.
+
+See [this blog post](https://kyju.org/blog/rust-safe-garbage-collection/) for a
+more in-depth tour of the crate's design. It is quite dense, but it explains
+everything necessary to fully understand the machinery used in the included
+[linked list example](examples/linked_list.rs).
 
 ## Use cases
 
@@ -77,15 +83,16 @@ Some notable current limitations:
 * The `Collect` trait does not provide a mechanism to move objects once they are
   allocated, so this limits the types of collectors that could be written. This
   is achievable but no work has been done towards this.
-  
-* The crate is currently pretty light on documentation and examples.
 
 ## Prior Art
 
-The ideas here are mostly not mine, much of the design is borrowed heavily from
-[rust-gc](https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
+The ideas here are mostly not mine. Much of the user-facing design is borrowed
+heavily from [rust-gc](
+https://manishearth.github.io/blog/2015/09/01/designing-a-gc-in-rust/),
 and the idea of using "generativity" comes from [You can't spell trust without
-Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf).
+Rust](https://raw.githubusercontent.com/Gankro/thesis/master/thesis.pdf). The
+design of the actual garbage collection system itself borrows heavily from the
+incremental mark-and-sweep collector in Lua 5.4.
 
 ## License
 
