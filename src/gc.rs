@@ -1,10 +1,10 @@
 use core::{
+    alloc::Layout,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    mem,
     ops::Deref,
-    ptr::{self, NonNull},
+    ptr::NonNull,
 };
 
 use crate::{
@@ -12,7 +12,7 @@ use crate::{
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
-    types::{GcBox, GcBoxInner, GcColor, Invariant},
+    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
     Finalization,
 };
 
@@ -88,7 +88,7 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: 'gc> Gc<'gc, T> {
+impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Cast the internal pointer to a different type.
     ///
     /// SAFETY:
@@ -108,16 +108,10 @@ impl<'gc, T: 'gc> Gc<'gc, T> {
     /// have been collected yet.
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
-        let header_offset = {
-            let base = mem::MaybeUninit::<GcBoxInner<T>>::uninit();
-            let base_ptr = base.as_ptr();
-            let val_ptr = ptr::addr_of!((*base_ptr).value);
-            (base_ptr as isize) - (val_ptr as isize)
-        };
-        let ptr = (ptr as *mut T)
-            .cast::<u8>()
-            .offset(header_offset)
-            .cast::<GcBoxInner<T>>();
+        let layout = Layout::new::<GcBoxHeader>();
+        let (_, header_offset) = layout.extend(Layout::for_value(&*ptr)).unwrap();
+        let header_offset = -(header_offset as isize);
+        let ptr = (ptr as *mut T).byte_offset(header_offset) as *mut GcBoxInner<T>;
         Gc {
             ptr: NonNull::new_unchecked(ptr),
             _invariant: PhantomData,
