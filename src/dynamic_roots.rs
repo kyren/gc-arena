@@ -173,8 +173,14 @@ unsafe impl<'gc> Collect for Inner<'gc> {
 
 type Index = usize;
 
+// By avoiding Option<usize>, `Slot` can go from 24 bytes to 16.
+//
+// usize::MAX can never be a valid index without using more than `usize::MAX` memory in the slots
+// vec, which is impossible.
+const NULL_INDEX: Index = usize::MAX;
+
 enum Slot<'gc> {
-    Vacant { next_free: Option<Index> },
+    Vacant { next_free: Index },
     Occupied { root: Gc<'gc, ()>, ref_count: usize },
 }
 
@@ -190,7 +196,7 @@ unsafe impl<'gc> Collect for Slot<'gc> {
 struct Slots<'gc> {
     metrics: Metrics,
     slots: Vec<Slot<'gc>>,
-    next_free: Option<Index>,
+    next_free: Index,
 }
 
 impl<'gc> Drop for Slots<'gc> {
@@ -211,7 +217,7 @@ impl<'gc> Slots<'gc> {
         Self {
             metrics,
             slots: Vec::new(),
-            next_free: None,
+            next_free: NULL_INDEX,
         }
     }
 
@@ -219,8 +225,9 @@ impl<'gc> Slots<'gc> {
         // Occupied slot refcount starts at 0. A refcount of 0 and a set ptr implies that there is
         // *one* live reference.
 
-        if let Some(free) = self.next_free.take() {
-            let slot = &mut self.slots[free];
+        if self.next_free != NULL_INDEX {
+            let idx = self.next_free;
+            let slot = &mut self.slots[idx];
             match *slot {
                 Slot::Vacant { next_free } => {
                     self.next_free = next_free;
@@ -231,7 +238,7 @@ impl<'gc> Slots<'gc> {
                 root: p,
                 ref_count: 0,
             };
-            free
+            idx
         } else {
             let idx = self.slots.len();
 
@@ -272,7 +279,7 @@ impl<'gc> Slots<'gc> {
                     *slot = Slot::Vacant {
                         next_free: self.next_free,
                     };
-                    self.next_free = Some(idx);
+                    self.next_free = idx;
                 } else {
                     *ref_count -= 1;
                 }
