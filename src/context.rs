@@ -141,14 +141,16 @@ pub(crate) struct Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
-        struct DropAll(Option<GcBox>);
+        struct DropAll<'a>(&'a Metrics, Option<GcBox>);
 
-        impl Drop for DropAll {
+        impl<'a> Drop for DropAll<'a> {
             fn drop(&mut self) {
-                if let Some(gc_box) = self.0.take() {
-                    let mut drop_resume = DropAll(Some(gc_box));
-                    while let Some(gc_box) = drop_resume.0.take() {
-                        drop_resume.0 = gc_box.header().next();
+                if let Some(gc_box) = self.1.take() {
+                    let mut drop_resume = DropAll(self.0, Some(gc_box));
+                    while let Some(gc_box) = drop_resume.1.take() {
+                        let header = gc_box.header();
+                        drop_resume.1 = header.next();
+                        self.0.mark_gc_deallocated(header.size_of_box());
                         // SAFETY: the context owns its GC'd objects
                         unsafe { free_gc_box(gc_box) }
                     }
@@ -157,7 +159,7 @@ impl Drop for Context {
         }
 
         let _guard = PhaseGuard::enter(&self, Some(Phase::Drop));
-        DropAll(self.all.get());
+        DropAll(&self.metrics, self.all.get());
     }
 }
 
