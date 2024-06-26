@@ -171,21 +171,32 @@ unsafe impl<'gc> Collect for Inner<'gc> {
     }
 }
 
-type Slot<'gc> = (Option<Gc<'gc, ()>>, usize);
 type Index = usize;
+
+enum Slot<'gc> {
+    Vacant { next_free: Option<Index> },
+    Occupied { root: Gc<'gc, ()>, ref_count: usize },
+}
+
+unsafe impl<'gc> Collect for Slot<'gc> {
+    fn trace(&self, cc: &crate::Collection) {
+        match self {
+            Slot::Vacant { .. } => {}
+            Slot::Occupied { root, .. } => root.trace(cc),
+        }
+    }
+}
 
 struct Slots<'gc> {
     metrics: Metrics,
     slots: Vec<Slot<'gc>>,
-    free_slots: Vec<Index>,
+    next_free: Option<Index>,
 }
 
 impl<'gc> Drop for Slots<'gc> {
     fn drop(&mut self) {
         self.metrics
             .mark_external_deallocation(self.slots.capacity() * mem::size_of::<Slot>());
-        self.metrics
-            .mark_external_deallocation(self.free_slots.capacity() * mem::size_of::<Index>());
     }
 }
 
@@ -200,18 +211,35 @@ impl<'gc> Slots<'gc> {
         Self {
             metrics,
             slots: Vec::new(),
-            free_slots: Vec::new(),
+            next_free: None,
         }
     }
 
     fn add(&mut self, p: Gc<'gc, ()>) -> Index {
-        let idx = if let Some(free) = self.free_slots.pop() {
+        // Occupied slot refcount starts at 0. A refcount of 0 and a set ptr implies that there is
+        // *one* live reference.
+
+        if let Some(free) = self.next_free.take() {
+            let slot = &mut self.slots[free];
+            match *slot {
+                Slot::Vacant { next_free } => {
+                    self.next_free = next_free;
+                }
+                Slot::Occupied { .. } => panic!("free slot linked list corrupted"),
+            }
+            *slot = Slot::Occupied {
+                root: p,
+                ref_count: 0,
+            };
             free
         } else {
             let idx = self.slots.len();
 
             let old_capacity = self.slots.capacity();
-            self.slots.push((None, 0));
+            self.slots.push(Slot::Occupied {
+                root: p,
+                ref_count: 0,
+            });
             let new_capacity = self.slots.capacity();
 
             debug_assert!(new_capacity >= old_capacity);
@@ -222,43 +250,34 @@ impl<'gc> Slots<'gc> {
             }
 
             idx
-        };
-
-        let slot = &mut self.slots[idx];
-        debug_assert!(slot.0.is_none());
-        // The refcount starts at 0. A refcount of 0 and a set ptr implies that there is *one* live
-        // reference.
-        *slot = (Some(p), 0);
-
-        idx
+        }
     }
 
     fn inc(&mut self, idx: Index) {
-        let slot = &mut self.slots[idx];
-        slot.1 = slot
-            .1
-            .checked_add(1)
-            .expect("DynamicRoot refcount overflow!");
+        match &mut self.slots[idx] {
+            Slot::Occupied { ref_count, .. } => {
+                *ref_count = ref_count
+                    .checked_add(1)
+                    .expect("DynamicRoot refcount overflow!");
+            }
+            Slot::Vacant { .. } => panic!("taken slot has been improperly freed"),
+        }
     }
 
     fn dec(&mut self, idx: Index) {
         let slot = &mut self.slots[idx];
-        if slot.1 == 0 {
-            debug_assert!(slot.0.is_some());
-            slot.0 = None;
-
-            let old_capacity = self.slots.capacity();
-            self.free_slots.push(idx);
-            let new_capacity = self.slots.capacity();
-
-            debug_assert!(new_capacity >= old_capacity);
-            if new_capacity > old_capacity {
-                self.metrics.mark_external_allocation(
-                    (new_capacity - old_capacity) * mem::size_of::<Index>(),
-                );
+        match slot {
+            Slot::Occupied { ref_count, .. } => {
+                if *ref_count == 0 {
+                    *slot = Slot::Vacant {
+                        next_free: self.next_free,
+                    };
+                    self.next_free = Some(idx);
+                } else {
+                    *ref_count -= 1;
+                }
             }
-        } else {
-            slot.1 = slot.1 - 1;
+            Slot::Vacant { .. } => panic!("taken slot has been improperly freed"),
         }
     }
 }
