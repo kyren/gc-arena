@@ -396,12 +396,11 @@ fn test_dynamic_roots() {
 
     let mut arena: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
-    let root_a = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Gc<'_, Rc<i32>>]>(mc, Gc::new(mc, rc_a.clone()))
-    });
+    let root_a = arena
+        .mutate(|mc, root_set| root_set.stash::<Rootable![Rc<i32>]>(mc, Gc::new(mc, rc_a.clone())));
 
     let root_b = arena.mutate(|mc, root_set| {
-        root_set.stash::<Rootable![Gc<'_, Rc<String>>]>(mc, Gc::new(mc, rc_b.clone()))
+        root_set.stash::<Rootable![Rc<String>]>(mc, Gc::new(mc, rc_b.clone()))
     });
 
     assert_eq!(Rc::strong_count(&rc_a), 2);
@@ -413,13 +412,19 @@ fn test_dynamic_roots() {
     assert_eq!(Rc::strong_count(&rc_a), 2);
     assert_eq!(Rc::strong_count(&rc_b), 2);
 
-    arena.mutate(|_, root_set| {
-        let root_a = *root_set.fetch(&root_a);
+    let mut root_b_dup = None;
+
+    arena.mutate(|mc, root_set| {
+        let root_a = root_set.fetch(&root_a);
         assert_eq!(**root_a, 12);
 
         let root_b = root_set.fetch(&root_b);
         assert_eq!(root_b.as_str(), "hello");
+        root_b_dup = Some(root_set.stash::<Rootable![Rc<String>]>(mc, root_b));
     });
+
+    let root_a_clone = root_a.clone();
+    let root_b_clone = root_b.clone();
 
     drop(root_a);
     drop(root_b);
@@ -427,7 +432,24 @@ fn test_dynamic_roots() {
     arena.collect_all();
     arena.collect_all();
 
+    assert_eq!(Rc::strong_count(&rc_a), 2);
+    assert_eq!(Rc::strong_count(&rc_b), 2);
+
+    drop(root_a_clone);
+    drop(root_b_clone);
+
+    arena.collect_all();
+    arena.collect_all();
+
     assert_eq!(Rc::strong_count(&rc_a), 1);
+    // There is still `root_b_dup` which should point to the same object.
+    assert_eq!(Rc::strong_count(&rc_b), 2);
+
+    drop(root_b_dup);
+
+    arena.collect_all();
+    arena.collect_all();
+
     assert_eq!(Rc::strong_count(&rc_b), 1);
 }
 
@@ -438,12 +460,7 @@ fn test_dynamic_bad_set() {
 
     let arena2: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
 
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct Root<'gc>(Gc<'gc, i32>);
-
-    let dyn_root =
-        arena1.mutate(|mc, root| root.stash::<Rootable![Root<'_>]>(mc, Root(Gc::new(mc, 44))));
+    let dyn_root = arena1.mutate(|mc, root| root.stash::<Rootable![i32]>(mc, Gc::new(mc, 44)));
 
     arena2.mutate(|_, root| {
         root.fetch(&dyn_root);
