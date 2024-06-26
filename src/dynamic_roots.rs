@@ -5,7 +5,7 @@ use alloc::{
     vec::Vec,
 };
 
-use crate::{metrics::Metrics, unsize, Collect, Gc, Mutation, Root, Rootable};
+use crate::{metrics::Metrics, Collect, Gc, Mutation, Root, Rootable};
 
 /// A way of registering GC roots dynamically.
 ///
@@ -55,7 +55,7 @@ impl<'gc> DynamicRootSet<'gc> {
         Gc::write(mc, self.0);
 
         let mut slots = self.0.slots.borrow_mut();
-        let index = slots.add(unsize!(root => dyn Collect));
+        let index = slots.add(unsafe { Gc::cast(root) });
 
         let ptr =
             unsafe { mem::transmute::<Gc<'gc, Root<'gc, R>>, Gc<'static, Root<'static, R>>>(root) };
@@ -171,7 +171,7 @@ unsafe impl<'gc> Collect for Inner<'gc> {
     }
 }
 
-type Slot<'gc> = (Option<Gc<'gc, dyn Collect + 'gc>>, usize);
+type Slot<'gc> = (Option<Gc<'gc, ()>>, usize);
 type Index = usize;
 
 struct Slots<'gc> {
@@ -204,7 +204,7 @@ impl<'gc> Slots<'gc> {
         }
     }
 
-    fn add(&mut self, p: Gc<'gc, dyn Collect + 'gc>) -> Index {
+    fn add(&mut self, p: Gc<'gc, ()>) -> Index {
         let idx = if let Some(free) = self.free_slots.pop() {
             free
         } else {
