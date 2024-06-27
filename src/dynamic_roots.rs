@@ -119,6 +119,8 @@ impl<'gc> DynamicRootSet<'gc> {
     }
 }
 
+/// Handle to a `Gc` pointer held inside a [`DynamicRootSet`] which is `'static` and can be held
+/// outside of the arena.
 pub struct DynamicRoot<R: for<'gc> Rootable<'gc>> {
     ptr: Gc<'static, Root<'static, R>>,
     slots: Weak<RefCell<Slots<'static>>>,
@@ -144,6 +146,29 @@ impl<R: for<'gc> Rootable<'gc>> Clone for DynamicRoot<R> {
             slots: self.slots.clone(),
             index: self.index,
         }
+    }
+}
+
+impl<R: for<'gc> Rootable<'gc>> DynamicRoot<R> {
+    /// Get a pointer to the held object.
+    ///
+    /// This returns [`Gc::as_ptr`] for the [`Gc`] provided when the `DynamicRoot` is stashed.
+    ///
+    /// # Safety
+    ///
+    /// It is possible to use this to reconstruct the original `Gc` pointer by calling the unsafe
+    /// [`Gc::from_ptr`], but this is incredibly dangerous!
+    ///
+    /// First, if the [`DynamicRootSet`] in which the `DynamicRoot` was stashed has been collected,
+    /// then either the returned pointer or other transitive `Gc` pointers objects may be dangling.
+    /// The parent `DynamicRootSet` *must* still be uncollected in order to do this soundly.
+    ///
+    /// Second, the `'gc` lifetime returned here is unbound, so it is meaningless and can allow
+    /// improper mixing of objects across arenas. The returned `'gc` lifetime must be bound to only
+    /// the arena that holds the parent `DynamicRootSet`.
+    #[inline]
+    pub fn as_ptr<'gc>(&self) -> *const Root<'gc, R> {
+        unsafe { mem::transmute::<&Root<'static, R>, &Root<'gc, R>>(&self.ptr) as *const _ }
     }
 }
 
