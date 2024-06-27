@@ -229,7 +229,7 @@ impl Context {
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to `Phase::Mark`.
-    pub(crate) unsafe fn do_collection<R: Collect>(
+    pub(crate) unsafe fn do_collection<R: Collect + ?Sized>(
         &self,
         root: &R,
         target_debt: f64,
@@ -238,7 +238,7 @@ impl Context {
         self.do_collection_inner(root, target_debt, early_stop)
     }
 
-    fn do_collection_inner<R: Collect>(
+    fn do_collection_inner<R: Collect + ?Sized>(
         &self,
         root: &R,
         mut target_debt: f64,

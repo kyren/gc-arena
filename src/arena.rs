@@ -14,7 +14,7 @@ use crate::{
 /// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
 pub trait Rootable<'a>: 'static {
-    type Root: Collect + 'a;
+    type Root: ?Sized + 'a;
 }
 
 /// A marker type used by the `Rootable!` macro instead of a bare trait object.
@@ -115,12 +115,19 @@ pub enum CollectionPhase {
 /// this way, incremental garbage collection can be achieved (assuming "sufficiently small" calls
 /// to `mutate`) that is both extremely safe and zero overhead vs what you would write in C with raw
 /// pointers and manually ensuring that invariants are held.
-pub struct Arena<R: for<'a> Rootable<'a>> {
+pub struct Arena<R>
+where
+    R: for<'a> Rootable<'a>,
+{
     context: Box<Context>,
     root: Root<'static, R>,
 }
 
-impl<R: for<'a> Rootable<'a>> Arena<R> {
+impl<R> Arena<R>
+where
+    R: for<'a> Rootable<'a>,
+    for<'a> Root<'a, R>: Sized,
+{
     /// Create a new arena with the given garbage collector tuning parameters. You must provide a
     /// closure that accepts a `&Mutation<'gc>` and returns the appropriate root.
     pub fn new<F>(f: F) -> Arena<R>
@@ -155,6 +162,51 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
         }
     }
 
+    #[inline]
+    pub fn map_root<R2>(
+        self,
+        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
+    ) -> Arena<R2>
+    where
+        R2: for<'a> Rootable<'a>,
+        for<'a> Root<'a, R2>: Sized,
+    {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe {
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            f(mc, self.root)
+        };
+        Arena {
+            context: self.context,
+            root: new_root,
+        }
+    }
+
+    #[inline]
+    pub fn try_map_root<R2, E>(
+        self,
+        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
+    ) -> Result<Arena<R2>, E>
+    where
+        R2: for<'a> Rootable<'a>,
+        for<'a> Root<'a, R2>: Sized,
+    {
+        self.context.root_barrier();
+        let new_root: Root<'static, R2> = unsafe {
+            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
+            f(mc, self.root)?
+        };
+        Ok(Arena {
+            context: self.context,
+            root: new_root,
+        })
+    }
+}
+
+impl<R> Arena<R>
+where
+    R: for<'a> Rootable<'a>,
+{
     /// The primary means of interacting with a garbage collected arena. Accepts a callback which
     /// receives a `&Mutation<'gc>` and a reference to the root, and can return any non garbage
     /// collected value. The callback may "mutate" any part of the object graph during this call,
@@ -187,38 +239,6 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
     }
 
     #[inline]
-    pub fn map_root<R2: for<'a> Rootable<'a>>(
-        self,
-        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
-    ) -> Arena<R2> {
-        self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
-            f(mc, self.root)
-        };
-        Arena {
-            context: self.context,
-            root: new_root,
-        }
-    }
-
-    #[inline]
-    pub fn try_map_root<R2: for<'a> Rootable<'a>, E>(
-        self,
-        f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
-    ) -> Result<Arena<R2>, E> {
-        self.context.root_barrier();
-        let new_root: Root<'static, R2> = unsafe {
-            let mc: &'static Mutation<'_> = &*(self.context.mutation_context() as *const _);
-            f(mc, self.root)?
-        };
-        Ok(Arena {
-            context: self.context,
-            root: new_root,
-        })
-    }
-
-    #[inline]
     pub fn metrics(&self) -> &Metrics {
         self.context.metrics()
     }
@@ -238,7 +258,13 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
             Phase::Drop => unreachable!(),
         }
     }
+}
 
+impl<R> Arena<R>
+where
+    R: for<'a> Rootable<'a>,
+    for<'a> Root<'a, R>: Collect,
+{
     /// Run incremental garbage collection until the allocation debt is <= 0.0.
     ///
     /// There is no minimum unit of work enforced here, so it may be faster to only call this method
@@ -314,7 +340,11 @@ impl<R: for<'a> Rootable<'a>> Arena<R> {
 
 pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a mut Arena<R>);
 
-impl<'a, R: for<'b> Rootable<'b>> MarkedArena<'a, R> {
+impl<'a, R> MarkedArena<'a, R>
+where
+    R: for<'b> Rootable<'b>,
+    for<'b> Root<'b, R>: Collect,
+{
     /// Examine the state of a fully marked arena.
     ///
     /// Allows you to determine whether `GcWeak` pointers are "dead" (aka, soon-to-be-dropped) and
