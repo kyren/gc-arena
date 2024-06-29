@@ -13,7 +13,7 @@ use crate::{
 /// In order to use an implementation of this trait in an [`Arena`], it must implement
 /// `Rootable<'a>` for *any* possible `'a`. This is necessary so that the `Root` types can be
 /// branded by the unique, invariant lifetimes that makes an `Arena` sound.
-pub trait Rootable<'a>: 'static {
+pub trait Rootable<'a> {
     type Root: ?Sized + 'a;
 }
 
