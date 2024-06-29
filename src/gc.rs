@@ -184,11 +184,18 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         GcWeak { inner: this }
     }
 
-    /// Triggers a write barrier on this `Gc`, allowing for further safe mutation.
+    /// Triggers a write barrier on this `Gc`, allowing for safe mutation.
+    ///
+    /// This triggers an unrestricted *backwards* write barrier on this pointer, meaning that it is
+    /// guaranteed that this pointer can safely adopt *any* arbitrary child pointers (until the next
+    /// time that collection is triggered).
+    ///
+    /// It returns a reference to the inner `T` wrapped in a `Write` marker to allow for
+    /// unrestricted mutation on the held type or any of its directly held fields.
     #[inline]
     pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
-            mc.write_barrier(GcBox::erase(gc.ptr));
+            mc.backward_barrier(Gc::erase(gc), None);
             // SAFETY: the write barrier stays valid until the end of the current callback.
             Write::assume(gc.as_ref())
         }
