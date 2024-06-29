@@ -12,6 +12,7 @@ use crate::{
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
+    static_collect::StaticCollect,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
     Finalization,
 };
@@ -88,8 +89,34 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
     }
 }
 
+impl<'gc, T: 'static> Gc<'gc, T> {
+    /// Create a new `Gc` pointer from a static value.
+    ///
+    /// This method does not require that the type `T` implement `Collect`. This uses
+    /// `StaticCollect` internally to automatically provide a trivial `Collect` impl and is
+    /// equivalent to the following code:
+    ///
+    /// ```rust
+    /// # use gc_arena::{Gc, StaticCollect};
+    /// # fn main() {
+    /// # gc_arena::rootless_arena(|mc| {
+    /// struct MyStaticStruct;
+    /// let p = Gc::new(mc, StaticCollect(MyStaticStruct));
+    /// // This is allowed because `StaticCollect` is `#[repr(transparent)]`
+    /// let p: Gc<MyStaticStruct> = unsafe { Gc::cast(p) };
+    /// # });
+    /// # }
+    /// ```
+    #[inline]
+    pub fn new_static(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
+        let p = Gc::new(mc, StaticCollect(t));
+        // SAFETY: `StaticCollect` is `#[repr(transparent)]`.
+        unsafe { Gc::cast::<T>(p) }
+    }
+}
+
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
-    /// Cast the internal pointer to a different type.
+    /// Cast a `Gc` pointer to a different type.
     ///
     /// SAFETY:
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
@@ -99,6 +126,16 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
             ptr: NonNull::cast(this.ptr),
             _invariant: PhantomData,
         }
+    }
+
+    /// Cast a `Gc` to the unit type.
+    ///
+    /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
+    /// method safely because it is always safe to dereference a `*mut ()` that has come from
+    /// casting a `*mut T`.
+    #[inline]
+    pub fn erase(this: Gc<'gc, T>) -> Gc<'gc, ()> {
+        unsafe { Gc::cast(this) }
     }
 
     /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
