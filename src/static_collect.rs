@@ -1,4 +1,5 @@
 use crate::collect::Collect;
+use crate::Rootable;
 
 use alloc::borrow::{Borrow, BorrowMut};
 use core::convert::{AsMut, AsRef};
@@ -9,6 +10,10 @@ use core::ops::{Deref, DerefMut};
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
 pub struct StaticCollect<T>(pub T);
+
+impl<'a, T: 'static> Rootable<'a> for StaticCollect<T> {
+    type Root = StaticCollect<T>;
+}
 
 unsafe impl<T: 'static> Collect for StaticCollect<T> {
     #[inline]
