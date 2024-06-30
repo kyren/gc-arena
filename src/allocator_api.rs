@@ -26,9 +26,35 @@ impl<'gc> MetricsAlloc<'gc> {
     }
 }
 
+impl MetricsAlloc<'static> {
+    /// `MetricsAlloc` is normally branded with the `'gc` branding lifetime to ensure that it is not
+    /// placed in the wrong arena or used outside of the enclosing arena.
+    ///
+    /// This is actually completely artificial and only used as a lint: `gc_arena::metrics::Metrics`
+    /// has no lifetime at all. Therefore, we can safely provide a method that returns a
+    /// `MetricsAlloc` with a 'static lifetime.
+    ///
+    /// NOTE: Use `MetricsAlloc::new` if at all possible, because it is harder to misuse.
+    #[inline]
+    pub fn new_static<'gc>(mc: &Mutation<'gc>) -> Self {
+        Self::new_static_in(mc, Global)
+    }
+}
+
 impl<'gc, A> MetricsAlloc<'gc, A> {
     #[inline]
     pub fn new_in(mc: &Mutation<'gc>, allocator: A) -> Self {
+        Self {
+            metrics: mc.metrics().clone(),
+            allocator,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<A> MetricsAlloc<'static, A> {
+    #[inline]
+    pub fn new_static_in<'gc>(mc: &Mutation<'gc>, allocator: A) -> Self {
         Self {
             metrics: mc.metrics().clone(),
             allocator,
