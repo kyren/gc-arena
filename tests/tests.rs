@@ -394,7 +394,7 @@ fn test_dynamic_roots() {
     let rc_a = Rc::new(12);
     let rc_b = Rc::new("hello".to_owned());
 
-    let mut arena: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
+    let mut arena = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
 
     let root_a = arena
         .mutate(|mc, root_set| root_set.stash::<Rootable![Rc<i32>]>(mc, Gc::new(mc, rc_a.clone())));
@@ -456,9 +456,8 @@ fn test_dynamic_roots() {
 #[test]
 #[should_panic]
 fn test_dynamic_bad_set() {
-    let arena1: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
-
-    let arena2: Arena<Rootable![DynamicRootSet<'_>]> = Arena::new(|mc| DynamicRootSet::new(mc));
+    let arena1 = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
+    let arena2 = Arena::<Rootable![DynamicRootSet<'_>]>::new(|mc| DynamicRootSet::new(mc));
 
     let dyn_root = arena1.mutate(|mc, root| root.stash::<Rootable![i32]>(mc, Gc::new(mc, 44)));
 
