@@ -10,6 +10,7 @@ use crate::{
     collect::Collect,
     metrics::Metrics,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    Gc,
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -26,14 +27,48 @@ impl<'gc> Mutation<'gc> {
         self.context.metrics()
     }
 
+    /// IF we are in the marking phase AND the `parent` pointer is colored black AND the `child` (if
+    /// given) is colored white, then change the `parent` color to gray and enqueue it for tracing.
+    ///
+    /// This operation is known as a "backwards write barrier". Calling this method is one of the
+    /// safe ways for the value in the `parent` pointer to use internal mutability to adopt the
+    /// `child` pointer without invalidating the color invariant.
+    ///
+    /// If the `child` parameter is given, then calling this method ensures that the `parent`
+    /// pointer may safely adopt the `child` pointer. If no `child` is given, then calling this
+    /// method is more general, and it ensures that the `parent` pointer may adopt *any* child
+    /// pointer(s) before collection is next triggered.
     #[inline]
-    pub(crate) fn allocate<T: 'gc + Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        self.context.allocate(t)
+    pub fn backward_barrier(&self, parent: Gc<'gc, ()>, child: Option<Gc<'gc, ()>>) {
+        self.context.backward_barrier(
+            unsafe { GcBox::erase(parent.ptr) },
+            child.map(|p| unsafe { GcBox::erase(p.ptr) }),
+        )
+    }
+
+    /// IF we are in the marking phase AND the `parent` pointer (if given) is colored black, AND
+    /// the `child` is colored white, then immediately change the `child` to gray and enqueue it
+    /// for tracing.
+    ///
+    /// This operation is known as a "forwards write barrier". Calling this method is one of the
+    /// safe ways for the value in the `parent` pointer to use internal mutability to adopt the
+    /// `child` pointer without invalidating the color invariant.
+    ///
+    /// If the `parent` parameter is given, then calling this method ensures that the `parent`
+    /// pointer may safely adopt the `child` pointer. If no `parent` is given, then calling this
+    /// method is more general, and it ensures that the `child` pointer may be adopted by *any*
+    /// parent pointer(s) before collection is next triggered.
+    #[inline]
+    pub fn forward_barrier(&self, parent: Option<Gc<'gc, ()>>, child: Gc<'gc, ()>) {
+        self.context
+            .forward_barrier(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
+                GcBox::erase(child.ptr)
+            })
     }
 
     #[inline]
-    pub(crate) fn write_barrier(&self, gc_box: GcBox) {
-        self.context.write_barrier(gc_box)
+    pub(crate) fn allocate<T: Collect + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+        self.context.allocate(t)
     }
 
     #[inline]
@@ -428,22 +463,43 @@ impl Context {
     }
 
     #[inline]
-    fn write_barrier(&self, gc_box: GcBox) {
+    fn backward_barrier(&self, parent: GcBox, child: Option<GcBox>) {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
-        // objects. Turn black obejcts to gray to prevent this.
-        let header = gc_box.header();
-        if self.phase.get() == Phase::Mark && header.color() == GcColor::Black {
-            header.set_color(GcColor::Gray);
-
-            // Outline the actual enqueueing code (which is somewhat expensive and won't be
-            // executed often) to promote the inlining of the write barrier.
+        // objects. Turn the black parent object gray to prevent this.
+        //
+        // NOTE: This also adds the pointer to the gray_again queue even if `header.needs_trace()`
+        // is false, but this is not harmful (just wasteful). There's no reason to call a barrier on
+        // a pointer that can't adopt other pointers, so we skip the check.
+        if self.phase.get() == Phase::Mark
+            && parent.header().color() == GcColor::Black
+            && child
+                .map(|c| matches!(c.header().color(), GcColor::White | GcColor::WhiteWeak))
+                .unwrap_or(true)
+        {
+            // Outline the actual barrier code (which is somewhat expensive and won't be executed
+            // often) to promote the inlining of the write barrier.
             #[cold]
-            fn enqueue(this: &Context, gc_box: GcBox) {
-                this.gray_again.borrow_mut().push(gc_box);
+            fn barrier(this: &Context, parent: GcBox) {
+                parent.header().set_color(GcColor::Gray);
+                this.gray_again.borrow_mut().push(parent);
             }
+            barrier(&self, parent);
+        }
+    }
 
-            enqueue(&self, gc_box);
+    #[inline]
+    fn forward_barrier(&self, parent: Option<GcBox>, child: GcBox) {
+        // During the propagating phase, if we are mutating a black object, we may add a white
+        // object to it and invalidate the invariant that black objects may not point to white
+        // objects. Immediately trace the child white object to turn it gray (or black) to prevent
+        // this.
+        if self.phase.get() == Phase::Mark
+            && parent
+                .map(|p| p.header().color() == GcColor::Black)
+                .unwrap_or(true)
+        {
+            self.trace(child);
         }
     }
 
