@@ -467,6 +467,10 @@ impl Context {
         // During the propagating phase, if we are mutating a black object, we may add a white
         // object to it and invalidate the invariant that black objects may not point to white
         // objects. Turn the black parent object gray to prevent this.
+        //
+        // NOTE: This also adds the pointer to the gray_again queue even if `header.needs_trace()`
+        // is false, but this is not harmful (just wasteful). There's no reason to call a barrier on
+        // a pointer that can't adopt other pointers, so we skip the check.
         if self.phase.get() == Phase::Mark
             && parent.header().color() == GcColor::Black
             && child
@@ -494,15 +498,8 @@ impl Context {
             && parent
                 .map(|p| p.header().color() == GcColor::Black)
                 .unwrap_or(true)
-            && matches!(child.header().color(), GcColor::White | GcColor::WhiteWeak)
         {
-            // Outline the actual barrier code (which is somewhat expensive and won't be executed
-            // often) to promote the inlining of the write barrier.
-            #[cold]
-            fn barrier(this: &Context, child: GcBox) {
-                this.trace(child);
-            }
-            barrier(&self, child);
+            self.trace(child);
         }
     }
 
