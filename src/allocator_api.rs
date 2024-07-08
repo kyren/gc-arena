@@ -34,8 +34,8 @@ impl<'gc> MetricsAlloc<'gc> {
     ///
     /// NOTE: Use `MetricsAlloc::new` if at all possible, because it is harder to misuse.
     #[inline]
-    pub fn new_static(metrics: Metrics) -> Self {
-        Self::new_static_in(metrics, Global)
+    pub fn from_metrics(metrics: Metrics) -> Self {
+        Self::from_metrics_in(metrics, Global)
     }
 }
 
@@ -50,7 +50,7 @@ impl<'gc, A> MetricsAlloc<'gc, A> {
     }
 
     #[inline]
-    pub fn new_static_in(metrics: Metrics, allocator: A) -> Self {
+    pub fn from_metrics_in(metrics: Metrics, allocator: A) -> Self {
         Self {
             metrics,
             allocator,
