@@ -170,7 +170,7 @@ pub(crate) struct Context {
     gray: RefCell<Vec<GcBox>>,
 
     // A queue of gray objects that became gray as a result
-    // of a `write_barrier` call.
+    // of a write barrier.
     gray_again: RefCell<Vec<GcBox>>,
 }
 
@@ -464,9 +464,9 @@ impl Context {
 
     #[inline]
     fn backward_barrier(&self, parent: GcBox, child: Option<GcBox>) {
-        // During the propagating phase, if we are mutating a black object, we may add a white
-        // object to it and invalidate the invariant that black objects may not point to white
-        // objects. Turn the black parent object gray to prevent this.
+        // During the marking phase, if we are mutating a black object, we may add a white object to
+        // it and invalidate the invariant that black objects may not point to white objects. Turn
+        // the black parent object gray to prevent this.
         //
         // NOTE: This also adds the pointer to the gray_again queue even if `header.needs_trace()`
         // is false, but this is not harmful (just wasteful). There's no reason to call a barrier on
@@ -490,10 +490,9 @@ impl Context {
 
     #[inline]
     fn forward_barrier(&self, parent: Option<GcBox>, child: GcBox) {
-        // During the propagating phase, if we are mutating a black object, we may add a white
-        // object to it and invalidate the invariant that black objects may not point to white
-        // objects. Immediately trace the child white object to turn it gray (or black) to prevent
-        // this.
+        // During the marking phase, if we are mutating a black object, we may add a white object
+        // to it and invalidate the invariant that black objects may not point to white objects.
+        // Immediately trace the child white object to turn it gray (or black) to prevent this.
         if self.phase.get() == Phase::Mark
             && parent
                 .map(|p| p.header().color() == GcColor::Black)
