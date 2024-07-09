@@ -964,26 +964,25 @@ fn test_phases() {
         });
 
         if let Some(marked) = arena.mark_debt() {
-            // Manually transition to the Collecting phase.
+            // Manually transition to the Sweeping phase.
             marked.start_collecting();
-            assert!(arena.collection_phase() == CollectionPhase::Collecting);
+            assert!(arena.collection_phase() == CollectionPhase::Sweeping);
             break;
         }
     }
 
-    if arena.collection_phase() == CollectionPhase::Collecting {
-        // Assert that mark_debt() and mark_all() do nothing while in the Collecting phase.
+    if arena.collection_phase() == CollectionPhase::Sweeping {
+        // Assert that mark_debt() and mark_all() do nothing while in the Sweeping phase.
         assert!(arena.mark_debt().is_none());
         assert!(arena.mark_all().is_none());
     }
 
-    while arena.collection_phase() == CollectionPhase::Collecting {
+    while arena.collection_phase() == CollectionPhase::Sweeping {
         // Keep accumulating debt to keep the collector moving.
         arena.mutate(|mc, _| {
             Gc::new(mc, 0);
         });
-        // This should not move from Collecting to Marking in one call, it must pass through
-        // Sleeping.
+        // This should not move from Sweeping to Marking in one call, it must pass through Sleeping.
         arena.collect_debt();
     }
 

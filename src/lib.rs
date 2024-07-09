@@ -40,5 +40,5 @@ pub use self::{
     dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
     gc::Gc,
     gc_weak::GcWeak,
-    static_collect::StaticCollect,
+    static_collect::Static,
 };

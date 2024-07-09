@@ -12,7 +12,7 @@ use crate::{
     collect::Collect,
     context::{Collection, Mutation},
     gc_weak::GcWeak,
-    static_collect::StaticCollect,
+    static_collect::Static,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
     Finalization,
 };
@@ -92,25 +92,25 @@ impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
 impl<'gc, T: 'static> Gc<'gc, T> {
     /// Create a new `Gc` pointer from a static value.
     ///
-    /// This method does not require that the type `T` implement `Collect`. This uses
-    /// `StaticCollect` internally to automatically provide a trivial `Collect` impl and is
-    /// equivalent to the following code:
+    /// This method does not require that the type `T` implement `Collect`. This uses [`Static`]
+    /// internally to automatically provide a trivial `Collect` impl and is equivalent to the
+    /// following code:
     ///
     /// ```rust
-    /// # use gc_arena::{Gc, StaticCollect};
+    /// # use gc_arena::{Gc, Static};
     /// # fn main() {
     /// # gc_arena::rootless_arena(|mc| {
     /// struct MyStaticStruct;
-    /// let p = Gc::new(mc, StaticCollect(MyStaticStruct));
-    /// // This is allowed because `StaticCollect` is `#[repr(transparent)]`
+    /// let p = Gc::new(mc, Static(MyStaticStruct));
+    /// // This is allowed because `Static` is `#[repr(transparent)]`
     /// let p: Gc<MyStaticStruct> = unsafe { Gc::cast(p) };
     /// # });
     /// # }
     /// ```
     #[inline]
     pub fn new_static(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        let p = Gc::new(mc, StaticCollect(t));
-        // SAFETY: `StaticCollect` is `#[repr(transparent)]`.
+        let p = Gc::new(mc, Static(t));
+        // SAFETY: `Static` is `#[repr(transparent)]`.
         unsafe { Gc::cast::<T>(p) }
     }
 }

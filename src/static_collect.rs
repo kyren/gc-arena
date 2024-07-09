@@ -9,57 +9,57 @@ use core::ops::{Deref, DerefMut};
 /// generic contexts
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Default)]
 #[repr(transparent)]
-pub struct StaticCollect<T: ?Sized>(pub T);
+pub struct Static<T: ?Sized>(pub T);
 
-impl<'a, T: ?Sized + 'static> Rootable<'a> for StaticCollect<T> {
-    type Root = StaticCollect<T>;
+impl<'a, T: ?Sized + 'static> Rootable<'a> for Static<T> {
+    type Root = Static<T>;
 }
 
-unsafe impl<T: ?Sized + 'static> Collect for StaticCollect<T> {
+unsafe impl<T: ?Sized + 'static> Collect for Static<T> {
     #[inline]
     fn needs_trace() -> bool {
         false
     }
 }
 
-impl<T> From<T> for StaticCollect<T> {
+impl<T> From<T> for Static<T> {
     fn from(value: T) -> Self {
         Self(value)
     }
 }
 
-impl<T: ?Sized> AsRef<T> for StaticCollect<T> {
+impl<T: ?Sized> AsRef<T> for Static<T> {
     fn as_ref(&self) -> &T {
         &self.0
     }
 }
 
-impl<T: ?Sized> AsMut<T> for StaticCollect<T> {
+impl<T: ?Sized> AsMut<T> for Static<T> {
     fn as_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
 
-impl<T: ?Sized> Deref for StaticCollect<T> {
+impl<T: ?Sized> Deref for Static<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<T: ?Sized> DerefMut for StaticCollect<T> {
+impl<T: ?Sized> DerefMut for Static<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<T: ?Sized> Borrow<T> for StaticCollect<T> {
+impl<T: ?Sized> Borrow<T> for Static<T> {
     fn borrow(&self) -> &T {
         &self.0
     }
 }
 
-impl<T: ?Sized> BorrowMut<T> for StaticCollect<T> {
+impl<T: ?Sized> BorrowMut<T> for Static<T> {
     fn borrow_mut(&mut self) -> &mut T {
         &mut self.0
     }
