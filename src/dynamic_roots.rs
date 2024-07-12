@@ -5,7 +5,7 @@ use alloc::{
     vec::Vec,
 };
 
-use crate::{metrics::Metrics, Collect, Gc, Mutation, Root, Rootable};
+use crate::{arena::Root, metrics::Metrics, Collect, Gc, Mutation, Rootable};
 
 /// A way of registering GC roots dynamically.
 ///

@@ -380,10 +380,14 @@ where
     }
 }
 
-/// Create a temporary arena without a root object and perform the given operation on it. No garbage
-/// collection will be done until the very end of the call, at which point all allocations will
-/// be collected.
-pub fn rootless_arena<F, R>(f: F) -> R
+/// Create a temporary arena without a root object and perform the given operation on it.
+///
+/// No garbage collection will be done until the very end of the call, at which point all
+/// allocations will be collected.
+///
+/// This is a convenience function that makes it a little easier to quickly test code that uses
+/// `gc-arena`, it is not very useful on its own.
+pub fn rootless_mutate<F, R>(f: F) -> R
 where
     F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> R,
 {

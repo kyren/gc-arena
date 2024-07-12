@@ -99,7 +99,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     /// ```rust
     /// # use gc_arena::{Gc, Static};
     /// # fn main() {
-    /// # gc_arena::rootless_arena(|mc| {
+    /// # gc_arena::arena::rootless_mutate(|mc| {
     /// struct MyStaticStruct;
     /// let p = Gc::new(mc, Static(MyStaticStruct));
     /// // This is allowed because `Static` is `#[repr(transparent)]`

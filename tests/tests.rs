@@ -5,8 +5,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, static_collect, unsize, Arena, Collect, CollectionPhase,
-    DynamicRootSet, Gc, GcWeak, Rootable,
+    arena::CollectionPhase, metrics::Pacing, static_collect, unsize, Arena, Collect,
+    DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
 };
 
 #[test]
@@ -233,7 +233,7 @@ fn test_layouts() {
 
             let array: [u8; $size] = core::array::from_fn(|i| i as u8);
 
-            let ptr = gc_arena::rootless_arena(|mc| {
+            let ptr = gc_arena::arena::rootless_mutate(|mc| {
                 let gc = Gc::new(mc, Wrapper(Aligned(array)));
                 assert_eq!(array, gc.0 .0);
                 Gc::as_ptr(gc) as *mut ()
@@ -470,7 +470,7 @@ fn test_dynamic_bad_set() {
 fn test_unsize() {
     use std::fmt::Display;
 
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         let gc: Gc<'_, String> = Gc::new(mc, "Hello world!".into());
         let gc_weak = Gc::downgrade(gc);
 
@@ -550,7 +550,7 @@ fn cast() {
         header: Cell<u8>,
     }
 
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         let a = Gc::new(
             mc,
             A {
@@ -572,7 +572,7 @@ fn cast() {
 
 #[test]
 fn ptr_magic() {
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         #[derive(Debug, Eq, PartialEq, Collect)]
         #[collect(require_static)]
         struct S(u8, u32, u64);
@@ -643,7 +643,6 @@ fn okay_panic() {
 #[test]
 fn field_locks() {
     use gc_arena::barrier::{field, unlock};
-    use gc_arena::lock::{Lock, RefLock};
 
     #[derive(Collect)]
     #[collect(no_drop)]

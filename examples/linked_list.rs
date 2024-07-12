@@ -1,4 +1,4 @@
-use gc_arena::{lock::RefLock, Arena, Collect, Gc, Mutation, Rootable};
+use gc_arena::{Arena, Collect, Gc, Mutation, RefLock, Rootable};
 
 // We define a node of a doubly-linked list data structure.
 //
