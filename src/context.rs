@@ -517,6 +517,7 @@ impl Context {
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
                     header.set_color(GcColor::Black);
+                    self.metrics.mark_gc_traced(header.size_of_box());
                 }
             }
         }
