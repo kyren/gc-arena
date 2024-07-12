@@ -5,7 +5,7 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, CollectionPhase,
+    lock::RefLock, metrics::Pacing, static_collect, unsize, Arena, Collect, CollectionPhase,
     DynamicRootSet, Gc, GcWeak, Rootable,
 };
 
@@ -74,7 +74,7 @@ fn weak_allocation() {
 fn dyn_sized_allocation() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -112,7 +112,7 @@ fn dyn_sized_allocation() {
 fn repeated_allocation_deallocation() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -159,7 +159,7 @@ fn repeated_allocation_deallocation() {
 fn all_dropped() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -184,7 +184,7 @@ fn all_dropped() {
 fn all_garbage_collected() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
