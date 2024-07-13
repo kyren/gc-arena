@@ -11,7 +11,7 @@ pub mod barrier;
 mod collect;
 mod collect_impl;
 mod context;
-mod dynamic_roots;
+pub mod dynamic_roots;
 mod gc;
 mod gc_weak;
 pub mod lock;
@@ -34,11 +34,12 @@ pub use gc_arena_derive::*;
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
 
 pub use self::{
-    arena::{rootless_arena, Arena, CollectionPhase, Root, Rootable},
+    arena::{Arena, Rootable},
     collect::Collect,
     context::{Collection, Finalization, Mutation},
-    dynamic_roots::{DynamicRoot, DynamicRootSet, MismatchedRootSet},
+    dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     gc_weak::GcWeak,
-    static_collect::StaticCollect,
+    lock::{GcLock, GcRefLock, Lock, RefLock},
+    static_collect::Static,
 };

@@ -12,20 +12,6 @@ use std::collections::{HashMap, HashSet};
 use crate::collect::Collect;
 use crate::context::Collection;
 
-/// If a type will never hold `Gc` pointers, you can use this macro to provide a simple empty
-/// `Collect` implementation.
-#[macro_export]
-macro_rules! unsafe_empty_collect {
-    ($type:ty) => {
-        unsafe impl Collect for $type {
-            #[inline]
-            fn needs_trace() -> bool {
-                false
-            }
-        }
-    };
-}
-
 /// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
 /// simple empty `Collect` implementation.
 #[macro_export]

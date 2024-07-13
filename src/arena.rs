@@ -54,13 +54,13 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 /// parameters, though in complex cases it may be better to implement `Rootable` directly.
 ///
 /// ```
-/// # use gc_arena::{Arena, Collect, Gc, Rootable, StaticCollect};
+/// # use gc_arena::{Arena, Collect, Gc, Rootable};
 /// #
 /// # fn main() {
 /// #[derive(Collect)]
 /// #[collect(no_drop)]
-/// struct MyGenericRoot<'gc, T: 'static> {
-///     ptr: Gc<'gc, StaticCollect<T>>,
+/// struct MyGenericRoot<'gc, T> {
+///     ptr: Gc<'gc, T>,
 /// }
 ///
 /// type MyGenericArena<T> = Arena<Rootable![MyGenericRoot<'_, T>]>;
@@ -90,10 +90,9 @@ pub enum CollectionPhase {
     /// The arena has finished tracing, all reachable objects are marked. This may transition
     /// back to `Marking` if write barriers occur.
     Marked,
-    /// The arena has determined a set of unreachable objects and has started collecting them.
-    /// At this point, marking is no longer taking place so the root may have reachable, unmarked
-    /// pointers
-    Collecting,
+    /// The arena has determined a set of unreachable objects and has started freeing them. At this
+    /// point, marking is no longer taking place so the root may have reachable, unmarked pointers.
+    Sweeping,
 }
 
 /// A generic, garbage collected arena.
@@ -253,7 +252,7 @@ where
                     CollectionPhase::Marked
                 }
             }
-            Phase::Sweep => CollectionPhase::Collecting,
+            Phase::Sweep => CollectionPhase::Sweeping,
             Phase::Sleep => CollectionPhase::Sleeping,
             Phase::Drop => unreachable!(),
         }
@@ -271,7 +270,7 @@ where
     /// when the allocation debt is above some threshold.
     ///
     /// This method will always return at least once when collection enters the `Sleeping` phase,
-    /// i.e. it will never transition from the `Collecting` phase to the `Marking` phase without
+    /// i.e. it will never transition from the `Sweeping` phase to the `Marking` phase without
     /// returning in-between.
     #[inline]
     pub fn collect_debt(&mut self) {
@@ -284,7 +283,7 @@ where
     /// <= 0.0.
     ///
     /// This does *not* transition collection past the `Marked` phase. Does nothing if the
-    /// collection phase is `Marked` or `Collecting`, otherwise acts like `Arena::collect_debt`.
+    /// collection phase is `Marked` or `Sweeping`, otherwise acts like `Arena::collect_debt`.
     #[inline]
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
@@ -317,7 +316,7 @@ where
     ///
     /// Similarly to `Arena::mark_debt`, this does not transition collection  past the `Marked`
     /// phase, and does nothing if the collector is currently in the `Marked` phase or the
-    /// `Collecting` phase.
+    /// `Sweeping` phase.
     #[inline]
     pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
         if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
@@ -366,8 +365,8 @@ where
         }
     }
 
-    /// Immediately transition the arena out of `CollectionPhase::Marked` to
-    /// `CollectionPhase::Collecting`.
+    /// Immediately transition the arena out of [`CollectionPhase::Marked`] to
+    /// [`CollectionPhase::Sweeping`].
     #[inline]
     pub fn start_collecting(self) {
         unsafe {
@@ -381,10 +380,14 @@ where
     }
 }
 
-/// Create a temporary arena without a root object and perform the given operation on it. No garbage
-/// collection will be done until the very end of the call, at which point all allocations will
-/// be collected.
-pub fn rootless_arena<F, R>(f: F) -> R
+/// Create a temporary arena without a root object and perform the given operation on it.
+///
+/// No garbage collection will be done until the very end of the call, at which point all
+/// allocations will be collected.
+///
+/// This is a convenience function that makes it a little easier to quickly test code that uses
+/// `gc-arena`, it is not very useful on its own.
+pub fn rootless_mutate<F, R>(f: F) -> R
 where
     F: for<'gc> FnOnce(&'gc Mutation<'gc>) -> R,
 {

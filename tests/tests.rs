@@ -5,8 +5,8 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    lock::RefLock, metrics::Pacing, unsafe_empty_collect, unsize, Arena, Collect, CollectionPhase,
-    DynamicRootSet, Gc, GcWeak, Rootable,
+    arena::CollectionPhase, metrics::Pacing, static_collect, unsize, Arena, Collect,
+    DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
 };
 
 #[test]
@@ -74,7 +74,7 @@ fn weak_allocation() {
 fn dyn_sized_allocation() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -112,7 +112,7 @@ fn dyn_sized_allocation() {
 fn repeated_allocation_deallocation() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -159,7 +159,7 @@ fn repeated_allocation_deallocation() {
 fn all_dropped() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -184,7 +184,7 @@ fn all_dropped() {
 fn all_garbage_collected() {
     #[derive(Clone)]
     struct RefCounter(Rc<()>);
-    unsafe_empty_collect!(RefCounter);
+    static_collect!(RefCounter);
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -233,7 +233,7 @@ fn test_layouts() {
 
             let array: [u8; $size] = core::array::from_fn(|i| i as u8);
 
-            let ptr = gc_arena::rootless_arena(|mc| {
+            let ptr = gc_arena::arena::rootless_mutate(|mc| {
                 let gc = Gc::new(mc, Wrapper(Aligned(array)));
                 assert_eq!(array, gc.0 .0);
                 Gc::as_ptr(gc) as *mut ()
@@ -470,7 +470,7 @@ fn test_dynamic_bad_set() {
 fn test_unsize() {
     use std::fmt::Display;
 
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         let gc: Gc<'_, String> = Gc::new(mc, "Hello world!".into());
         let gc_weak = Gc::downgrade(gc);
 
@@ -550,7 +550,7 @@ fn cast() {
         header: Cell<u8>,
     }
 
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         let a = Gc::new(
             mc,
             A {
@@ -572,7 +572,7 @@ fn cast() {
 
 #[test]
 fn ptr_magic() {
-    gc_arena::rootless_arena(|mc| {
+    gc_arena::arena::rootless_mutate(|mc| {
         #[derive(Debug, Eq, PartialEq, Collect)]
         #[collect(require_static)]
         struct S(u8, u32, u64);
@@ -643,7 +643,6 @@ fn okay_panic() {
 #[test]
 fn field_locks() {
     use gc_arena::barrier::{field, unlock};
-    use gc_arena::lock::{Lock, RefLock};
 
     #[derive(Collect)]
     #[collect(no_drop)]
@@ -964,26 +963,25 @@ fn test_phases() {
         });
 
         if let Some(marked) = arena.mark_debt() {
-            // Manually transition to the Collecting phase.
+            // Manually transition to the Sweeping phase.
             marked.start_collecting();
-            assert!(arena.collection_phase() == CollectionPhase::Collecting);
+            assert!(arena.collection_phase() == CollectionPhase::Sweeping);
             break;
         }
     }
 
-    if arena.collection_phase() == CollectionPhase::Collecting {
-        // Assert that mark_debt() and mark_all() do nothing while in the Collecting phase.
+    if arena.collection_phase() == CollectionPhase::Sweeping {
+        // Assert that mark_debt() and mark_all() do nothing while in the Sweeping phase.
         assert!(arena.mark_debt().is_none());
         assert!(arena.mark_all().is_none());
     }
 
-    while arena.collection_phase() == CollectionPhase::Collecting {
+    while arena.collection_phase() == CollectionPhase::Sweeping {
         // Keep accumulating debt to keep the collector moving.
         arena.mutate(|mc, _| {
             Gc::new(mc, 0);
         });
-        // This should not move from Collecting to Marking in one call, it must pass through
-        // Sleeping.
+        // This should not move from Sweeping to Marking in one call, it must pass through Sleeping.
         arena.collect_debt();
     }
 

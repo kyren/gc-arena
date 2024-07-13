@@ -16,7 +16,7 @@ use crate::{
 /// # use std::fmt::Display;
 /// # use gc_arena::{Gc, unsize};
 /// # fn main() {
-/// # gc_arena::rootless_arena(|mc| {
+/// # gc_arena::arena::rootless_mutate(|mc| {
 /// // Unsizing arrays to slices.
 /// let mut slice;
 /// slice = unsize!(Gc::new(mc, [1, 2]) => [u8]);
@@ -40,7 +40,7 @@ use crate::{
 /// # use std::error::Error;
 /// # use gc_arena::{Gc, unsize};
 /// # fn main() {
-/// # gc_arena::rootless_arena(|mc| {
+/// # gc_arena::arena::rootless_mutate(|mc| {
 /// // Error: `Option<char>` doesn't implement `Error`.
 /// let _ = unsize!(Gc::new(mc, Some('💥')) => dyn Error);
 /// # })
