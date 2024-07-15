@@ -117,12 +117,14 @@ impl Collection {
     }
 
     #[inline]
-    pub(crate) fn trace(&self, gc_box: GcBox) {
+    pub fn trace_gc(&self, gc: Gc<'_, ()>) {
+        let gc_box = unsafe { GcBox::erase(gc.ptr) };
         self.context.trace(gc_box)
-    }
+    }  
 
     #[inline]
-    pub(crate) fn trace_weak(&self, gc_box: GcBox) {
+    pub fn trace_gc_weak(&self, gc: GcWeak<'_, ()>) {
+        let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
         self.context.trace_weak(gc_box)
     }
 }
