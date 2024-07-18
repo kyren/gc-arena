@@ -121,38 +121,31 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
 }
 
 unsafe impl<'gc, A: 'static> Collect for MetricsAlloc<'gc, A> {
-    #[inline]
-    fn needs_trace() -> bool {
-        false
-    }
+    const NEEDS_TRACE: bool = false;
 }
 
 unsafe impl Collect for Global {
-    #[inline]
-    fn needs_trace() -> bool {
-        false
-    }
+    const NEEDS_TRACE: bool = false;
 }
 
 unsafe impl<T: Collect + ?Sized, A: Collect + Allocator> Collect for boxed::Box<T, A> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
+
     #[inline]
-    fn trace(&self, cc: &Collection) {
+    fn trace(&self, mut cc: Collection<'_>) {
+        cc.trace(&**self);
         boxed::Box::allocator(self).trace(cc);
-        (**self).trace(cc)
     }
 }
 
 unsafe impl<T: Collect, A: Collect + Allocator> Collect for vec::Vec<T, A> {
-    #[inline]
-    fn needs_trace() -> bool {
-        T::needs_trace() || A::needs_trace()
-    }
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
-    fn trace(&self, cc: &Collection) {
-        self.allocator().trace(cc);
+    fn trace(&self, mut cc: Collection<'_>) {
         for v in self {
-            v.trace(cc);
+            cc.trace(v);
         }
+        self.allocator().trace(cc);
     }
 }

@@ -312,12 +312,12 @@ fn derive_collect() {
     #[collect(no_drop)]
     struct Test6(i32);
 
-    assert_eq!(Test1::needs_trace(), true);
-    assert_eq!(Test2::needs_trace(), false);
-    assert_eq!(Test3::needs_trace(), true);
-    assert_eq!(Test4::needs_trace(), false);
-    assert_eq!(Test5::needs_trace(), true);
-    assert_eq!(Test6::needs_trace(), false);
+    assert_eq!(Test1::NEEDS_TRACE, true);
+    assert_eq!(Test2::NEEDS_TRACE, false);
+    assert_eq!(Test3::NEEDS_TRACE, true);
+    assert_eq!(Test4::NEEDS_TRACE, false);
+    assert_eq!(Test5::NEEDS_TRACE, true);
+    assert_eq!(Test6::NEEDS_TRACE, false);
 
     struct NoImpl;
 
@@ -339,8 +339,8 @@ fn derive_collect() {
         },
     }
 
-    assert_eq!(Test7::needs_trace(), false);
-    assert_eq!(Test8::needs_trace(), false);
+    assert_eq!(Test7::NEEDS_TRACE, false);
+    assert_eq!(Test8::NEEDS_TRACE, false);
 }
 
 #[test]
@@ -602,7 +602,7 @@ fn okay_panic() {
     }
 
     unsafe impl<'gc> Collect for Test<'gc> {
-        fn trace(&self, cc: &gc_arena::Collection) {
+        fn trace(&self, cc: gc_arena::Collection<'_>) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);

@@ -10,7 +10,7 @@ struct MyStruct<'a> {
 }
 
 fn assert_my_struct_collect<'a>() {
-    MyStruct::<'a>::needs_trace();
+    let _ = MyStruct::<'a>::NEEDS_TRACE;
 }
 
 fn main() {}
