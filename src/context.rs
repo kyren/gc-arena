@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::{
     cell::{Cell, RefCell},
+    marker::PhantomData,
     mem,
     ops::Deref,
     ptr::NonNull,
@@ -106,24 +107,41 @@ impl<'gc> Finalization<'gc> {
 /// Handle value given by arena callbacks during garbage collection, which must be passed through
 /// `Collect::trace` implementations.
 #[repr(transparent)]
-pub struct Collection {
-    context: Context,
+pub struct Collection<'a> {
+    context: &'a Context,
+    _invariant: Invariant<'a>,
 }
 
-impl Collection {
+impl<'a> Collection<'a> {
+    #[inline]
+    fn from_context(context: &'a Context) -> Self {
+        Self {
+            context,
+            _invariant: PhantomData,
+        }
+    }
+
     #[inline]
     pub fn metrics(&self) -> &Metrics {
         self.context.metrics()
     }
 
     #[inline]
-    pub fn trace_gc(&self, gc: Gc<'_, ()>) {
-        let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        self.context.trace(gc_box)
-    }  
+    pub fn trace<T: Collect + ?Sized>(&mut self, value: &T) {
+        if T::NEEDS_TRACE {
+            let cc = Self { ..*self };
+            value.trace(cc);
+        }
+    }
 
     #[inline]
-    pub fn trace_gc_weak(&self, gc: GcWeak<'_, ()>) {
+    pub fn trace_gc(&mut self, gc: Gc<'_, ()>) {
+        let gc_box = unsafe { GcBox::erase(gc.ptr) };
+        self.context.trace(gc_box)
+    }
+
+    #[inline]
+    pub fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
         self.context.trace_weak(gc_box)
     }
@@ -220,12 +238,6 @@ impl Context {
     #[inline]
     pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
         mem::transmute::<&Self, &Mutation>(&self)
-    }
-
-    #[inline]
-    fn collection_context(&self) -> &Collection {
-        // SAFETY: `Collection` is `repr(transparent)`
-        unsafe { mem::transmute::<&Self, &Collection>(self) }
     }
 
     #[inline]
@@ -335,14 +347,14 @@ impl Context {
 
                         let guard = DropGuard { cx: self, gc_box };
                         debug_assert!(gc_box.header().is_live());
-                        unsafe { gc_box.trace_value(self.collection_context()) }
+                        unsafe { gc_box.trace_value(Collection::from_context(self)) }
                         gc_box.header().set_color(GcColor::Black);
                         mem::forget(guard);
                     } else if self.root_needs_trace.get() {
                         // We treat the root object as gray if `root_needs_trace` is set, and we
                         // process it at the end of the gray queue for the same reason as the "gray
                         // again" objects.
-                        root.trace(self.collection_context());
+                        root.trace(Collection::from_context(self));
                         self.root_needs_trace.set(false);
                     } else {
                         if early_stop == Some(EarlyStop::BeforeSweep) {
@@ -441,7 +453,7 @@ impl Context {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
         header.set_live(true);
-        header.set_needs_trace(T::needs_trace());
+        header.set_needs_trace(T::NEEDS_TRACE);
 
         let alloc_size = header.size_of_box();
         self.metrics.mark_gc_allocated(alloc_size);

@@ -56,7 +56,7 @@ impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for Gc<'gc, T> {
     #[inline]
-    fn trace(&self, cc: &Collection) {
+    fn trace(&self, mut cc: Collection<'_>) {
         cc.trace_gc(Self::erase(*self))
     }
 }

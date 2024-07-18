@@ -16,10 +16,7 @@ impl<'a, T: ?Sized + 'static> Rootable<'a> for Static<T> {
 }
 
 unsafe impl<T: ?Sized + 'static> Collect for Static<T> {
-    #[inline]
-    fn needs_trace() -> bool {
-        false
-    }
+    const NEEDS_TRACE: bool = false;
 }
 
 impl<T> From<T> for Static<T> {
