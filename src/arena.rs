@@ -163,7 +163,7 @@ where
 
     #[inline]
     pub fn map_root<R2>(
-        self,
+        mut self,
         f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Root<'gc, R2>,
     ) -> Arena<R2>
     where
@@ -183,7 +183,7 @@ where
 
     #[inline]
     pub fn try_map_root<R2, E>(
-        self,
+        mut self,
         f: impl for<'gc> FnOnce(&'gc Mutation<'gc>, Root<'gc, R>) -> Result<Root<'gc, R2>, E>,
     ) -> Result<Arena<R2>, E>
     where
