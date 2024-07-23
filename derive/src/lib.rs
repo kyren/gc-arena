@@ -102,15 +102,12 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let collect_impl = if mode == Mode::RequireStatic {
         s.clone().add_bounds(AddBounds::None).gen_impl(quote! {
             gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
-                #[inline]
-                fn needs_trace() -> bool {
-                    false
-                }
+                const NEEDS_TRACE: bool = false;
             }
         })
     } else {
-        let mut needs_trace_body = TokenStream::new();
-        quote!(false).to_tokens(&mut needs_trace_body);
+        let mut needs_trace_expr = TokenStream::new();
+        quote!(false).to_tokens(&mut needs_trace_expr);
 
         let mut static_bindings = vec![];
 
@@ -160,7 +157,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             }
         }
 
-        // We've already called `s.filter`, so we we won't try to call `needs_trace` for the types
+        // We've already called `s.filter`, so we we won't try to include `NEEDS_TRACE` for the types
         // of fields that have `#[collect(require_static)]`
         for v in s.variants() {
             for b in v.bindings() {
@@ -170,14 +167,14 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                 // (e.g. `gc_arena::Collect`), so this won't cause any hygiene issues
                 let call_span = b.ast().span().resolved_at(Span::call_site());
                 quote_spanned!(call_span=>
-                    || <#ty as ::gc_arena::Collect>::needs_trace()
+                    || <#ty as ::gc_arena::Collect>::NEEDS_TRACE
                 )
-                .to_tokens(&mut needs_trace_body);
+                .to_tokens(&mut needs_trace_expr);
             }
         }
         // Likewise, this will skip any fields that have `#[collect(require_static)]`
         let trace_body = s.each(|bi| {
-            // See the above call to `needs_trace` for an explanation of this
+            // See the above handling of `NEEDS_TRACE` for an explanation of this
             let call_span = bi.ast().span().resolved_at(Span::call_site());
             quote_spanned!(call_span=>
                 {
@@ -188,7 +185,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
                     // merge the spans. This is purely for diagnostic purposes, and has no effect
                     // on correctness
                     let bi = #bi;
-                    ::gc_arena::Collect::trace(bi, cc)
+                    cc.trace(bi);
                 }
             )
         });
@@ -200,13 +197,10 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         };
         s.clone().add_bounds(bounds_type).gen_impl(quote! {
             gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
-                #[inline]
-                fn needs_trace() -> bool {
-                    #needs_trace_body
-                }
+                const NEEDS_TRACE: bool = #needs_trace_expr;
 
                 #[inline]
-                fn trace(&self, cc: &::gc_arena::Collection) {
+                fn trace(&self, mut cc: ::gc_arena::Collection<'_>) {
                     match *self { #trace_body }
                 }
             }
