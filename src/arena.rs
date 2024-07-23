@@ -368,7 +368,7 @@ where
     /// Immediately transition the arena out of [`CollectionPhase::Marked`] to
     /// [`CollectionPhase::Sweeping`].
     #[inline]
-    pub fn start_collecting(self) {
+    pub fn start_sweeping(self) {
         unsafe {
             self.0.context.do_collection(
                 &self.0.root,
