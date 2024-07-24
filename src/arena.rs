@@ -237,6 +237,38 @@ where
         }
     }
 
+    /// Obtains a mutable reference to the contents of a `Gc` pointer.
+    /// The callback `f` is passed a `&Root`, and returns the `Gc` pointer to mutate.
+    ///
+    /// Note that since this method takes `&mut self`, it can only be called outside
+    /// of a `mutate`/`mutate_root` call.
+    pub fn get_mut_gc<T, F>(&mut self, f: F) -> &mut T
+    where
+        F: for<'gc> FnOnce(&'gc Root<'gc, R>) -> crate::Gc<'gc, T>,
+        T: 'static,
+    {
+        let root: &'static Root<'_, R> = unsafe { &*(&self.root as *const _) };
+        let mut gc_ptr = f(&root);
+        // SAFETY:
+        // There are no other live references (& or &mut) to the contents of the Gc.
+        // `get_mut_gc` takes in a `&mut self`, which prevents a `mutate`/`mutate_root`
+        // call from being in-progress, and ensures that the borrow checker will prevent
+        // any reference returned from `mutate`/`mutate_root` from being used.
+        //
+        // Generativity ensures that the callback `f` cannot dereference the `Gc<T>`
+        // to an `&T` and stash that reference somewhere.
+        //
+        // The above two conditions ensure that there cannot be any other live references
+        // (& or &mut) to the contents of the Gc. There may be other raw pointer (e.g
+        // copies of the `Gc<T>` stored inside of the arena, but they store raw pointers,
+        // so this does not result in mutable aliasing.
+        //
+        // Subtle - it's possible to obtain a `&'gc T` using `Gc::as_ref`. However, this
+        // reference cannot escape the callback (see the comments on `Gc::as_ref`), so
+        // it must be dead at this point, allowing us to safely obtain a mutable reference.
+        unsafe { &mut gc_ptr.ptr.as_mut().value }
+    }
+
     #[inline]
     pub fn metrics(&self) -> &Metrics {
         self.context.metrics()
