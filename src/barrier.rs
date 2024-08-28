@@ -11,7 +11,6 @@ use crate::Gc;
 /// This type can only exist behind a reference; it is typically obtained by calling
 /// [`Gc::write`] on a [`Gc`] pointer or by using the [`field!`] projection macro
 /// on a pre-existing `&Write<T>`.
-#[non_exhaustive]
 #[repr(transparent)]
 pub struct Write<T: ?Sized> {
     inner: T,
