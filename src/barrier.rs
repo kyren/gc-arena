@@ -14,10 +14,7 @@ use crate::Gc;
 #[non_exhaustive]
 #[repr(transparent)]
 pub struct Write<T: ?Sized> {
-    // Public so that the `field!` macro can pattern-match on it; the `non_exhaustive` attribute
-    // prevents 3rd-party code from instanciating the struct directly.
-    #[doc(hidden)]
-    pub __inner: T,
+    inner: T,
 }
 
 impl<T: ?Sized> Deref for Write<T> {
@@ -25,14 +22,14 @@ impl<T: ?Sized> Deref for Write<T> {
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
-        &self.__inner
+        &self.inner
     }
 }
 
 impl<T: ?Sized> DerefMut for Write<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.__inner
+        &mut self.inner
     }
 }
 
@@ -62,6 +59,10 @@ impl<T: ?Sized> Write<T> {
         unsafe { mem::transmute(v) }
     }
 
+    pub fn get_inner(&self) -> &T {
+        &self.inner
+    }
+
     /// Gets a writable reference from a `&mut T`.
     ///
     /// This is safe, as exclusive access already implies writability.
@@ -86,7 +87,7 @@ impl<T: ?Sized> Write<T> {
         T: Unlock,
     {
         // SAFETY: a `&Write<T>` implies that a write barrier was triggered on the parent `Gc`.
-        unsafe { self.__inner.unlock_unchecked() }
+        unsafe { self.inner.unlock_unchecked() }
     }
 }
 
@@ -96,7 +97,7 @@ impl<T> Write<Option<T>> {
     pub fn as_write(&self) -> Option<&Write<T>> {
         // SAFETY: this is simple destructuring
         unsafe {
-            match &self.__inner {
+            match &self.inner {
                 None => None,
                 Some(v) => Some(Write::assume(v)),
             }
@@ -110,7 +111,7 @@ impl<T, E> Write<Result<T, E>> {
     pub fn as_write(&self) -> Result<&Write<T>, &Write<E>> {
         // SAFETY: this is simple destructuring
         unsafe {
-            match &self.__inner {
+            match &self.inner {
                 Ok(v) => Ok(Write::assume(v)),
                 Err(e) => Err(Write::assume(e)),
             }
@@ -167,11 +168,13 @@ macro_rules! __field {
         // - the destructuring pattern, unlike a simple field access, cannot call `Deref`;
         // - similarly, the `__from_ref_and_ptr` method takes both a reference (for the lifetime)
         //   and a pointer, causing a compilation failure if the first argument was coerced.
-        match $value {
-            $crate::barrier::Write {
-                __inner: $type { ref $field, .. },
-                ..
-            } => unsafe { $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _) },
+        {
+            let _: &$crate::barrier::Write<_> = $value;
+
+            match $value.get_inner() {
+                $type { ref $field, .. }
+                    => unsafe { $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _) },
+            }
         }
     };
 }
