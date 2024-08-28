@@ -171,8 +171,9 @@ macro_rules! __field {
             let _: &$crate::barrier::Write<_> = $value;
 
             match $value.get_inner() {
-                $type { ref $field, .. }
-                    => unsafe { $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _) },
+                $type { ref $field, .. } => unsafe {
+                    $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _)
+                },
             }
         }
     };
