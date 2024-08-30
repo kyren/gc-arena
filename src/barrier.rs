@@ -168,9 +168,9 @@ macro_rules! __field {
         // - similarly, the `__from_ref_and_ptr` method takes both a reference (for the lifetime)
         //   and a pointer, causing a compilation failure if the first argument was coerced.
         {
-            let _: &$crate::barrier::Write<_> = $value;
+            let value: &$crate::barrier::Write<_> = $value;
 
-            match $value.get_inner() {
+            match value.get_inner() {
                 $type { ref $field, .. } => unsafe {
                     $crate::barrier::Write::__from_ref_and_ptr($field, $field as *const _)
                 },
