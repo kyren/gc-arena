@@ -1,5 +1,6 @@
 use core::{
     alloc::Layout,
+    borrow::Borrow,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -75,6 +76,13 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
 impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
     #[inline]
     fn as_ref(&self) -> &T {
+        unsafe { &self.ptr.as_ref().value }
+    }
+}
+
+impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
+    #[inline]
+    fn borrow(&self) -> &T {
         unsafe { &self.ptr.as_ref().value }
     }
 }
