@@ -11,18 +11,15 @@ mod inner {
         S: 'static,
         A: Allocator + Clone + Collect,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            K::needs_trace() || V::needs_trace() || A::needs_trace()
-        }
+        const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
-            self.allocator().trace(cc);
+        fn trace(&self, mut cc: Collection<'_>) {
             for (k, v) in self {
-                k.trace(cc);
-                v.trace(cc);
+                cc.trace(k);
+                cc.trace(v);
             }
+            self.allocator().trace(cc);
         }
     }
 
@@ -32,17 +29,14 @@ mod inner {
         S: 'static,
         A: Allocator + Clone + Collect,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            T::needs_trace() || A::needs_trace()
-        }
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
-            self.allocator().trace(cc);
+        fn trace(&self, mut cc: Collection<'_>) {
             for v in self {
-                v.trace(cc);
+                cc.trace(v);
             }
+            self.allocator().trace(cc);
         }
     }
 
@@ -51,17 +45,14 @@ mod inner {
         T: Collect,
         A: Allocator + Clone + Collect,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            T::needs_trace() || A::needs_trace()
-        }
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
-            self.allocator().trace(cc);
+        fn trace(&self, mut cc: Collection<'_>) {
             for v in self {
-                v.trace(cc);
+                cc.trace(v);
             }
+            self.allocator().trace(cc);
         }
     }
 }
@@ -76,16 +67,13 @@ mod inner {
         V: Collect,
         S: 'static,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            K::needs_trace() || V::needs_trace()
-        }
+        const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
+        fn trace(&self, mut cc: Collection<'_>) {
             for (k, v) in self {
-                k.trace(cc);
-                v.trace(cc);
+                cc.trace(k);
+                cc.trace(v);
             }
         }
     }
@@ -95,15 +83,12 @@ mod inner {
         T: Collect,
         S: 'static,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            T::needs_trace()
-        }
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
+        fn trace(&self, mut cc: Collection<'_>) {
             for v in self {
-                v.trace(cc);
+                cc.trace(v);
             }
         }
     }
@@ -112,15 +97,12 @@ mod inner {
     where
         T: Collect,
     {
-        #[inline]
-        fn needs_trace() -> bool {
-            T::needs_trace()
-        }
+        const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, cc: &Collection) {
+        fn trace(&self, mut cc: Collection<'_>) {
             for v in self {
-                v.trace(cc);
+                cc.trace(v);
             }
         }
     }

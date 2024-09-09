@@ -57,10 +57,8 @@ impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for Gc<'gc, T> {
     #[inline]
-    fn trace(&self, cc: &Collection) {
-        unsafe {
-            cc.trace(GcBox::erase(self.ptr));
-        }
+    fn trace(&self, mut cc: Collection<'_>) {
+        cc.trace_gc(Self::erase(*self))
     }
 }
 
@@ -126,7 +124,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
 impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Cast a `Gc` pointer to a different type.
     ///
-    /// SAFETY:
+    /// # Safety
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
@@ -148,7 +146,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 
     /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
     ///
-    /// SAFETY:
+    /// # Safety
     /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
     /// have been collected yet.
     #[inline]

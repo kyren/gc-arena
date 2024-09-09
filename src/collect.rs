@@ -21,19 +21,15 @@ use crate::context::Collection;
 /// while ensuring that the write barrier is always executed.
 pub unsafe trait Collect {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
-    /// to call, you may implement this method and return false. The default implementation returns
-    /// true, signaling that `Collect::trace` must be called.
-    #[inline]
-    fn needs_trace() -> bool
-    where
-        Self: Sized,
-    {
-        true
-    }
+    /// to call, you may set this to `false`. The default value is `true`, signaling that
+    /// `Collect::trace` must be called.
+    const NEEDS_TRACE: bool = true;
 
-    /// *Must* call `Collect::trace` on all held `Gc` pointers. If this type holds inner types that
-    /// implement `Collect`, a valid implementation would simply call `Collect::trace` on all the
-    /// held values to ensure this.
+    /// *Must* call [`Collection::trace_gc`] (resp. [`Collection::trace_gc_weak`]) on all held
+    /// [`Gc`] (resp. [`GcWeak`]) pointers. If this type holds inner types that implement
+    /// `Collect`, a valid implementation would simply call `Collection::trace` on all the held
+    /// values to ensure this.
     #[inline]
-    fn trace(&self, _cc: &Collection) {}
+    #[allow(unused_variables, unused_mut)]
+    fn trace(&self, mut cc: Collection<'_>) {}
 }
