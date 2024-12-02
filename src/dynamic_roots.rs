@@ -26,7 +26,7 @@ use crate::{arena::Root, metrics::Metrics, Collect, Gc, Mutation, Rootable};
 pub struct DynamicRootSet<'gc>(Gc<'gc, Inner<'gc>>);
 
 unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
-    fn trace(&self, cc: &crate::Collection) {
+    fn trace(&self, cc: crate::Collection<'_>) {
         self.0.trace(cc);
     }
 }
@@ -190,7 +190,7 @@ struct Inner<'gc> {
 }
 
 unsafe impl<'gc> Collect for Inner<'gc> {
-    fn trace(&self, cc: &crate::Collection) {
+    fn trace(&self, cc: crate::Collection<'_>) {
         let slots = self.slots.borrow();
         slots.trace(cc);
     }
@@ -210,10 +210,10 @@ enum Slot<'gc> {
 }
 
 unsafe impl<'gc> Collect for Slot<'gc> {
-    fn trace(&self, cc: &crate::Collection) {
+    fn trace(&self, mut cc: crate::Collection<'_>) {
         match self {
             Slot::Vacant { .. } => {}
-            Slot::Occupied { root, .. } => root.trace(cc),
+            Slot::Occupied { root, ref_count: _ } => cc.trace_gc(*root),
         }
     }
 }
@@ -232,7 +232,7 @@ impl<'gc> Drop for Slots<'gc> {
 }
 
 unsafe impl<'gc> Collect for Slots<'gc> {
-    fn trace(&self, cc: &crate::Collection) {
+    fn trace(&self, cc: crate::Collection<'_>) {
         self.slots.trace(cc);
     }
 }
