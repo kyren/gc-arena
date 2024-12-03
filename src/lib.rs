@@ -8,7 +8,7 @@ extern crate alloc;
 
 pub mod arena;
 pub mod barrier;
-mod collect;
+pub mod collect;
 mod collect_impl;
 mod context;
 pub mod dynamic_roots;
@@ -36,7 +36,7 @@ pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__Coerc
 pub use self::{
     arena::{Arena, Rootable},
     collect::Collect,
-    context::{Collection, Finalization, Mutation},
+    context::{Finalization, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet},
     gc::Gc,
     gc_weak::GcWeak,

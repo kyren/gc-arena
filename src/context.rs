@@ -7,7 +7,7 @@ use core::{
 };
 
 use crate::{
-    collect::Collect,
+    collect::{Collect, Trace},
     metrics::Metrics,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
     Gc, GcWeak,
@@ -103,42 +103,15 @@ impl<'gc> Finalization<'gc> {
     }
 }
 
-/// Handle value given by arena callbacks during garbage collection, which must be passed through
-/// `Collect::trace` implementations.
-#[repr(transparent)]
-pub struct Collection<'a> {
-    context: &'a Context,
-}
-
-impl<'a> Collection<'a> {
-    #[inline]
-    fn from_context(context: &'a Context) -> Self {
-        Self { context }
-    }
-
-    #[inline]
-    pub fn metrics(&self) -> &Metrics {
-        &self.context.metrics
-    }
-
-    #[inline]
-    pub fn trace<T: Collect + ?Sized>(&mut self, value: &T) {
-        if T::NEEDS_TRACE {
-            let cc = Collection::from_context(self.context);
-            value.trace(cc);
-        }
-    }
-
-    #[inline]
-    pub fn trace_gc(&mut self, gc: Gc<'_, ()>) {
+impl Trace for Context {
+    fn trace_gc(&mut self, gc: Gc<'_, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        self.context.trace(gc_box)
+        self.trace(gc_box)
     }
 
-    #[inline]
-    pub fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>) {
+    fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
-        self.context.trace_weak(gc_box)
+        self.trace_weak(gc_box)
     }
 }
 
@@ -532,7 +505,7 @@ impl Context {
                 gc_box,
             };
             debug_assert!(gc_box.header().is_live());
-            unsafe { gc_box.trace_value(Collection::from_context(guard.context)) }
+            unsafe { gc_box.trace_value(guard.context) }
             gc_box.header().set_color(GcColor::Black);
             mem::forget(guard);
 
@@ -541,7 +514,7 @@ impl Context {
             // We treat the root object as gray if `root_needs_trace` is set, and we
             // process it at the end of the gray queue for the same reason as the "gray
             // again" objects.
-            root.trace(Collection::from_context(self));
+            root.trace(self);
             self.root_needs_trace = false;
             ControlFlow::Continue(())
         } else {

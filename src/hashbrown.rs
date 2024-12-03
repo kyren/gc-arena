@@ -2,7 +2,7 @@
 mod inner {
     use allocator_api2::alloc::Allocator;
 
-    use crate::{collect::Collect, context::Collection};
+    use crate::collect::{Collect, Trace, TraceExt};
 
     unsafe impl<K, V, S, A> Collect for hashbrown::HashMap<K, V, S, A>
     where
@@ -14,12 +14,12 @@ mod inner {
         const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for (k, v) in self {
                 cc.trace(k);
                 cc.trace(v);
             }
-            self.allocator().trace(cc);
+            cc.trace(self.allocator());
         }
     }
 
@@ -32,11 +32,11 @@ mod inner {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
-            self.allocator().trace(cc);
+            cc.trace(self.allocator());
         }
     }
 
@@ -48,18 +48,18 @@ mod inner {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
-            self.allocator().trace(cc);
+            cc.trace(self.allocator());
         }
     }
 }
 
 #[cfg(not(feature = "allocator-api2"))]
 mod inner {
-    use crate::{collect::Collect, context::Collection};
+    use crate::collect::{Collect, Trace, TraceExt};
 
     unsafe impl<K, V, S> Collect for hashbrown::HashMap<K, V, S>
     where
@@ -70,7 +70,7 @@ mod inner {
         const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for (k, v) in self {
                 cc.trace(k);
                 cc.trace(v);
@@ -86,7 +86,7 @@ mod inner {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
@@ -100,7 +100,7 @@ mod inner {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace(&self, mut cc: Collection<'_>) {
+        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }

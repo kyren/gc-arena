@@ -595,6 +595,8 @@ fn ptr_magic() {
 fn okay_panic() {
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
+    use gc_arena::collect::Trace;
+
     struct Test<'gc> {
         data: Gc<'gc, [u8; 256]>,
         panic_count: Cell<u8>,
@@ -602,7 +604,7 @@ fn okay_panic() {
     }
 
     unsafe impl<'gc> Collect for Test<'gc> {
-        fn trace(&self, cc: gc_arena::Collection<'_>) {
+        fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);
