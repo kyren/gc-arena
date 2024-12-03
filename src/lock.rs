@@ -155,11 +155,11 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
+unsafe impl<'gc, T: Collect<'gc> + Copy + 'gc> Collect<'gc> for Lock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
         // This is theoretically a correctness issue, because technically `T` could have interior
@@ -287,11 +287,11 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect + 'gc + ?Sized> Collect for RefLock<T> {
+unsafe impl<'gc, T: Collect<'gc> + 'gc + ?Sized> Collect<'gc> for RefLock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
         cc.trace(&*self.borrow());
     }
 }

@@ -55,9 +55,9 @@ impl<'gc, T: ?Sized + 'gc> Clone for Gc<'gc, T> {
     }
 }
 
-unsafe impl<'gc, T: ?Sized + 'gc> Collect for Gc<'gc, T> {
+unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for Gc<'gc, T> {
     #[inline]
-    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
         cc.trace_gc(Self::erase(*self))
     }
 }
@@ -85,7 +85,7 @@ impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: Collect + 'gc> Gc<'gc, T> {
+impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
         Gc {

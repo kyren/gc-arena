@@ -4,17 +4,17 @@ mod inner {
 
     use crate::collect::{Collect, Trace, TraceExt};
 
-    unsafe impl<K, V, S, A> Collect for hashbrown::HashMap<K, V, S, A>
+    unsafe impl<'gc, K, V, S, A> Collect<'gc> for hashbrown::HashMap<K, V, S, A>
     where
-        K: Collect,
-        V: Collect,
+        K: Collect<'gc>,
+        V: Collect<'gc>,
         S: 'static,
-        A: Allocator + Clone + Collect,
+        A: Allocator + Clone + Collect<'gc>,
     {
         const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for (k, v) in self {
                 cc.trace(k);
                 cc.trace(v);
@@ -23,16 +23,16 @@ mod inner {
         }
     }
 
-    unsafe impl<T, S, A> Collect for hashbrown::HashSet<T, S, A>
+    unsafe impl<'gc, T, S, A> Collect<'gc> for hashbrown::HashSet<T, S, A>
     where
-        T: Collect,
+        T: Collect<'gc>,
         S: 'static,
-        A: Allocator + Clone + Collect,
+        A: Allocator + Clone + Collect<'gc>,
     {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
@@ -40,15 +40,15 @@ mod inner {
         }
     }
 
-    unsafe impl<T, A> Collect for hashbrown::HashTable<T, A>
+    unsafe impl<'gc, T, A> Collect<'gc> for hashbrown::HashTable<T, A>
     where
-        T: Collect,
-        A: Allocator + Clone + Collect,
+        T: Collect<'gc>,
+        A: Allocator + Clone + Collect<'gc>,
     {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
@@ -61,16 +61,16 @@ mod inner {
 mod inner {
     use crate::collect::{Collect, Trace, TraceExt};
 
-    unsafe impl<K, V, S> Collect for hashbrown::HashMap<K, V, S>
+    unsafe impl<'gc, K, V, S> Collect<'gc> for hashbrown::HashMap<K, V, S>
     where
-        K: Collect,
-        V: Collect,
+        K: Collect<'gc>,
+        V: Collect<'gc>,
         S: 'static,
     {
         const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for (k, v) in self {
                 cc.trace(k);
                 cc.trace(v);
@@ -78,29 +78,29 @@ mod inner {
         }
     }
 
-    unsafe impl<T, S> Collect for hashbrown::HashSet<T, S>
+    unsafe impl<'gc, T, S> Collect<'gc> for hashbrown::HashSet<T, S>
     where
-        T: Collect,
+        T: Collect<'gc>,
         S: 'static,
     {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }
         }
     }
 
-    unsafe impl<T> Collect for hashbrown::HashTable<T>
+    unsafe impl<'gc, T> Collect<'gc> for hashbrown::HashTable<T>
     where
-        T: Collect,
+        T: Collect<'gc>,
     {
         const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
         #[inline]
-        fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
             for v in self {
                 cc.trace(v);
             }

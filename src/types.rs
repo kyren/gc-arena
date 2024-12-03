@@ -88,13 +88,13 @@ pub(crate) struct GcBoxHeader {
 
 impl GcBoxHeader {
     #[inline(always)]
-    pub fn new<T: Collect>() -> Self {
+    pub fn new<'gc, T: Collect<'gc>>() -> Self {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
         }
 
-        impl<T: Collect> HasCollectVtable for T {
+        impl<'gc, T: Collect<'gc>> HasCollectVtable for T {
             const VTABLE: CollectVtable = CollectVtable::vtable_for::<T>();
         }
 
@@ -201,7 +201,7 @@ impl CollectVtable {
     /// Because `T: Sized`, we can recover a typed pointer
     /// directly from the erased `GcBox`.
     #[inline(always)]
-    const fn vtable_for<T: Collect>() -> Self {
+    const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
         Self {
             box_layout: Layout::new::<GcBoxInner<T>>(),
             drop_value: |erased| unsafe {
@@ -225,12 +225,9 @@ pub(crate) struct GcBoxInner<T: ?Sized> {
     pub(crate) value: mem::ManuallyDrop<T>,
 }
 
-impl<T: ?Sized> GcBoxInner<T> {
+impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
     #[inline(always)]
-    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self
-    where
-        T: Collect + Sized,
-    {
+    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self {
         Self {
             header,
             value: mem::ManuallyDrop::new(t),

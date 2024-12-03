@@ -30,8 +30,8 @@ use crate::{
 #[derive(Copy, Clone)]
 pub struct DynamicRootSet<'gc>(Gc<'gc, Inner<'gc>>);
 
-unsafe impl<'gc> Collect for DynamicRootSet<'gc> {
-    fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
+unsafe impl<'gc> Collect<'gc> for DynamicRootSet<'gc> {
+    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
         cc.trace(&self.0);
     }
 }
@@ -194,8 +194,8 @@ struct Inner<'gc> {
     slots: Rc<RefCell<Slots<'gc>>>,
 }
 
-unsafe impl<'gc> Collect for Inner<'gc> {
-    fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
+unsafe impl<'gc> Collect<'gc> for Inner<'gc> {
+    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
         cc.trace(&*self.slots.borrow());
     }
 }
@@ -213,8 +213,8 @@ enum Slot<'gc> {
     Occupied { root: Gc<'gc, ()>, ref_count: usize },
 }
 
-unsafe impl<'gc> Collect for Slot<'gc> {
-    fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
+unsafe impl<'gc> Collect<'gc> for Slot<'gc> {
+    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
         match self {
             Slot::Vacant { .. } => {}
             Slot::Occupied { root, ref_count: _ } => cc.trace_gc(*root),
@@ -235,8 +235,8 @@ impl<'gc> Drop for Slots<'gc> {
     }
 }
 
-unsafe impl<'gc> Collect for Slots<'gc> {
-    fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
+unsafe impl<'gc> Collect<'gc> for Slots<'gc> {
+    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
         cc.trace(&self.slots);
     }
 }

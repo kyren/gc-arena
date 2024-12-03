@@ -304,8 +304,8 @@ fn derive_collect() {
 
     #[allow(unused)]
     #[derive(Collect)]
-    #[collect(no_drop)]
-    struct Test5(Gc<'static, i32>);
+    #[collect(no_drop, gc_lifetime = 'gc)]
+    struct Test5<'gc, 'a>(Gc<'gc, &'a i32>);
 
     #[allow(unused)]
     #[derive(Collect)]
@@ -341,6 +341,23 @@ fn derive_collect() {
 
     assert_eq!(Test7::NEEDS_TRACE, false);
     assert_eq!(Test8::NEEDS_TRACE, false);
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop, bound = "where T: Collect<'gc>")]
+    struct Test9<T>(T);
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop, bound = "")]
+    struct Test10<'foo, T>(Gc<'foo, ()>, T)
+    where
+        T: Collect<'foo>;
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop, bound = "where T: Collect<'foo>")]
+    struct Test11<'foo, T>(Gc<'foo, ()>, T);
 }
 
 #[test]
@@ -603,8 +620,8 @@ fn okay_panic() {
         trace_finished: Cell<bool>,
     }
 
-    unsafe impl<'gc> Collect for Test<'gc> {
-        fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {
+    unsafe impl<'gc> Collect<'gc> for Test<'gc> {
+        fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);

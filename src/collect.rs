@@ -18,7 +18,7 @@ use crate::{Gc, GcWeak};
 /// deriving `Collect`. A safe way of providing internal mutability in this case is to use
 /// [`crate::lock::Lock<T>`] and [`crate::lock::RefLock<T>`], which provides internal mutability
 /// while ensuring that write barriers are correctly executed.
-pub unsafe trait Collect {
+pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
     /// to call, you may set this to `false`. The default value is `true`, signaling that
     /// `Collect::trace` must be called.
@@ -42,7 +42,7 @@ pub unsafe trait Collect {
     /// potentially less risky alternative when manually implementing `Collect`.
     #[inline]
     #[allow(unused_variables)]
-    fn trace<T: Trace + ?Sized>(&self, cc: &mut T) {}
+    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {}
 }
 
 /// The trait that is passed to the [`Collect::trace`] method.
@@ -52,15 +52,15 @@ pub unsafe trait Collect {
 ///
 /// This trait is not itself unsafe, but implementers of [`Collect`] *must* uphold the safety
 /// guarantees of [`Collect`] when using this trait.
-pub trait Trace {
+pub trait Trace<'gc> {
     /// Trace a [`Gc`] pointer (of any real type).
-    fn trace_gc(&mut self, gc: Gc<'_, ()>);
+    fn trace_gc(&mut self, gc: Gc<'gc, ()>);
 
     /// Trace a [`GcWeak`] pointer (of any real type).
-    fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>);
+    fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>);
 }
 
-pub trait TraceExt {
+pub trait TraceExt<'gc> {
     /// Trace an inner type that implements [`Collect`].
     ///
     /// This is a convenience method that calls [`Collect::trace`] but automatically adds a
@@ -70,12 +70,12 @@ pub trait TraceExt {
     /// is a [`Collect::NEEDS_TRACE`] check without having to implement it manually. This can be
     /// important in cases where the [`Collect::trace`] method impl is not `#[inline]` or does not
     /// have its own early exit.
-    fn trace<C: Collect + ?Sized>(&mut self, _value: &C);
+    fn trace<C: Collect<'gc> + ?Sized>(&mut self, _value: &C);
 }
 
-impl<T: Trace + ?Sized> TraceExt for T {
+impl<'gc, T: Trace<'gc> + ?Sized> TraceExt<'gc> for T {
     #[inline]
-    fn trace<C: Collect + ?Sized>(&mut self, value: &C) {
+    fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &C) {
         if C::NEEDS_TRACE {
             value.trace(self);
         }

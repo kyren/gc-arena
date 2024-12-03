@@ -15,7 +15,7 @@ impl<'a, T: ?Sized + 'static> Rootable<'a> for Static<T> {
     type Root = Static<T>;
 }
 
-unsafe impl<T: ?Sized + 'static> Collect for Static<T> {
+unsafe impl<'gc, T: ?Sized + 'static> Collect<'gc> for Static<T> {
     const NEEDS_TRACE: bool = false;
 }
 

@@ -67,7 +67,7 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
     }
 
@@ -103,13 +103,13 @@ impl<'gc> Finalization<'gc> {
     }
 }
 
-impl Trace for Context {
-    fn trace_gc(&mut self, gc: Gc<'_, ()>) {
+impl<'gc> Trace<'gc> for Context {
+    fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.ptr) };
         self.trace(gc_box)
     }
 
-    fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>) {
+    fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
         self.trace_weak(gc_box)
     }
@@ -246,7 +246,7 @@ impl Context {
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to `Phase::Mark`.
     #[deny(unsafe_op_in_unsafe_fn)]
-    pub(crate) unsafe fn do_collection<R: Collect + ?Sized>(
+    pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
         root: &R,
         mut target_debt: f64,
@@ -307,7 +307,7 @@ impl Context {
         }
     }
 
-    fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
         header.set_live(true);
@@ -462,7 +462,7 @@ impl Context {
         }
     }
 
-    fn mark_one<R: Collect + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
+    fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
         // We look for an object first in the normal gray queue, then the "gray again"
         // queue. Objects from the normal gray queue count as regular work, but objects
         // which are gray a second time have already been counted as work, so we don't
