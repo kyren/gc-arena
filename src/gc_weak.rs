@@ -1,8 +1,8 @@
-use crate::collect::Collect;
+use crate::collect::{Collect, Trace};
 use crate::context::Finalization;
 use crate::gc::Gc;
 use crate::types::GcBox;
-use crate::{Collection, Mutation};
+use crate::Mutation;
 
 use core::fmt::{self, Debug};
 
@@ -27,22 +27,35 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect for GcWeak<'gc, T> {
     #[inline]
-    fn trace(&self, mut cc: Collection<'_>) {
+    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
         cc.trace_gc_weak(Self::erase(*self))
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
+    /// If the `GcWeak` pointer can be safely upgraded to a strong pointer, upgrade it.
+    ///
+    /// This will fail if the value the `GcWeak` points to is dropped, or if we are in the
+    /// [`CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
     pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
         let ptr = unsafe { GcBox::erase(self.inner.ptr) };
         mc.upgrade(ptr).then(|| self.inner)
     }
 
-    /// During collection, return whether the value referenced by this `GcWeak` has already been
-    /// dropped.
+    /// Returns whether the value referenced by this `GcWeak` has already been dropped.
+    ///
+    /// # Note
+    ///
+    /// This is not the same as using [`GcWeak::upgrade`] and checking if the result is `None`! A
+    /// `GcWeak` pointer can fail to upgrade *without* having been dropped if the current collection
+    /// phase is [`CollectionPhase::Sweeping`] and the pointer *will* be dropped.
+    ///
+    /// It is not safe to use this to use this and casting as a substitute for [`GcWeak::upgrade`].
+    ///
+    /// During tracing (which only occurs during marking),
     #[inline]
-    pub fn is_dropped(self, _cc: &Collection) -> bool {
+    pub fn is_dropped(self) -> bool {
         !unsafe { self.inner.ptr.as_ref() }.header.is_live()
     }
 

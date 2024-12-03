@@ -6,7 +6,11 @@ use core::{
     fmt,
 };
 
-use crate::{barrier::Unlock, Collect, Collection, Gc, Mutation};
+use crate::{
+    barrier::Unlock,
+    collect::{Collect, Trace, TraceExt},
+    Gc, Mutation,
+};
 
 // Helper macro to factor out the common parts of locks types.
 macro_rules! make_lock_wrapper {
@@ -155,7 +159,7 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace(&self, cc: Collection<'_>) {
+    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
         // This is theoretically a correctness issue, because technically `T` could have interior
@@ -172,7 +176,7 @@ unsafe impl<'gc, T: Collect + Copy + 'gc> Collect for Lock<T> {
         //
         // It could be fixed now, but since it is not even testable because it is currently
         // *impossible*, I did not bother. One day this may need to be implemented!
-        T::trace(&self.get(), cc);
+        cc.trace(&self.get());
     }
 }
 
@@ -287,7 +291,7 @@ unsafe impl<'gc, T: Collect + 'gc + ?Sized> Collect for RefLock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace(&self, cc: Collection<'_>) {
-        self.borrow().trace(cc);
+    fn trace<C: Trace + ?Sized>(&self, cc: &mut C) {
+        cc.trace(&*self.borrow());
     }
 }

@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::{mem, ptr};
 
-use crate::collect::Collect;
+use crate::{collect::Collect, context::Context};
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline (see `GcBoxInner`
@@ -47,7 +47,7 @@ impl GcBox {
     ///
     /// **SAFETY**: `Self::drop_in_place` must not have been called.
     #[inline(always)]
-    pub(crate) unsafe fn trace_value(&self, cc: crate::Collection<'_>) {
+    pub(crate) unsafe fn trace_value(&self, cc: &mut Context) {
         (self.header().vtable().trace_value)(*self, cc)
     }
 
@@ -193,7 +193,7 @@ struct CollectVtable {
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
-    trace_value: unsafe fn(GcBox, crate::Collection<'_>),
+    trace_value: unsafe fn(GcBox, &mut Context),
 }
 
 impl CollectVtable {
