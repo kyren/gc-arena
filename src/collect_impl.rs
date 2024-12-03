@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
-use crate::collect::{Collect, Trace, TraceExt};
+use crate::collect::{Collect, Trace};
 
 /// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
 /// simple empty `Collect` implementation.
@@ -87,7 +87,7 @@ unsafe impl<'gc, T: ?Sized + Collect<'gc>> Collect<'gc> for Box<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self)
     }
 }
@@ -96,7 +96,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for [T] {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for t in self.iter() {
             cc.trace(t)
         }
@@ -107,7 +107,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for Option<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         if let Some(t) = self.as_ref() {
             cc.trace(t)
         }
@@ -118,7 +118,7 @@ unsafe impl<'gc, T: Collect<'gc>, E: Collect<'gc>> Collect<'gc> for Result<T, E>
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || E::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         match self {
             Ok(r) => cc.trace(r),
             Err(e) => cc.trace(e),
@@ -130,7 +130,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for Vec<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for t in self {
             cc.trace(t)
         }
@@ -141,7 +141,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for VecDeque<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for t in self {
             cc.trace(t)
         }
@@ -152,7 +152,7 @@ unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for LinkedList<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for t in self {
             cc.trace(t)
         }
@@ -169,7 +169,7 @@ where
     const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for (k, v) in self {
             cc.trace(k);
             cc.trace(v);
@@ -186,7 +186,7 @@ where
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for v in self {
             cc.trace(v);
         }
@@ -201,7 +201,7 @@ where
     const NEEDS_TRACE: bool = K::NEEDS_TRACE || V::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for (k, v) in self {
             cc.trace(k);
             cc.trace(v);
@@ -216,7 +216,7 @@ where
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for v in self {
             cc.trace(v);
         }
@@ -230,7 +230,7 @@ where
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
     }
 }
@@ -243,7 +243,7 @@ where
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
     }
 }
@@ -271,7 +271,7 @@ unsafe impl<'gc, T: Collect<'gc>, const N: usize> Collect<'gc> for [T; N] {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for t in self {
             cc.trace(t)
         }
@@ -293,7 +293,7 @@ macro_rules! impl_tuple {
 
             #[allow(non_snake_case)]
             #[inline]
-            fn trace<TR: Trace<'gc> + ?Sized>(&self, cc: &mut TR) {
+            fn trace<TR: Trace<'gc> >(&self, cc: &mut TR) {
                 let ($($name,)*) = self;
                 $(cc.trace($name);)*
             }

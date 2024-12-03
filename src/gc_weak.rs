@@ -27,7 +27,7 @@ impl<'gc, T: ?Sized + 'gc> Debug for GcWeak<'gc, T> {
 
 unsafe impl<'gc, T: ?Sized + 'gc> Collect<'gc> for GcWeak<'gc, T> {
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_gc_weak(Self::erase(*self))
     }
 }

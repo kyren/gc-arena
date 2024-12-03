@@ -621,7 +621,7 @@ fn okay_panic() {
     }
 
     unsafe impl<'gc> Collect<'gc> for Test<'gc> {
-        fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
+        fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
             let panics = self.panic_count.get();
             if panics > 0 {
                 self.panic_count.set(panics - 1);

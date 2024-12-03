@@ -7,7 +7,7 @@ use alloc::{
 
 use crate::{
     arena::Root,
-    collect::{Collect, Trace, TraceExt},
+    collect::{Collect, Trace},
     metrics::Metrics,
     Gc, Mutation, Rootable,
 };
@@ -31,7 +31,7 @@ use crate::{
 pub struct DynamicRootSet<'gc>(Gc<'gc, Inner<'gc>>);
 
 unsafe impl<'gc> Collect<'gc> for DynamicRootSet<'gc> {
-    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
         cc.trace(&self.0);
     }
 }
@@ -195,7 +195,7 @@ struct Inner<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Inner<'gc> {
-    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
         cc.trace(&*self.slots.borrow());
     }
 }
@@ -214,7 +214,7 @@ enum Slot<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Slot<'gc> {
-    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
         match self {
             Slot::Vacant { .. } => {}
             Slot::Occupied { root, ref_count: _ } => cc.trace_gc(*root),
@@ -236,7 +236,7 @@ impl<'gc> Drop for Slots<'gc> {
 }
 
 unsafe impl<'gc> Collect<'gc> for Slots<'gc> {
-    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
         cc.trace(&self.slots);
     }
 }

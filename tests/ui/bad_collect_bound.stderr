@@ -18,14 +18,14 @@ error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
             (A, B, C, D, E, F, G)
           and $N others
 
-error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
+error[E0277]: the trait bound `NotCollect: Collect<'gc>` is not satisfied
  --> tests/ui/bad_collect_bound.rs:8:5
   |
 5 | #[derive(Collect)]
   |          ------- in this derive macro expansion
 ...
 8 |     field: NotCollect
-  |     ^^^^^ the trait `Collect<'_>` is not implemented for `NotCollect`
+  |     ^^^^^ the trait `Collect<'gc>` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect<'gc>`:
             &'static T
@@ -37,9 +37,9 @@ error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
             (A, B, C, D, E, F)
             (A, B, C, D, E, F, G)
           and $N others
-note: required by a bound in `gc_arena::collect::TraceExt::trace`
+note: required by a bound in `gc_arena::collect::Trace::trace`
  --> src/collect.rs
   |
-  |     fn trace<C: Collect<'gc> + ?Sized>(&mut self, _value: &C);
-  |                 ^^^^^^^^^^^^ required by this bound in `TraceExt::trace`
+  |     fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &C)
+  |                 ^^^^^^^^^^^^ required by this bound in `Trace::trace`
   = note: this error originates in the derive macro `Collect` (in Nightly builds, run with -Z macro-backtrace for more info)

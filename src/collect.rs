@@ -26,8 +26,8 @@ pub unsafe trait Collect<'gc> {
 
     /// *Must* call [`Trace::trace_gc`] (resp. [`Trace::trace_gc_weak`]) on all directly owned
     /// [`Gc`] (resp. [`GcWeak`]) pointers. If this type holds inner types that implement `Collect`,
-    /// a valid implementation would simply call [`TraceExt::trace`] on all the held values to
-    /// ensure this.
+    /// a valid implementation would simply call [`Trace::trace`] on all the held values to ensure
+    /// this.
     ///
     /// # Tracing pointers
     ///
@@ -42,7 +42,7 @@ pub unsafe trait Collect<'gc> {
     /// potentially less risky alternative when manually implementing `Collect`.
     #[inline]
     #[allow(unused_variables)]
-    fn trace<T: Trace<'gc> + ?Sized>(&self, cc: &mut T) {}
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {}
 }
 
 /// The trait that is passed to the [`Collect::trace`] method.
@@ -58,11 +58,7 @@ pub trait Trace<'gc> {
 
     /// Trace a [`GcWeak`] pointer (of any real type).
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>);
-}
 
-pub trait TraceExt<'gc> {
-    /// Trace an inner type that implements [`Collect`].
-    ///
     /// This is a convenience method that calls [`Collect::trace`] but automatically adds a
     /// [`Collect::NEEDS_TRACE`] check around it.
     ///
@@ -70,12 +66,13 @@ pub trait TraceExt<'gc> {
     /// is a [`Collect::NEEDS_TRACE`] check without having to implement it manually. This can be
     /// important in cases where the [`Collect::trace`] method impl is not `#[inline]` or does not
     /// have its own early exit.
-    fn trace<C: Collect<'gc> + ?Sized>(&mut self, _value: &C);
-}
-
-impl<'gc, T: Trace<'gc> + ?Sized> TraceExt<'gc> for T {
+    ///
+    /// There is generally no need for custom `Trace` implementations to override this method.
     #[inline]
-    fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &C) {
+    fn trace<C: Collect<'gc> + ?Sized>(&mut self, value: &C)
+    where
+        Self: Sized,
+    {
         if C::NEEDS_TRACE {
             value.trace(self);
         }

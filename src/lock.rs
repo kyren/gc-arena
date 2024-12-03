@@ -8,7 +8,7 @@ use core::{
 
 use crate::{
     barrier::Unlock,
-    collect::{Collect, Trace, TraceExt},
+    collect::{Collect, Trace},
     Gc, Mutation,
 };
 
@@ -159,7 +159,7 @@ unsafe impl<'gc, T: Collect<'gc> + Copy + 'gc> Collect<'gc> for Lock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         // Okay, so this calls `T::trace` on a *copy* of `T`.
         //
         // This is theoretically a correctness issue, because technically `T` could have interior
@@ -291,7 +291,7 @@ unsafe impl<'gc, T: Collect<'gc> + 'gc + ?Sized> Collect<'gc> for RefLock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&*self.borrow());
     }
 }

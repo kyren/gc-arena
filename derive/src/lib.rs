@@ -202,7 +202,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     // merge the spans. This is purely for diagnostic purposes, and has no effect
                     // on correctness
                     let bi = #bi;
-                    ::gc_arena::collect::TraceExt::trace(cc, bi);
+                    cc.trace(bi);
                 }
             )
         });
@@ -242,7 +242,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     const NEEDS_TRACE: bool = #needs_trace_expr;
 
                     #[inline]
-                    fn trace<Trace: ::gc_arena::collect::Trace<#gc_lifetime> + ?Sized>(&self, cc: &mut Trace) {
+                    fn trace<Trace: ::gc_arena::collect::Trace<#gc_lifetime>>(&self, cc: &mut Trace) {
                         match *self { #trace_body }
                     }
                 }
@@ -253,7 +253,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     const NEEDS_TRACE: bool = #needs_trace_expr;
 
                     #[inline]
-                    fn trace<Trace: ::gc_arena::collect::Trace<'gc> + ?Sized>(&self, cc: &mut Trace) {
+                    fn trace<Trace: ::gc_arena::collect::Trace<'gc>>(&self, cc: &mut Trace) {
                         match *self { #trace_body }
                     }
                 }

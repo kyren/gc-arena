@@ -106,12 +106,12 @@ impl<'gc> Finalization<'gc> {
 impl<'gc> Trace<'gc> for Context {
     fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        self.trace(gc_box)
+        Context::trace(self, gc_box)
     }
 
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
-        self.trace_weak(gc_box)
+        Context::trace_weak(self, gc_box)
     }
 }
 

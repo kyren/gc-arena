@@ -6,7 +6,7 @@ use allocator_api2::{
 };
 
 use crate::{
-    collect::{Collect, Trace, TraceExt},
+    collect::{Collect, Trace},
     context::Mutation,
     metrics::Metrics,
     types::Invariant,
@@ -128,13 +128,11 @@ unsafe impl<'gc> Collect<'gc> for Global {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<'gc, T: Collect<'gc> + ?Sized, A: Collect<'gc> + Allocator> Collect<'gc>
-    for boxed::Box<T, A>
-{
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for boxed::Box<T, A> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
         cc.trace(boxed::Box::allocator(self));
     }
@@ -144,7 +142,7 @@ unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for 
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
-    fn trace<C: Trace<'gc> + ?Sized>(&self, cc: &mut C) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for v in self {
             cc.trace(v);
         }
