@@ -46,6 +46,15 @@ impl<'gc> Mutation<'gc> {
         )
     }
 
+    /// A version of [`Mutation::backward_barrier`] that allows adopting a [`GcWeak`] child.
+    #[inline]
+    pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: GcWeak<'gc, ()>) {
+        self.context
+            .backward_barrier_weak(unsafe { GcBox::erase(parent.ptr) }, unsafe {
+                GcBox::erase(child.inner.ptr)
+            })
+    }
+
     /// IF we are in the marking phase AND the `parent` pointer (if given) is colored black, AND
     /// the `child` is colored white, then immediately change the `child` to gray and enqueue it
     /// for tracing.
@@ -63,6 +72,15 @@ impl<'gc> Mutation<'gc> {
         self.context
             .forward_barrier(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
                 GcBox::erase(child.ptr)
+            })
+    }
+
+    /// A version of [`Mutation::forward_barrier`] that allows adopting a [`GcWeak`] child.
+    #[inline]
+    pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: GcWeak<'gc, ()>) {
+        self.context
+            .forward_barrier_weak(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
+                GcBox::erase(child.inner.ptr)
             })
     }
 
@@ -361,6 +379,23 @@ impl Context {
     }
 
     #[inline]
+    fn backward_barrier_weak(&self, parent: GcBox, child: GcBox) {
+        if self.phase == Phase::Mark
+            && parent.header().color() == GcColor::Black
+            && child.header().color() == GcColor::White
+        {
+            // Outline the actual barrier code (which is somewhat expensive and won't be executed
+            // often) to promote the inlining of the write barrier.
+            #[cold]
+            fn barrier(this: &Context, parent: GcBox) {
+                parent.header().set_color(GcColor::Gray);
+                this.gray_again.push(parent);
+            }
+            barrier(&self, parent);
+        }
+    }
+
+    #[inline]
     fn forward_barrier(&self, parent: Option<GcBox>, child: GcBox) {
         // During the marking phase, if we are mutating a black object, we may add a white object
         // to it and invalidate the invariant that black objects may not point to white objects.
@@ -370,7 +405,33 @@ impl Context {
                 .map(|p| p.header().color() == GcColor::Black)
                 .unwrap_or(true)
         {
-            self.trace(child)
+            // Outline the actual barrier code (which is somewhat expensive and won't be executed
+            // often) to promote the inlining of the write barrier.
+            #[cold]
+            fn barrier(this: &Context, child: GcBox) {
+                this.trace(child);
+            }
+            barrier(&self, child);
+        }
+    }
+
+    #[inline]
+    fn forward_barrier_weak(&self, parent: Option<GcBox>, child: GcBox) {
+        // During the marking phase, if we are mutating a black object, we may add a white object
+        // to it and invalidate the invariant that black objects may not point to white objects.
+        // Immediately trace the child white object to turn it gray (or black) to prevent this.
+        if self.phase == Phase::Mark
+            && parent
+                .map(|p| p.header().color() == GcColor::Black)
+                .unwrap_or(true)
+        {
+            // Outline the actual barrier code (which is somewhat expensive and won't be executed
+            // often) to promote the inlining of the write barrier.
+            #[cold]
+            fn barrier(this: &Context, child: GcBox) {
+                this.trace_weak(child);
+            }
+            barrier(&self, child);
         }
     }
 
@@ -506,8 +567,8 @@ impl Context {
             };
             debug_assert!(gc_box.header().is_live());
             unsafe { gc_box.trace_value(guard.context) }
-            gc_box.header().set_color(GcColor::Black);
             mem::forget(guard);
+            gc_box.header().set_color(GcColor::Black);
 
             ControlFlow::Continue(())
         } else if self.root_needs_trace {

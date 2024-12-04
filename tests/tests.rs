@@ -1009,6 +1009,112 @@ fn test_phases() {
 }
 
 #[test]
+fn barriers() {
+    use std::cell::Cell;
+
+    use gc_arena::collect::Trace;
+
+    #[derive(Default)]
+    struct Node<'gc, S, W> {
+        strong_child: Cell<Option<Gc<'gc, S>>>,
+        weak_child: Cell<Option<GcWeak<'gc, W>>>,
+    }
+
+    unsafe impl<'gc, S: Collect<'gc>, W: Collect<'gc>> Collect<'gc> for Node<'gc, S, W> {
+        const NEEDS_TRACE: bool = true;
+
+        fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+            cc.trace(&self.strong_child.get());
+            cc.trace(&self.weak_child.get());
+        }
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc> {
+        node: Gc<'gc, Node<'gc, i32, i32>>,
+    }
+
+    let mut arena = Arena::<Rootable![Root<'_>]>::new(|mc| Root {
+        node: Gc::new(mc, Node::default()),
+    });
+
+    // Will finish marking and `node` should be black.
+    arena.mark_all();
+
+    // Make `node` adopt a white child pointer with a backwards barrier.
+    arena.mutate(|mc, root| {
+        let p = Gc::new(mc, 17);
+        mc.backward_barrier(Gc::erase(root.node), Some(Gc::erase(p)));
+        root.node.strong_child.set(Some(p));
+    });
+
+    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    arena.collect_all();
+
+    arena.mutate(|_, root| {
+        assert_eq!(*root.node.strong_child.get().unwrap(), 17);
+    });
+
+    // Will finish marking and `node` should be black.
+    arena.mark_all();
+
+    // Make `node` adopt a white child weak pointer with a backwards barrier.
+    arena.mutate(|mc, root| {
+        let w = Gc::downgrade(Gc::new(mc, 13));
+        mc.backward_barrier_weak(Gc::erase(root.node), GcWeak::erase(w));
+        root.node.weak_child.set(Some(w));
+    });
+
+    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    arena.collect_all();
+
+    arena.mutate(|_, root| {
+        assert!(root.node.weak_child.get().unwrap().is_dropped());
+    });
+
+    // Reset
+    arena.mutate(|_, root| {
+        root.node.strong_child.set(None);
+        root.node.weak_child.set(None);
+    });
+
+    // Will finish marking and `node` should be black.
+    arena.mark_all();
+
+    // Make `node` adopt a white child pointer with a forwards barrier.
+    arena.mutate(|mc, root| {
+        let p = Gc::new(mc, 17);
+        mc.forward_barrier(Some(Gc::erase(root.node)), Gc::erase(p));
+        root.node.strong_child.set(Some(p));
+    });
+
+    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    arena.collect_all();
+
+    arena.mutate(|_, root| {
+        assert_eq!(*root.node.strong_child.get().unwrap(), 17);
+    });
+
+    // Will finish marking and `node` should be black.
+    arena.mark_all();
+
+    // Make `node` adopt a white child weak pointer with a forwards barrier.
+    arena.mutate(|mc, root| {
+        let w = Gc::downgrade(Gc::new(mc, 13));
+        mc.forward_barrier_weak(Some(Gc::erase(root.node)), GcWeak::erase(w));
+        root.node.weak_child.set(Some(w));
+    });
+
+    // Finish collection, if the barrier didn't work this would delete the allocated pointer.
+    arena.collect_all();
+
+    arena.mutate(|_, root| {
+        assert!(root.node.weak_child.get().unwrap().is_dropped());
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
