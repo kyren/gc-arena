@@ -7,41 +7,44 @@ use syn::{
 };
 use synstructure::{decl_derive, AddBounds};
 
-fn find_collect_meta(attrs: &[syn::Attribute]) -> syn::Result<Option<&syn::Attribute>> {
-    let mut found = None;
-    for attr in attrs {
-        if attr.path().is_ident("collect") && found.replace(attr).is_some() {
-            return Err(syn::parse::Error::new_spanned(
-                attr.path(),
-                "Cannot specify multiple `#[collect]` attributes! Consider merging them.",
-            ));
+fn collect_derive(s: synstructure::Structure) -> TokenStream {
+    fn find_collect_meta(attrs: &[syn::Attribute]) -> syn::Result<Option<&syn::Attribute>> {
+        let mut found = None;
+        for attr in attrs {
+            if attr.path().is_ident("collect") && found.replace(attr).is_some() {
+                return Err(syn::parse::Error::new_spanned(
+                    attr.path(),
+                    "Cannot specify multiple `#[collect]` attributes! Consider merging them.",
+                ));
+            }
         }
+
+        Ok(found)
     }
 
-    Ok(found)
-}
+    // Deriving `Collect` must be done with care, because an implementation of `Drop` is not
+    // necessarily safe for `Collect` types. This derive macro has three available modes to ensure
+    // that this is safe:
+    //   1) Require that the type be 'static with `#[collect(require_static)]`.
+    //   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
+    //   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
+    //      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
+    #[derive(PartialEq)]
+    enum Mode {
+        RequireStatic,
+        NoDrop,
+        UnsafeDrop,
+    }
 
-fn usage_error(meta: &syn::meta::ParseNestedMeta, msg: &str) -> syn::parse::Error {
-    meta.error(format_args!("{msg}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`."))
-}
-
-// Deriving `Collect` must be done with care, because an implementation of `Drop` is not
-// necessarily safe for `Collect` types. This derive macro has three available modes to ensure
-// that this is safe:
-//   1) Require that the type be 'static with `#[collect(require_static)]`.
-//   2) Prohibit a `Drop` impl on the type with `#[collect(no_drop)]`
-//   3) Allow a custom `Drop` impl that might be unsafe with `#[collect(unsafe_drop)]`. Such
-//      `Drop` impls must *not* access garbage collected pointers during `Drop::drop`.
-#[derive(PartialEq)]
-enum Mode {
-    RequireStatic,
-    NoDrop,
-    UnsafeDrop,
-}
-
-fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let mut mode = None;
     let mut override_bound = None;
+    let mut gc_lifetime = None;
+
+    fn usage_error(meta: &syn::meta::ParseNestedMeta, msg: &str) -> syn::parse::Error {
+        meta.error(format_args!(
+            "{msg}. `#[collect(...)]` requires one mode (`require_static`, `no_drop`, or `unsafe_drop`) and optionally `bound = \"...\"`."
+        ))
+    }
 
     let result = match find_collect_meta(&s.ast().attrs) {
         Ok(Some(attr)) => attr.parse_nested_meta(|meta| {
@@ -52,6 +55,16 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
 
                 let lit: syn::LitStr = meta.value()?.parse()?;
                 override_bound = Some(lit);
+                return Ok(());
+            }
+
+            if meta.path.is_ident("gc_lifetime") {
+                if gc_lifetime.is_some() {
+                    return Err(usage_error(&meta, "multiple `'gc` lifetimes specified"));
+                }
+
+                let lit: syn::Lifetime = meta.value()?.parse()?;
+                gc_lifetime = Some(lit);
                 return Ok(());
             }
 
@@ -100,12 +113,16 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
     let mut errors = vec![];
 
     let collect_impl = if mode == Mode::RequireStatic {
-        s.clone().add_bounds(AddBounds::None).gen_impl(quote! {
-            gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
+        let mut impl_struct = s.clone();
+        impl_struct.add_bounds(AddBounds::None);
+        impl_struct.gen_impl(quote! {
+            gen unsafe impl<'gc> ::gc_arena::Collect<'gc> for @Self #where_clause {
                 const NEEDS_TRACE: bool = false;
             }
         })
     } else {
+        let mut impl_struct = s.clone();
+
         let mut needs_trace_expr = TokenStream::new();
         quote!(false).to_tokens(&mut needs_trace_expr);
 
@@ -116,7 +133,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         // `static_bindings`, which will be added to the genererated `Collect` impl. The presence of
         // the bound guarantees that the field cannot hold any `Gc` pointers, so it's safe to ignore
         // that field in `needs_trace` and `trace`
-        s.filter(|b| match find_collect_meta(&b.ast().attrs) {
+        impl_struct.filter(|b| match find_collect_meta(&b.ast().attrs) {
             Ok(Some(attr)) => {
                 let mut static_binding = false;
                 let result = attr.parse_nested_meta(|meta| {
@@ -139,13 +156,13 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
         });
 
         for static_binding in static_bindings {
-            s.add_where_predicate(syn::parse_quote! { #static_binding: 'static });
+            impl_struct.add_where_predicate(syn::parse_quote! { #static_binding: 'static });
         }
 
         // `#[collect(require_static)]` only makes sense on fields, not enum variants. Emit an error
         // if it is used in the wrong place
-        if let syn::Data::Enum(..) = s.ast().data {
-            for v in s.variants() {
+        if let syn::Data::Enum(..) = impl_struct.ast().data {
+            for v in impl_struct.variants() {
                 for attr in v.ast().attrs {
                     if attr.path().is_ident("collect") {
                         errors.push(syn::parse::Error::new_spanned(
@@ -157,9 +174,9 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             }
         }
 
-        // We've already called `s.filter`, so we we won't try to include `NEEDS_TRACE` for the types
-        // of fields that have `#[collect(require_static)]`
-        for v in s.variants() {
+        // We've already called `impl_struct.filter`, so we we won't try to include `NEEDS_TRACE`
+        // for the types of fields that have `#[collect(require_static)]`
+        for v in impl_struct.variants() {
             for b in v.bindings() {
                 let ty = &b.ast().ty;
                 // Resolving the span at the call site makes rustc emit a 'the error originates a
@@ -173,7 +190,7 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             }
         }
         // Likewise, this will skip any fields that have `#[collect(require_static)]`
-        let trace_body = s.each(|bi| {
+        let trace_body = impl_struct.each(|bi| {
             // See the above handling of `NEEDS_TRACE` for an explanation of this
             let call_span = bi.ast().span().resolved_at(Span::call_site());
             quote_spanned!(call_span=>
@@ -190,26 +207,63 @@ fn collect_derive(mut s: synstructure::Structure) -> TokenStream {
             )
         });
 
-        let bounds_type = if override_bound.is_some() {
-            AddBounds::None
-        } else {
-            AddBounds::Generics
-        };
-        s.clone().add_bounds(bounds_type).gen_impl(quote! {
-            gen unsafe impl ::gc_arena::Collect for @Self #where_clause {
-                const NEEDS_TRACE: bool = #needs_trace_expr;
+        // If we have no configured `'gc` lifetime and the type has a *single* generic lifetime, use
+        // that one.
+        if gc_lifetime.is_none() {
+            let mut all_lifetimes =
+                impl_struct
+                    .ast()
+                    .generics
+                    .params
+                    .iter()
+                    .filter_map(|p| match p {
+                        syn::GenericParam::Lifetime(lt) => Some(lt),
+                        _ => None,
+                    });
 
-                #[inline]
-                fn trace(&self, mut cc: ::gc_arena::Collection<'_>) {
-                    match *self { #trace_body }
+            if let Some(lt) = all_lifetimes.next() {
+                if all_lifetimes.next().is_none() {
+                    gc_lifetime = Some(lt.lifetime.clone());
+                } else {
+                    panic!("deriving `Collect` on a type with multiple lifetime parameters requires a `#[collect(gc_lifetime = ...)]` attribute");
                 }
             }
-        })
+        };
+
+        if override_bound.is_some() {
+            impl_struct.add_bounds(AddBounds::None);
+        } else {
+            impl_struct.add_bounds(AddBounds::Generics);
+        };
+
+        if let Some(gc_lifetime) = gc_lifetime {
+            impl_struct.gen_impl(quote! {
+                gen unsafe impl ::gc_arena::Collect<#gc_lifetime> for @Self #where_clause {
+                    const NEEDS_TRACE: bool = #needs_trace_expr;
+
+                    #[inline]
+                    fn trace<Trace: ::gc_arena::collect::Trace<#gc_lifetime>>(&self, cc: &mut Trace) {
+                        match *self { #trace_body }
+                    }
+                }
+            })
+        } else {
+            impl_struct.gen_impl(quote! {
+                gen unsafe impl<'gc> ::gc_arena::Collect<'gc> for @Self #where_clause {
+                    const NEEDS_TRACE: bool = #needs_trace_expr;
+
+                    #[inline]
+                    fn trace<Trace: ::gc_arena::collect::Trace<'gc>>(&self, cc: &mut Trace) {
+                        match *self { #trace_body }
+                    }
+                }
+            })
+        }
     };
 
     let drop_impl = if mode == Mode::NoDrop {
-        let mut s = s;
-        s.add_bounds(AddBounds::None).gen_impl(quote! {
+        let mut drop_struct = s.clone();
+        drop_struct.add_bounds(AddBounds::None).gen_impl(quote! {
             gen impl ::gc_arena::__MustNotImplDrop for @Self {}
         })
     } else {
@@ -249,8 +303,14 @@ decl_derive! {
     ///   Also note that providing an explicit bound in this way is safe, and only changes the trait
     ///   bounds used to enable the implementation of `Collect`.
     ///
-    /// Options may be passed to the `collect` attribute together, e.g., `#[collect(no_drop, bound
-    /// = "")]`.
+    /// - `#[collect(gc_lifetime = "<lifetime>")]` - the `Collect` trait requires a `'gc` lifetime
+    ///   parameter. If there is no lifetime parameter on the type, then `Collect` will be
+    ///   implemented for all `'gc` lifetimes. If there is one lifetime on the type, this is assumed
+    ///   to be the `'gc` lifetime. In the very unusual case that there are two or more lifetime
+    ///   parameters, you must specify *which* lifetime should be used as the `'gc` lifetime.
+    ///
+    /// Options may be passed to the `collect` attribute together, e.g.,
+    /// `#[collect(no_drop, bound = "")]`.
     ///
     /// The `collect` attribute may also be used on any field of an enum or struct, however the
     /// only allowed usage is to specify the strategy as `require_static` (no other strategies are

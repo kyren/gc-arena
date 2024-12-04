@@ -30,7 +30,7 @@ type NodePtr<'gc, T> = Gc<'gc, RefLock<Node<'gc, T>>>;
 //
 // We need to pass the `&Mutation<'gc>` context here because we are mutating the
 // object graph (by creating a new "object" with `Gc::new`).
-fn new_node<'gc, T: Collect>(mc: &Mutation<'gc>, value: T) -> NodePtr<'gc, T> {
+fn new_node<'gc, T: Collect<'gc>>(mc: &Mutation<'gc>, value: T) -> NodePtr<'gc, T> {
     Gc::new(
         mc,
         RefLock::new(Node {

@@ -4,7 +4,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 use core::{mem, ptr};
 
-use crate::collect::Collect;
+use crate::{collect::Collect, context::Context};
 
 /// A thin-pointer-sized box containing a type-erased GC object.
 /// Stores the metadata required by the GC algorithm inline (see `GcBoxInner`
@@ -47,7 +47,7 @@ impl GcBox {
     ///
     /// **SAFETY**: `Self::drop_in_place` must not have been called.
     #[inline(always)]
-    pub(crate) unsafe fn trace_value(&self, cc: crate::Collection<'_>) {
+    pub(crate) unsafe fn trace_value(&self, cc: &mut Context) {
         (self.header().vtable().trace_value)(*self, cc)
     }
 
@@ -88,13 +88,13 @@ pub(crate) struct GcBoxHeader {
 
 impl GcBoxHeader {
     #[inline(always)]
-    pub fn new<T: Collect>() -> Self {
+    pub fn new<'gc, T: Collect<'gc>>() -> Self {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
         }
 
-        impl<T: Collect> HasCollectVtable for T {
+        impl<'gc, T: Collect<'gc>> HasCollectVtable for T {
             const VTABLE: CollectVtable = CollectVtable::vtable_for::<T>();
         }
 
@@ -193,7 +193,7 @@ struct CollectVtable {
     /// Drops the value stored in the given `GcBox` (without deallocating the box).
     drop_value: unsafe fn(GcBox),
     /// Traces the value stored in the given `GcBox`.
-    trace_value: unsafe fn(GcBox, crate::Collection<'_>),
+    trace_value: unsafe fn(GcBox, &mut Context),
 }
 
 impl CollectVtable {
@@ -201,7 +201,7 @@ impl CollectVtable {
     /// Because `T: Sized`, we can recover a typed pointer
     /// directly from the erased `GcBox`.
     #[inline(always)]
-    const fn vtable_for<T: Collect>() -> Self {
+    const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
         Self {
             box_layout: Layout::new::<GcBoxInner<T>>(),
             drop_value: |erased| unsafe {
@@ -225,12 +225,9 @@ pub(crate) struct GcBoxInner<T: ?Sized> {
     pub(crate) value: mem::ManuallyDrop<T>,
 }
 
-impl<T: ?Sized> GcBoxInner<T> {
+impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
     #[inline(always)]
-    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self
-    where
-        T: Collect + Sized,
-    {
+    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self {
         Self {
             header,
             value: mem::ManuallyDrop::new(t),

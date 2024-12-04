@@ -262,7 +262,7 @@ where
 impl<R> Arena<R>
 where
     R: for<'a> Rootable<'a>,
-    for<'a> Root<'a, R>: Collect,
+    for<'a> Root<'a, R>: Collect<'a>,
 {
     /// Run incremental garbage collection until the allocation debt is <= 0.0.
     ///
@@ -342,7 +342,7 @@ pub struct MarkedArena<'a, R: for<'b> Rootable<'b>>(&'a mut Arena<R>);
 impl<'a, R> MarkedArena<'a, R>
 where
     R: for<'b> Rootable<'b>,
-    for<'b> Root<'b, R>: Collect,
+    for<'b> Root<'b, R>: Collect<'b>,
 {
     /// Examine the state of a fully marked arena.
     ///

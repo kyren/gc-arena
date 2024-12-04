@@ -6,8 +6,8 @@ use allocator_api2::{
 };
 
 use crate::{
-    collect::Collect,
-    context::{Collection, Mutation},
+    collect::{Collect, Trace},
+    context::Mutation,
     metrics::Metrics,
     types::Invariant,
 };
@@ -120,32 +120,32 @@ unsafe impl<'gc, A: Allocator> Allocator for MetricsAlloc<'gc, A> {
     }
 }
 
-unsafe impl<'gc, A: 'static> Collect for MetricsAlloc<'gc, A> {
+unsafe impl<'gc, A: 'static> Collect<'gc> for MetricsAlloc<'gc, A> {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl Collect for Global {
+unsafe impl<'gc> Collect<'gc> for Global {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<T: Collect + ?Sized, A: Collect + Allocator> Collect for boxed::Box<T, A> {
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for boxed::Box<T, A> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
-    fn trace(&self, mut cc: Collection<'_>) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&**self);
-        boxed::Box::allocator(self).trace(cc);
+        cc.trace(boxed::Box::allocator(self));
     }
 }
 
-unsafe impl<T: Collect, A: Collect + Allocator> Collect for vec::Vec<T, A> {
+unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for vec::Vec<T, A> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
-    fn trace(&self, mut cc: Collection<'_>) {
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         for v in self {
             cc.trace(v);
         }
-        self.allocator().trace(cc);
+        cc.trace(self.allocator());
     }
 }

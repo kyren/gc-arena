@@ -1,14 +1,13 @@
 use alloc::{boxed::Box, vec::Vec};
 use core::{
-    cell::{Cell, RefCell},
-    marker::PhantomData,
+    cell::{Cell, UnsafeCell},
     mem,
     ops::{ControlFlow, Deref, DerefMut},
     ptr::NonNull,
 };
 
 use crate::{
-    collect::Collect,
+    collect::{Collect, Trace},
     metrics::Metrics,
     types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
     Gc, GcWeak,
@@ -68,7 +67,7 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         self.context.allocate(t)
     }
 
@@ -104,46 +103,15 @@ impl<'gc> Finalization<'gc> {
     }
 }
 
-/// Handle value given by arena callbacks during garbage collection, which must be passed through
-/// `Collect::trace` implementations.
-#[repr(transparent)]
-pub struct Collection<'a> {
-    mark: &'a mut MarkState,
-    _invariant: Invariant<'a>,
-}
-
-impl<'a> Collection<'a> {
-    #[inline]
-    fn from_state(mark: &'a mut MarkState) -> Self {
-        Self {
-            mark,
-            _invariant: PhantomData,
-        }
-    }
-
-    #[inline]
-    pub fn metrics(&self) -> &Metrics {
-        &self.mark.metrics
-    }
-
-    #[inline]
-    pub fn trace<T: Collect + ?Sized>(&mut self, value: &T) {
-        if T::NEEDS_TRACE {
-            let cc = Collection::from_state(self.mark);
-            value.trace(cc);
-        }
-    }
-
-    #[inline]
-    pub fn trace_gc(&mut self, gc: Gc<'_, ()>) {
+impl<'gc> Trace<'gc> for Context {
+    fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        self.mark.trace(gc_box)
+        Context::trace(self, gc_box)
     }
 
-    #[inline]
-    pub fn trace_gc_weak(&mut self, gc: GcWeak<'_, ()>) {
+    fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
         let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
-        self.mark.trace_weak(gc_box)
+        Context::trace_weak(self, gc_box)
     }
 }
 
@@ -165,10 +133,7 @@ pub(crate) struct Context {
     metrics: Metrics,
     phase: Phase,
     #[cfg(feature = "tracing")]
-    phase_span: Cell<tracing::Span>,
-
-    // The queues used during marking.
-    mark: RefCell<MarkState>,
+    phase_span: tracing::Span,
 
     // A linked list of all allocated `GcBox`es.
     all: Cell<Option<GcBox>>,
@@ -178,17 +143,12 @@ pub(crate) struct Context {
     // Any allocations created *during* `Phase::Sweep` will be added to `all`,
     // but `sweep` will *not* be updated. This ensures that we keep allocations
     // alive until we've had a chance to trace them.
-    sweep: Cell<Option<GcBox>>,
+    sweep: Option<GcBox>,
 
     // The most recent black object that we encountered during `Phase::Sweep`.
     // When we free objects, we update this `GcBox.next` to remove them from
     // the linked list.
     sweep_prev: Cell<Option<GcBox>>,
-}
-
-struct MarkState {
-    // Duplicated so that `Collection` can access it.
-    metrics: Metrics,
 
     /// Does the root needs to be traced?
     /// This should be `true` at the beginning of `Phase::Mark`.
@@ -196,11 +156,11 @@ struct MarkState {
 
     /// A queue of gray objects, used during `Phase::Mark`.
     /// This holds traceable objects that have yet to be traced.
-    gray: Vec<GcBox>,
+    gray: Queue<GcBox>,
 
     // A queue of gray objects that became gray as a result
     // of a write barrier.
-    gray_again: Vec<GcBox>,
+    gray_again: Queue<GcBox>,
 }
 
 impl Drop for Context {
@@ -233,12 +193,14 @@ impl Context {
         Context {
             phase: Phase::Sleep,
             #[cfg(feature = "tracing")]
-            phase_span: Cell::new(PhaseGuard::span_for(&metrics, Phase::Sleep)),
+            phase_span: PhaseGuard::span_for(&metrics, Phase::Sleep),
             metrics: metrics.clone(),
-            mark: RefCell::new(MarkState::new(metrics)),
             all: Cell::new(None),
-            sweep: Cell::new(None),
+            sweep: None,
             sweep_prev: Cell::new(None),
+            root_needs_trace: true,
+            gray: Queue::new(),
+            gray_again: Queue::new(),
         }
     }
 
@@ -260,7 +222,7 @@ impl Context {
     #[inline]
     pub(crate) fn root_barrier(&mut self) {
         if self.phase == Phase::Mark {
-            self.mark.get_mut().root_needs_trace = true;
+            self.root_needs_trace = true;
         }
     }
 
@@ -271,7 +233,7 @@ impl Context {
 
     #[inline]
     pub(crate) fn gray_remaining(&self) -> bool {
-        self.mark.borrow().gray_remaining()
+        !self.gray.is_empty() || !self.gray_again.is_empty() || self.root_needs_trace
     }
 
     // Do some collection work until either the debt goes down below the target amount or we have
@@ -283,16 +245,8 @@ impl Context {
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep`, this will transition the collector to `Phase::Mark`.
-    pub(crate) unsafe fn do_collection<R: Collect + ?Sized>(
-        &mut self,
-        root: &R,
-        target_debt: f64,
-        early_stop: Option<EarlyStop>,
-    ) {
-        self.do_collection_inner(root, target_debt, early_stop)
-    }
-
-    fn do_collection_inner<R: Collect + ?Sized>(
+    #[deny(unsafe_op_in_unsafe_fn)]
+    pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
         root: &R,
         mut target_debt: f64,
@@ -313,8 +267,7 @@ impl Context {
                     continue;
                 }
                 Phase::Mark => {
-                    let ctrl = cx.mark.get_mut().mark_one(root);
-                    if ctrl.is_break() {
+                    if cx.mark_one(root).is_break() {
                         if early_stop == Some(EarlyStop::BeforeSweep) {
                             target_debt = f64::INFINITY;
                         } else {
@@ -324,7 +277,7 @@ impl Context {
                             // Set `sweep to the current head of our `all` linked list. Any new
                             // allocations during the newly-entered `Phase:Sweep` will update `all`,
                             // but will *not* be reachable from `this.sweep`.
-                            cx.sweep.set(cx.all.get());
+                            cx.sweep = cx.all.get();
 
                             // No need to update metrics here.
                             continue;
@@ -339,7 +292,7 @@ impl Context {
                         target_debt = f64::INFINITY;
 
                         // Begin a new cycle.
-                        cx.mark.get_mut().root_needs_trace = true;
+                        cx.root_needs_trace = true;
                         cx.switch(Phase::Sleep);
                         cx.metrics.start_cycle();
                     }
@@ -354,7 +307,7 @@ impl Context {
         }
     }
 
-    fn allocate<T: Collect>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         let header = GcBoxHeader::new::<T>();
         header.set_next(self.all.get());
         header.set_live(true);
@@ -401,8 +354,7 @@ impl Context {
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
                 parent.header().set_color(GcColor::Gray);
-                let mut mark = this.mark.borrow_mut();
-                mark.gray_again.push(parent);
+                this.gray_again.push(parent);
             }
             barrier(&self, parent);
         }
@@ -418,7 +370,36 @@ impl Context {
                 .map(|p| p.header().color() == GcColor::Black)
                 .unwrap_or(true)
         {
-            self.mark.borrow_mut().trace(child)
+            self.trace(child)
+        }
+    }
+
+    #[inline]
+    fn trace(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        match header.color() {
+            GcColor::Black | GcColor::Gray => {}
+            GcColor::White | GcColor::WhiteWeak => {
+                if header.needs_trace() {
+                    // A white traceable object is not in the gray queue, becomes gray and enters
+                    // the normal gray queue.
+                    header.set_color(GcColor::Gray);
+                    debug_assert!(header.is_live());
+                    self.gray.push(gc_box);
+                } else {
+                    // A white object that doesn't need tracing simply becomes black.
+                    header.set_color(GcColor::Black);
+                    self.metrics.mark_gc_traced(header.size_of_box());
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn trace_weak(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        if header.color() == GcColor::White {
+            header.set_color(GcColor::WhiteWeak);
         }
     }
 
@@ -477,13 +458,72 @@ impl Context {
         debug_assert!(header.is_live());
         if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
             header.set_color(GcColor::Gray);
-            let mut mark = self.mark.borrow_mut();
-            mark.gray.push(gc_box);
+            self.gray.push(gc_box);
         }
     }
 
-    fn sweep_one(&self) -> ControlFlow<()> {
-        let Some(mut sweep) = self.sweep.get() else {
+    fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
+        // We look for an object first in the normal gray queue, then the "gray again"
+        // queue. Objects from the normal gray queue count as regular work, but objects
+        // which are gray a second time have already been counted as work, so we don't
+        // double count them. Processing "gray again" objects later also gives them more
+        // time to be mutated again without triggering another write barrier.
+        let next_gray = if let Some(gc_box) = self.gray.pop() {
+            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            Some(gc_box)
+        } else if let Some(gc_box) = self.gray_again.pop() {
+            Some(gc_box)
+        } else {
+            None
+        };
+
+        if let Some(gc_box) = next_gray {
+            // If we have an object in the gray queue, take one, trace it, and turn it
+            // black.
+
+            // Our `Collect::trace` call may panic, and if it does the object will be
+            // lost from the gray queue but potentially incompletely traced. By catching
+            // a panic during `Arena::collect()`, this could lead to memory unsafety.
+            //
+            // So, if the `Collect::trace` call panics, we need to add the popped object
+            // back to the `gray_again` queue. If the panic is caught, this will maybe
+            // give it some time to not panic before attempting to collect it again, and
+            // also this doesn't invalidate the collection debt math.
+            struct DropGuard<'a> {
+                context: &'a mut Context,
+                gc_box: GcBox,
+            }
+
+            impl<'a> Drop for DropGuard<'a> {
+                fn drop(&mut self) {
+                    self.context.gray_again.push(self.gc_box);
+                }
+            }
+
+            let guard = DropGuard {
+                context: self,
+                gc_box,
+            };
+            debug_assert!(gc_box.header().is_live());
+            unsafe { gc_box.trace_value(guard.context) }
+            gc_box.header().set_color(GcColor::Black);
+            mem::forget(guard);
+
+            ControlFlow::Continue(())
+        } else if self.root_needs_trace {
+            // We treat the root object as gray if `root_needs_trace` is set, and we
+            // process it at the end of the gray queue for the same reason as the "gray
+            // again" objects.
+            root.trace(self);
+            self.root_needs_trace = false;
+            ControlFlow::Continue(())
+        } else {
+            ControlFlow::Break(())
+        }
+    }
+
+    fn sweep_one(&mut self) -> ControlFlow<()> {
+        let Some(mut sweep) = self.sweep else {
             self.sweep_prev.set(None);
             return ControlFlow::Break(());
         };
@@ -491,7 +531,7 @@ impl Context {
         let sweep_header = sweep.header();
 
         let next_box = sweep_header.next();
-        self.sweep.set(next_box);
+        self.sweep = next_box;
 
         match sweep_header.color() {
             // If the next object in the sweep portion of the main list is white, we
@@ -546,108 +586,6 @@ impl Context {
     }
 }
 
-impl MarkState {
-    fn new(metrics: Metrics) -> Self {
-        Self {
-            metrics,
-            root_needs_trace: true,
-            gray: Vec::new(),
-            gray_again: Vec::new(),
-        }
-    }
-
-    #[inline]
-    fn gray_remaining(&self) -> bool {
-        !self.gray.is_empty() || !self.gray_again.is_empty() || self.root_needs_trace
-    }
-
-    #[inline]
-    fn trace(&mut self, gc_box: GcBox) {
-        let header = gc_box.header();
-        match header.color() {
-            GcColor::Black | GcColor::Gray => {}
-            GcColor::White | GcColor::WhiteWeak => {
-                if header.needs_trace() {
-                    // A white traceable object is not in the gray queue, becomes gray and enters
-                    // the normal gray queue.
-                    header.set_color(GcColor::Gray);
-                    debug_assert!(header.is_live());
-                    self.gray.push(gc_box);
-                } else {
-                    // A white object that doesn't need tracing simply becomes black.
-                    header.set_color(GcColor::Black);
-                    self.metrics.mark_gc_traced(header.size_of_box());
-                }
-            }
-        }
-    }
-
-    #[inline]
-    fn trace_weak(&mut self, gc_box: GcBox) {
-        let header = gc_box.header();
-        if header.color() == GcColor::White {
-            header.set_color(GcColor::WhiteWeak);
-        }
-    }
-
-    fn mark_one<R: Collect + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
-        // We look for an object first in the normal gray queue, then the "gray again"
-        // queue. Objects from the normal gray queue count as regular work, but objects
-        // which are gray a second time have already been counted as work, so we don't
-        // double count them. Processing "gray again" objects later also gives them more
-        // time to be mutated again without triggering another write barrier.
-        let next_gray = if let Some(gc_box) = self.gray.pop() {
-            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
-            Some(gc_box)
-        } else if let Some(gc_box) = self.gray_again.pop() {
-            Some(gc_box)
-        } else {
-            None
-        };
-
-        if let Some(gc_box) = next_gray {
-            // If we have an object in the gray queue, take one, trace it, and turn it
-            // black.
-
-            // Our `Collect::trace` call may panic, and if it does the object will be
-            // lost from the gray queue but potentially incompletely traced. By catching
-            // a panic during `Arena::collect()`, this could lead to memory unsafety.
-            //
-            // So, if the `Collect::trace` call panics, we need to add the popped object
-            // back to the `gray_again` queue. If the panic is caught, this will maybe
-            // give it some time to not panic before attempting to collect it again, and
-            // also this doesn't invalidate the collection debt math.
-            struct DropGuard<'a> {
-                mark: &'a mut MarkState,
-                gc_box: GcBox,
-            }
-
-            impl<'a> Drop for DropGuard<'a> {
-                fn drop(&mut self) {
-                    self.mark.gray_again.push(self.gc_box);
-                }
-            }
-
-            let guard = DropGuard { mark: self, gc_box };
-            debug_assert!(gc_box.header().is_live());
-            unsafe { gc_box.trace_value(Collection::from_state(guard.mark)) }
-            gc_box.header().set_color(GcColor::Black);
-            mem::forget(guard);
-
-            ControlFlow::Continue(())
-        } else if self.root_needs_trace {
-            // We treat the root object as gray if `root_needs_trace` is set, and we
-            // process it at the end of the gray queue for the same reason as the "gray
-            // again" objects.
-            root.trace(Collection::from_state(self));
-            self.root_needs_trace = false;
-            ControlFlow::Continue(())
-        } else {
-            ControlFlow::Break(())
-        }
-    }
-}
-
 // SAFETY: the gc_box must never be accessed after calling this function.
 unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
     if gc_box.header().is_live() {
@@ -669,7 +607,7 @@ impl<'a> Drop for PhaseGuard<'a> {
         #[cfg(feature = "tracing")]
         {
             let span = mem::replace(&mut self.span, tracing::Span::none().entered());
-            self.cx.phase_span.set(span.exit());
+            self.cx.phase_span = span.exit();
         }
     }
 }
@@ -699,7 +637,7 @@ impl<'a> PhaseGuard<'a> {
         Self {
             #[cfg(feature = "tracing")]
             span: {
-                let mut span = cx.phase_span.replace(tracing::Span::none());
+                let mut span = mem::replace(&mut cx.phase_span, tracing::Span::none());
                 if let Some(phase) = phase {
                     span = Self::span_for(&cx.metrics, phase);
                 }
@@ -739,5 +677,38 @@ impl<'a> PhaseGuard<'a> {
             id = metrics.arena_id(),
             ?phase,
         )
+    }
+}
+
+// A shared, internally mutable `Vec<T>` that avoids the overhead of `RefCell`. Used for the "gray"
+// and "gray again" queues.
+//
+// SAFETY: We do not return any references at all to the contents of the internal `UnsafeCell`, nor
+// do we provide any methods with callbacks. Since this type is `!Sync`, only one reference to the
+// `UnsafeCell` contents can be alive at any given time, thus we cannot violate aliasing rules.
+#[derive(Default)]
+struct Queue<T> {
+    vec: UnsafeCell<Vec<T>>,
+}
+
+impl<T> Queue<T> {
+    fn new() -> Self {
+        Self {
+            vec: UnsafeCell::new(Vec::new()),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        unsafe { (*self.vec.get().cast_const()).is_empty() }
+    }
+
+    fn push(&self, val: T) {
+        unsafe {
+            (*self.vec.get()).push(val);
+        }
+    }
+
+    fn pop(&self) -> Option<T> {
+        unsafe { (*self.vec.get()).pop() }
     }
 }
