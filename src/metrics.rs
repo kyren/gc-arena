@@ -2,59 +2,153 @@ use alloc::rc::Rc;
 use core::cell::Cell;
 
 /// Tuning parameters for a given garbage collected [`crate::Arena`].
+///
+/// Any allocation that occurs during a collection cycle will incur "debt" that is exactly equal to
+/// the allocated bytes. This "debt" is paid off by running the collection algorithm some amount of
+/// time proportional to the debt. Exactly how much "debt" is paid off and in what proportion by the
+/// different parts of the collection algorithm is configured by the chosen values here. We refer to
+/// the amount of "debt" paid off by running the collection algorithm as "work".
+///
+/// The most important idea behind choosing these tuning parameters is that we always want the
+/// collector (when it is not paused) to deterministically run *faster* than allocation, to make
+/// sure that the collection cycle finishes and memory does not grow without bound. If we are tuning
+/// for low pause time however, it is also important that not *too* many costly operations are run
+/// within a single call to [`crate::Arena::collect_debt`], and this goal is in tension with the
+/// first, more important goal.
+///
+/// How these two goals are balanced is that we must choose our tuning parameters so that the total
+/// amount of "work" performed to either *remember* or *free* one byte of allocated data is always
+/// *less than one*, and this makes the collector deterministically run faster than the rate of
+/// allocation (which is crucial). The closer the amount of "work" performed to remember or free
+/// one byte is to 1.0, the slower the collector will go and the higher the maximum amount of
+/// used memory will be. The closer the amount of "work" performed to remember or free one byte
+/// is to 0.0, the faster the collector will go and the closer it will get to behaving like a
+/// stop-the-world collector.
+///
+/// All live pointers in a cycle are either remembered or freed once, but it is important that
+/// *both paths* require less than one unit of "work" per byte to fully complete. There is no way to
+/// predict a priori the ratio of remembered vs forgotten values, so if either path takes too close
+/// to or over 1.0 unit of work per byte to complete, collection may run too slowly.
+///
+/// # Factors that control the pause time
+///
+/// `pause_factor` is fairly self explanatory. Setting this too low will reduce the time of the
+/// [`crate::arena::CollectionPhase::Sleeping`] phase but this is not directly harmful (it can even
+/// be set to zero!), setting it much larger than 1.0 will make the collector wait a very long time
+/// before collecting again, and usually not what you want.
+///
+/// `min_sleep` is also self explanatory and usually does not need changing from the default value.
+/// It should always be relatively small.
+///
+/// # Timing factors for remembered values
+///
+/// Every live `Gc` value in an [`crate::Arena`] that is reachable from the root is "remembered".
+/// Every remembered value will always have exactly three things done to it in a given cycle:
+///
+/// 1) It will at some point be found and marked as reachable queued for tracing. When this happens,
+///    `mark_factor * alloc_size` work is recorded.
+/// 2) Entries in the queue for tracing will eventually be traced by having their
+///    [`crate::Collect::trace`] method called. At this time, `trace_factor * alloc_size` work is
+///    recorded. Calling `Collect::trace` will usually mark other pointers as reachable and queue
+///    them for tracing if they have not already been, so this step may also transitively perform
+///    other work, but each step is only performed exactly once for each individual remembered
+///    value.
+/// 3) During the [`crate::arena::CollectionPhase::Sweeping`] phase, each remembered value has to
+///    be iterated over in the sweep list and removed from it. This a small, constant amount of
+///    work that is very fast, but it should always perform *some* work to keep pause time low, so
+///    `keep_factor * alloc_size` work is recorded.
+///
+/// # Timing factors for forgotten values
+///
+/// Allocated values that are not reachable in a GC cycle are simpler than
+/// remembered values. Only two operations are performed on them, and only during
+/// [`crate::arena::CollectionPhase::Sweeping`]: dropping and freeing.
+///
+/// Usually these two operations will take place at the same time, but if a value is only *weakly*
+/// reachable (through [`crate::GcWeak`] pointers), then the value may be dropped at a different
+/// time than its backing allocation is actually freed.
+///
+/// When a value is dropped, `drop_factor * alloc_size` work is recorded, and when it is freed
+/// `free_factor * alloc_size` work is recorded.
 #[derive(Debug, Copy, Clone)]
 pub struct Pacing {
-    pub(crate) pause_factor: f64,
-    pub(crate) debit_factor: f64,
-    pub(crate) min_sleep: usize,
+    /// Controls the length of the [`crate::arena::CollectionPhase::Sleeping`] phase.
+    ///
+    /// At the start of a new GC cycle, the collector will wait until the live size reaches
+    /// `<current heap size> + <previous remembered size> * pause_multiplier` before starting
+    /// collection.
+    ///
+    /// External memory is ***not*** included in the "remembered size" for the purposes of
+    /// calculating a new cycle's pause time.
+    pub pause_factor: f64,
+
+    /// The minimum length of the [`crate::arena::CollectionPhase::Sleeping`] phase.
+    ///
+    /// if the calculated sleep amount using `pause_factor` is lower than `min_sleep`, this will
+    /// be used instead. This is mostly useful when the heap is very small to prevent rapidly
+    /// restarting collections.
+    pub min_sleep: usize,
+
+    /// The multiplicative factor for "work" performed per byte when a `Gc` value is first marked as
+    /// reachable and queued for tracing.
+    pub mark_factor: f64,
+
+    /// The multiplicative factor for "work" performed per byte when a `Gc` value has its
+    /// [`crate::Collect::trace`] method called.
+    pub trace_factor: f64,
+
+    /// The multiplicative factor for "work" performed per byte when a reachable `Gc` value is
+    /// iterated over during [`crate::arena::CollectionPhase::Sweeping`].
+    pub keep_factor: f64,
+
+    /// The multiplicative factor for "work" performed per byte when a `Gc`
+    /// value that is only weakly reachable is dropped (but not freed) during
+    /// [`crate::arena::CollectionPhase::Sweeping`].
+    pub drop_factor: f64,
+
+    /// The multiplicative factor for "work" performed per byte when a forgotten `Gc` value is freed
+    /// during [`crate::arena::CollectionPhase::Sweeping`].
+    pub free_factor: f64,
 }
 
-/// Creates a default `Pacing` with `pause_factor` set to 0.5, `timing_factor` set to 1.5,
-/// and `min_sleep` set to 4096.
+pub const DEFAULT_PACING: Pacing = Pacing {
+    pause_factor: 0.5,
+    min_sleep: 4096,
+    mark_factor: 0.1,
+    trace_factor: 0.4,
+    keep_factor: 0.05,
+    drop_factor: 0.2,
+    free_factor: 0.3,
+};
+
 impl Default for Pacing {
     #[inline]
     fn default() -> Pacing {
-        const PAUSE_FACTOR: f64 = 0.5;
-        const TIMING_FACTOR: f64 = 1.5;
-        const MIN_SLEEP: usize = 4096;
-
-        Pacing {
-            pause_factor: PAUSE_FACTOR,
-            debit_factor: timing_to_debit_factor(TIMING_FACTOR),
-            min_sleep: MIN_SLEEP,
-        }
+        DEFAULT_PACING
     }
 }
 
+pub const STOP_THE_WORLD_PACING: Pacing = Pacing {
+    pause_factor: 1.0,
+    min_sleep: 4096,
+    mark_factor: 0.0,
+    trace_factor: 0.0,
+    keep_factor: 0.0,
+    drop_factor: 0.0,
+    free_factor: 0.0,
+};
+
 impl Pacing {
-    /// The garbage collector will wait until the live size reaches `<current heap size> + <previous
-    /// retained size> * pause_multiplier` before beginning a new collection. Must be >= 0.0,
-    /// setting this to 0.0 causes the collector to never sleep longer than `min_sleep` before
-    /// beginning a new collection.
+    /// Construct a good default "stop-the-world" [`Pacing`] configuration.
+    ///
+    /// This has all of the work factors set to zero so that as soon as the collector wakes from
+    /// sleep, it will immediately perform a full collection.
+    ///
+    /// It is important to set the pause factor fairly high when configuring a collector this way
+    /// (close to or even somewhat larger than 1.0).
     #[inline]
-    pub fn with_pause_factor(mut self, pause_factor: f64) -> Pacing {
-        assert!(pause_factor >= 0.0);
-        self.pause_factor = pause_factor;
-        self
-    }
-
-    /// The garbage collector will try and finish a collection by the time `<current heap size> *
-    /// timing_factor` additional bytes are allocated. For example, if the collection is started
-    /// when the arena has 100KB live data, and the timing_multiplier is 1.0, the collector should
-    /// finish its final phase of this collection after another 100KB has been allocated. Must be >=
-    /// 0.0, setting this to 0.0 causes the collector to behave like a stop-the-world collector.
-    #[inline]
-    pub fn with_timing_factor(mut self, timing_factor: f64) -> Pacing {
-        self.debit_factor = timing_to_debit_factor(timing_factor);
-        self
-    }
-
-    /// The minimum allocation amount during sleep before the arena starts collecting again. This is
-    /// mostly useful when the heap is very small to prevent rapidly restarting collections.
-    #[inline]
-    pub fn with_min_sleep(mut self, min_sleep: usize) -> Pacing {
-        self.min_sleep = min_sleep;
-        self
+    pub fn stop_the_world() -> Pacing {
+        STOP_THE_WORLD_PACING
     }
 }
 
@@ -67,26 +161,50 @@ struct MetricsInner {
     total_external_bytes: Cell<usize>,
 
     wakeup_amount: Cell<f64>,
+    artificial_debt: Cell<f64>,
 
+    // The number of external bytes that have been marked as allocated at the beginning of this
+    // cycle.
+    external_bytes_start: Cell<usize>,
+
+    // Statistics for `Gc` allocations and deallocations that happen during a GC cycle.
     allocated_gc_bytes: Cell<usize>,
-    traced_gcs: Cell<usize>,
-    traced_gc_bytes: Cell<usize>,
+    dropped_gc_bytes: Cell<usize>,
     freed_gc_bytes: Cell<usize>,
 
+    // Statistics for `Gc` pointers that have been marked gray and queued for tracing (the first
+    // time only).
+    queued_gcs: Cell<usize>,
+    queued_gc_bytes: Cell<usize>,
+
+    // Statistics for `Gc` pointers that have their contents traced.
+    traced_gcs: Cell<usize>,
+    traced_gc_bytes: Cell<usize>,
+
+    // Statistics for reachable `Gc` pointers as they are iterated through during the sweep phase.
     remembered_gcs: Cell<usize>,
     remembered_gc_bytes: Cell<usize>,
-
-    allocated_external_bytes: Cell<usize>,
-    freed_external_bytes: Cell<usize>,
 }
 
 #[derive(Clone)]
 pub struct Metrics(Rc<MetricsInner>);
 
+#[derive(Copy, Clone)]
+pub struct CycleResult {
+    pub remembered_gc_count: usize,
+    pub rememberd_gc_size: usize,
+
+    /// Set to `true` when all forgotten pointers were properly freed this cycle.
+    ///
+    /// Will not be true if any allocations were performed during the
+    /// [`crate::arena::CollectionPhase::Sweeping`] phase.
+    pub full_collection: bool,
+}
+
 impl Metrics {
     pub(crate) fn new() -> Self {
         let this = Self(Default::default());
-        this.start_cycle();
+        this.finish_cycle();
         this
     }
 
@@ -107,8 +225,13 @@ impl Metrics {
         self.0.pacing.set(pacing);
     }
 
-    /// Returns the total bytes allocated by the arena itself, used as the backing storage for `Gc`
-    /// pointers.
+    /// Returns the current number of `Gc`s allocated that have not yet been freed.
+    #[inline]
+    pub fn total_gc_count(&self) -> usize {
+        self.0.total_gcs.get()
+    }
+
+    /// Returns the total bytes allocated by all live `Gc` pointers.
     #[inline]
     pub fn total_gc_allocation(&self) -> usize {
         self.0.total_gc_bytes.get()
@@ -116,8 +239,8 @@ impl Metrics {
 
     /// Returns the total bytes that have been marked as externally allocated.
     ///
-    /// A call to `Metrics::mark_external_allocation` will increase this count, and a call to
-    /// `Metrics::mark_external_deallocation` will decrease it.
+    /// A call to [`Metrics::mark_external_allocation`] will increase this count, and a call to
+    /// [`Metrics::mark_external_deallocation`] will decrease it.
     #[inline]
     pub fn total_external_allocation(&self) -> usize {
         self.0.total_external_bytes.get()
@@ -133,6 +256,39 @@ impl Metrics {
             .saturating_add(self.0.total_external_bytes.get())
     }
 
+    /// Call to mark that bytes have been externally allocated that are owned by an arena.
+    ///
+    /// This affects the GC pacing, marking external bytes as allocated will trigger allocation
+    /// debt.
+    #[inline]
+    pub fn mark_external_allocation(&self, bytes: usize) {
+        cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
+    }
+
+    /// Call to mark that bytes which have been marked as allocated with
+    /// [`Metrics::mark_external_allocation`] have been since deallocated.
+    ///
+    /// This affects the GC pacing, marking external bytes as deallocated will reduce allocation
+    /// debt.
+    ///
+    /// It is safe, but may result in unspecified behavior (such as very weird GC pacing), if the
+    /// amount of bytes marked for deallocation is greater than the number of bytes marked for
+    /// allocation.
+    #[inline]
+    pub fn mark_external_deallocation(&self, bytes: usize) {
+        cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
+    }
+
+    /// Add artificial debt equivalent to allocating the given number of bytes.
+    ///
+    /// This is different than marking external allocation because it will not show up in a call to
+    /// [`Metrics::total_external_allocation`] or [`Metrics::total_allocation`] and instead *only*
+    /// speeds up collection.
+    #[inline]
+    pub fn add_debt(&self, bytes: usize) {
+        cell_update(&self.0.artificial_debt, |d| d + bytes as f64);
+    }
+
     /// All arena allocation causes the arena to accumulate "allocation debt". This debt is then
     /// used to time incremental garbage collection based on the tuning parameters in the current
     /// `Pacing`. The allocation debt is measured in bytes, but will generally increase at a rate
@@ -146,115 +302,126 @@ impl Metrics {
             return 0.0;
         }
 
-        // Every allocation in a cycle is a debit.
-        let raw_cycle_debits =
-            self.0.allocated_gc_bytes.get() as f64 + self.0.allocated_external_bytes.get() as f64;
+        // Right now, we treat allocating an external byte as 1.0 units of debt and deallocating an
+        // external byte as 1.0 units of work (we also treat freeing more external bytes than were
+        // allocated in a cycle as performing *no* work). The result is that the *total* increase
+        // of externally allocated bytes (allocated minus freed) incurs debt exactly the same as GC
+        // allocated bytes.
+        let allocated_external_bytes = self
+            .0
+            .total_external_bytes
+            .get()
+            .checked_sub(self.0.external_bytes_start.get())
+            .unwrap_or(0);
 
-        // We do not begin collection at all until the allocations in a cycle reach the wakeup
-        // amount.
-        let cycle_debits = raw_cycle_debits - self.0.wakeup_amount.get();
+        let allocated_bytes =
+            self.0.allocated_gc_bytes.get() as f64 + allocated_external_bytes as f64;
+
+        // Every allocation after the `wakeup_amount` in a cycle is a debit.
+        let cycle_debits =
+            allocated_bytes - self.0.wakeup_amount.get() + self.0.artificial_debt.get();
+
+        // If our debits are not positive, then we know the total debt is not positive.
         if cycle_debits <= 0.0 {
             return 0.0;
         }
 
-        // Estimate the amount of external memory that has been traced assuming that each Gc
-        // owns an even share of the external memory.
-        let traced_external_estimate = self.0.traced_gcs.get() as f64 / total_gcs as f64
-            * self.0.total_external_bytes.get() as f64;
+        let pacing = self.0.pacing.get();
 
-        // Tracing or freeing memory counts as a credit.
-        let cycle_credits = self.0.traced_gc_bytes.get() as f64
-            + self.0.freed_gc_bytes.get() as f64
-            + traced_external_estimate
-            + self.0.freed_external_bytes.get() as f64;
+        let cycle_credits = self.0.queued_gc_bytes.get() as f64 * pacing.mark_factor
+            + self.0.traced_gc_bytes.get() as f64 * pacing.trace_factor
+            + self.0.remembered_gc_bytes.get() as f64 * pacing.keep_factor
+            + self.0.dropped_gc_bytes.get() as f64 * pacing.drop_factor
+            + self.0.freed_gc_bytes.get() as f64 * pacing.free_factor;
 
-        let debt = cycle_debits * self.0.pacing.get().debit_factor - cycle_credits;
-
-        debt.max(0.0)
+        (cycle_debits - cycle_credits).max(0.0)
     }
 
-    /// Call to mark that bytes have been externally allocated that are owned by an arena.
-    ///
-    /// This affects the GC pacing, marking external bytes as allocated will trigger allocation
-    /// debt.
-    #[inline]
-    pub fn mark_external_allocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
-        cell_update(&self.0.allocated_external_bytes, |b| {
-            b.saturating_add(bytes)
-        });
-    }
-
-    /// Call to mark that bytes which have been marked as allocated with
-    /// `Metrics::mark_external_allocation` have been since deallocated.
-    ///
-    /// This affects the GC pacing, marking external bytes as deallocated will reduce allocation
-    /// debt.
-    ///
-    /// It is safe, but may result in unspecified behavior (such as very weird or non-existent gc
-    /// pacing), if the amount of bytes marked for deallocation is greater than the number of bytes
-    /// marked for allocation.
-    #[inline]
-    pub fn mark_external_deallocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
-        cell_update(&self.0.freed_external_bytes, |b| b.saturating_add(bytes));
-    }
-
-    pub(crate) fn start_cycle(&self) {
+    pub(crate) fn finish_cycle(&self) -> CycleResult {
         let pacing = self.0.pacing.get();
         let total_gcs = self.0.total_gcs.get();
-        let wakeup_amount = if total_gcs == 0 {
-            // If we have no live `Gc`s, then the root cannot possibly own any data, so we should
-            // sleep for `min_sleep.`
-            pacing.min_sleep as f64
+        let remembered_gcs = self.0.remembered_gcs.get();
+        let remembered_size = self.0.remembered_gc_bytes.get();
+        let wakeup_amount =
+            (remembered_size as f64 * pacing.pause_factor).max(pacing.min_sleep as f64);
+
+        // If we had no allocations during the entire sweep phase, then every unreachable pointer
+        // should be freed and our remembered count should be the same as our total count.
+        //
+        // We are relying on the count of total_gcs and remembered_gcs being *completely* accurate
+        // here to determine whether a full collection took place.
+        let full_collection = total_gcs == remembered_gcs;
+
+        // If we have completed a full collection, then we forcibly *reset* the artifical debt to
+        // zero. Otherwise, we set it to carry-over any remaining current debt.
+        //
+        // This prevents uselessly speeding up the next cycle when we can be *sure* that every
+        // pointer is already accounted for, and limits the impact of very high induced debt to a
+        // single full collection cycle.
+        let artificial_debt = if full_collection {
+            0.0
         } else {
-            // Estimate the amount of external memory that is remembered assuming that each Gc owns
-            // an even share of the external memory.
-            let remembered_external_size_estimate = self.0.remembered_gcs.get() as f64
-                / total_gcs as f64
-                * self.0.total_external_bytes.get() as f64;
-
-            let remembered_size =
-                self.0.remembered_gc_bytes.get() as f64 + remembered_external_size_estimate;
-
-            (remembered_size * pacing.pause_factor).max(pacing.min_sleep as f64)
+            self.allocation_debt()
         };
 
         self.0.wakeup_amount.set(wakeup_amount);
+        self.0.artificial_debt.set(artificial_debt);
+
+        self.0
+            .external_bytes_start
+            .set(self.0.total_external_bytes.get());
         self.0.allocated_gc_bytes.set(0);
+        self.0.dropped_gc_bytes.set(0);
         self.0.freed_gc_bytes.set(0);
+        self.0.queued_gcs.set(0);
+        self.0.queued_gc_bytes.set(0);
         self.0.traced_gcs.set(0);
         self.0.traced_gc_bytes.set(0);
         self.0.remembered_gcs.set(0);
         self.0.remembered_gc_bytes.set(0);
-        self.0.allocated_external_bytes.set(0);
-        self.0.freed_external_bytes.set(0);
+
+        CycleResult {
+            remembered_gc_count: remembered_gcs,
+            rememberd_gc_size: remembered_size,
+            full_collection,
+        }
     }
 
     #[inline]
-    pub(crate) fn mark_gc_allocated(&self, bytes: usize) {
+    pub(crate) fn mark_gc_allocation(&self, bytes: usize) {
         cell_update(&self.0.total_gcs, |c| c + 1);
         cell_update(&self.0.total_gc_bytes, |b| b + bytes);
         cell_update(&self.0.allocated_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
-    pub(crate) fn mark_gc_traced(&self, bytes: usize) {
-        cell_update(&self.0.traced_gcs, |c| c.saturating_add(1));
-        cell_update(&self.0.traced_gc_bytes, |b| b.saturating_add(bytes));
+    pub(crate) fn mark_gc_drop(&self, bytes: usize) {
+        cell_update(&self.0.dropped_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
-    pub(crate) fn mark_gc_deallocated(&self, bytes: usize) {
+    pub(crate) fn mark_gc_deallocation(&self, bytes: usize) {
         cell_update(&self.0.total_gcs, |c| c - 1);
         cell_update(&self.0.total_gc_bytes, |b| b - bytes);
         cell_update(&self.0.freed_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
+    pub(crate) fn mark_gc_queued(&self, bytes: usize) {
+        cell_update(&self.0.queued_gcs, |c| c + 1);
+        cell_update(&self.0.queued_gc_bytes, |b| b.saturating_add(bytes));
+    }
+
+    #[inline]
+    pub(crate) fn mark_gc_traced(&self, bytes: usize) {
+        cell_update(&self.0.traced_gcs, |c| c + 1);
+        cell_update(&self.0.traced_gc_bytes, |b| b.saturating_add(bytes));
+    }
+
+    #[inline]
     pub(crate) fn mark_gc_remembered(&self, bytes: usize) {
         cell_update(&self.0.remembered_gcs, |c| c + 1);
-        cell_update(&self.0.remembered_gc_bytes, |b| b + bytes);
+        cell_update(&self.0.remembered_gc_bytes, |b| b.saturating_add(bytes));
     }
 }
 
@@ -263,22 +430,4 @@ impl Metrics {
 #[inline]
 fn cell_update<T: Copy>(c: &Cell<T>, f: impl FnOnce(T) -> T) {
     c.set(f(c.get()))
-}
-
-// Computes the `debit_factor` (aka, the amount that debits are multiplied by) from the
-// `timing_factor` configured by the user. It should always be > 1.0.
-//
-// Debits count for `1.0 + 1.0 / timing_factor` times their actual value. This means that if
-// `wakeup_amount` is 100KB, and `timing_factor` is 1.0, then it will take 100KB more allocation
-// before the collector finishes a cycle... when the cycle_debits hit 100KB, the cycle_credits must
-// be 200KB to get back to 0 debt, and since the total heap size is now 200KB, this is a full cycle.
-//
-// Lowering `timing_factor` makes the collector behave more like a stop-the-world collector, and
-// raising it slows the collector down. This factor is configured this way because the lowest
-// allowable value (0.0) is a sensible stop-the-world behavior, and higher (finite) values are
-// slower but still valid. If `debit_factor` ended up being <= 1.0, then we could not be sure that
-// collection would ever *finish*.
-fn timing_to_debit_factor(timing_factor: f64) -> f64 {
-    assert!(timing_factor >= 0.0);
-    1.0 + 1.0 / timing_factor
 }
