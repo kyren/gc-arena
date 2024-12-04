@@ -124,7 +124,7 @@ fn repeated_allocation_deallocation() {
         TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
-    let key_range = rand::distributions::Uniform::from(0..10000);
+    let key_range = rand::distributions::Uniform::from(0..1000);
     let mut rng = rand::thread_rng();
 
     for _ in 0..40 {
