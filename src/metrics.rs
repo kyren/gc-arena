@@ -10,19 +10,19 @@ use core::cell::Cell;
 /// the amount of "debt" paid off by running the collection algorithm as "work".
 ///
 /// The most important idea behind choosing these tuning parameters is that we always want the
-/// collector (when it is not paused) to deterministically run *faster* than allocation, to make
-/// sure that the collection cycle finishes and memory does not grow without bound. If we are tuning
-/// for low pause time however, it is also important that not *too* many costly operations are run
-/// within a single call to [`crate::Arena::collect_debt`], and this goal is in tension with the
-/// first, more important goal.
+/// collector (when it is not sleeping) to deterministically run *faster* than allocation. We do
+/// this so we can be *completely sure* that once collection starts, the collection cycle will
+/// finish and memory will not grow without bound. If we are tuning for low pause time however,
+/// it is also important that not *too* many costly operations are run within a single call to
+/// [`crate::Arena::collect_debt`], and this goal is in tension with the first, more important goal.
 ///
-/// How these two goals are balanced is that we must choose our tuning parameters so that the total
-/// amount of "work" performed to either *remember* or *free* one byte of allocated data is always
-/// *less than one*, and this makes the collector deterministically run faster than the rate of
-/// allocation (which is crucial). The closer the amount of "work" performed to remember or free
-/// one byte is to 1.0, the slower the collector will go and the higher the maximum amount of
-/// used memory will be. The closer the amount of "work" performed to remember or free one byte
-/// is to 0.0, the faster the collector will go and the closer it will get to behaving like a
+/// How these two goals are balanced is that we must choose our tuning parameters so that the
+/// total amount of "work" performed to either *remember* or *free* one byte of allocated data
+/// is always *less than one*, as this makes the collector deterministically run faster than the
+/// rate of allocation (which is crucial). The closer the amount of "work" performed to remember
+/// or free one byte is to 1.0, the slower the collector will go and the higher the maximum amount
+/// of used memory will be. The closer the amount of "work" performed to remember or free one
+/// byte is to 0.0, the faster the collector will go and the closer it will get to behaving like a
 /// stop-the-world collector.
 ///
 /// All live pointers in a cycle are either remembered or freed once, but it is important that
@@ -30,12 +30,12 @@ use core::cell::Cell;
 /// predict a priori the ratio of remembered vs forgotten values, so if either path takes too close
 /// to or over 1.0 unit of work per byte to complete, collection may run too slowly.
 ///
-/// # Factors that control the pause time
+/// # Factors that control the time the GC sleeps
 ///
-/// `pause_factor` is fairly self explanatory. Setting this too low will reduce the time of the
-/// [`crate::arena::CollectionPhase::Sleeping`] phase but this is not directly harmful (it can even
-/// be set to zero!), setting it much larger than 1.0 will make the collector wait a very long time
-/// before collecting again, and usually not what you want.
+/// `sleep_factor` is fairly self explanatory. Setting this too low will reduce the time of the
+/// [`crate::arena::CollectionPhase::Sleeping`] phase but this is not harmful (it can even be set
+/// to zero to keep the collector always running!), setting it much larger than 1.0 will make the
+/// collector wait a very long time before collecting again, and usually not what you want.
 ///
 /// `min_sleep` is also self explanatory and usually does not need changing from the default value.
 /// It should always be relatively small.
@@ -45,8 +45,8 @@ use core::cell::Cell;
 /// Every live `Gc` value in an [`crate::Arena`] that is reachable from the root is "remembered".
 /// Every remembered value will always have exactly three things done to it in a given cycle:
 ///
-/// 1) It will at some point be found and marked as reachable queued for tracing. When this happens,
-///    `mark_factor * alloc_size` work is recorded.
+/// 1) It will at some point be found and marked as reachable (and potentially queued for tracing).
+///    When this happens, `mark_factor * alloc_size` work is recorded.
 /// 2) Entries in the queue for tracing will eventually be traced by having their
 ///    [`crate::Collect::trace`] method called. At this time, `trace_factor * alloc_size` work is
 ///    recorded. Calling `Collect::trace` will usually mark other pointers as reachable and queue
@@ -64,33 +64,64 @@ use core::cell::Cell;
 /// remembered values. Only two operations are performed on them, and only during
 /// [`crate::arena::CollectionPhase::Sweeping`]: dropping and freeing.
 ///
-/// Usually these two operations will take place at the same time, but if a value is only *weakly*
-/// reachable (through [`crate::GcWeak`] pointers), then the value may be dropped at a different
-/// time than its backing allocation is actually freed.
+/// If a value is unreachable, then when it is encountered in the free list it will be dropped (and
+/// `drop_factor * alloc_size` work will be recorded), and then the memory backing the value will be
+/// freed (and `free_factor * alloc_size` work will be recorded).
 ///
-/// When a value is dropped, `drop_factor * alloc_size` work is recorded, and when it is freed
-/// `free_factor * alloc_size` work is recorded.
+/// # Timing factors for weakly reachable values
+///
+/// There is actually a *third* possible path for a value to take in a collection cycle which is a
+/// hybrid of the two, but thankfully it is not too complex.
+///
+/// If a value is (newly) weakly reachable this cycle, first the pointer will be marked as
+/// (weakly) reachable (`mark_factor * alloc_size` work is recorded), then during sweeping it will
+/// be *dropped* (`drop_factor * alloc_size` work is recorded), and then *kept* (`keep_factor *
+/// alloc_size` work is recorded).
+///
+/// # Summary
+///
+/// This may seem complicated but it is actually not too difficult to make sure that the GC will not
+/// stall: *every path that a pointer can take must never do 1.0 or more unit of work per byte within
+/// a cycle*.
+///
+/// The important formulas to check are:
+///
+/// - We need to make sure that remembered values are processed faster than allocation:
+///   `mark_factor + trace_factor + keep_factor < 1.0`
+/// - We need to make sure that forgotten values are processed faster than allocation:
+///   `drop_factor + free_factor < 1.0`
+/// - We need to make sure that weakly remembered values are processed faster than allocation:
+///   `mark_factor + drop_factor + keep_factor < 1.0`
+///
+/// It is also important to note that this is not an exhaustive list of all the possible paths a
+/// pointer can take, but every path will always be a *subset* of one of the above paths. The above
+/// formulas represent every possible the worst case: for example, if a weakly reachable value has
+/// already been dropped then only `mark_factor + keep_factor` work will be recorded, and if we
+/// can prove that a reachable value has [`crate::Collect::NEEDS_TRACE`] set to false, then only
+/// `mark_factor + keep_factor` work will be recorded. This is not important to remember though, it
+/// is true that when the collector elides work it may not actually record that work as performed,
+/// but this will only *speed up* collection, it can never cause the collector to stall.
 #[derive(Debug, Copy, Clone)]
 pub struct Pacing {
     /// Controls the length of the [`crate::arena::CollectionPhase::Sleeping`] phase.
     ///
     /// At the start of a new GC cycle, the collector will wait until the live size reaches
-    /// `<current heap size> + <previous remembered size> * pause_multiplier` before starting
+    /// `<current heap size> + <previous remembered size> * sleep_factor` before starting
     /// collection.
     ///
     /// External memory is ***not*** included in the "remembered size" for the purposes of
-    /// calculating a new cycle's pause time.
-    pub pause_factor: f64,
+    /// calculating a new cycle's sleep period.
+    pub sleep_factor: f64,
 
     /// The minimum length of the [`crate::arena::CollectionPhase::Sleeping`] phase.
     ///
-    /// if the calculated sleep amount using `pause_factor` is lower than `min_sleep`, this will
+    /// if the calculated sleep amount using `sleep_factor` is lower than `min_sleep`, this will
     /// be used instead. This is mostly useful when the heap is very small to prevent rapidly
     /// restarting collections.
     pub min_sleep: usize,
 
     /// The multiplicative factor for "work" performed per byte when a `Gc` value is first marked as
-    /// reachable and queued for tracing.
+    /// reachable.
     pub mark_factor: f64,
 
     /// The multiplicative factor for "work" performed per byte when a `Gc` value has its
@@ -101,9 +132,8 @@ pub struct Pacing {
     /// iterated over during [`crate::arena::CollectionPhase::Sweeping`].
     pub keep_factor: f64,
 
-    /// The multiplicative factor for "work" performed per byte when a `Gc`
-    /// value that is only weakly reachable is dropped (but not freed) during
-    /// [`crate::arena::CollectionPhase::Sweeping`].
+    /// The multiplicative factor for "work" performed per byte when a `Gc` value that is forgotten
+    /// or only weakly reachable is dropped during [`crate::arena::CollectionPhase::Sweeping`].
     pub drop_factor: f64,
 
     /// The multiplicative factor for "work" performed per byte when a forgotten `Gc` value is freed
@@ -111,44 +141,39 @@ pub struct Pacing {
     pub free_factor: f64,
 }
 
-pub const DEFAULT_PACING: Pacing = Pacing {
-    pause_factor: 0.5,
-    min_sleep: 4096,
-    mark_factor: 0.1,
-    trace_factor: 0.4,
-    keep_factor: 0.05,
-    drop_factor: 0.2,
-    free_factor: 0.3,
-};
-
-impl Default for Pacing {
-    #[inline]
-    fn default() -> Pacing {
-        DEFAULT_PACING
-    }
-}
-
-pub const STOP_THE_WORLD_PACING: Pacing = Pacing {
-    pause_factor: 1.0,
-    min_sleep: 4096,
-    mark_factor: 0.0,
-    trace_factor: 0.0,
-    keep_factor: 0.0,
-    drop_factor: 0.0,
-    free_factor: 0.0,
-};
-
 impl Pacing {
-    /// Construct a good default "stop-the-world" [`Pacing`] configuration.
+    pub const DEFAULT: Pacing = Pacing {
+        sleep_factor: 0.5,
+        min_sleep: 4096,
+        mark_factor: 0.1,
+        trace_factor: 0.4,
+        keep_factor: 0.05,
+        drop_factor: 0.2,
+        free_factor: 0.3,
+    };
+
+    /// A good default "stop-the-world" [`Pacing`] configuration.
     ///
     /// This has all of the work factors set to zero so that as soon as the collector wakes from
     /// sleep, it will immediately perform a full collection.
     ///
-    /// It is important to set the pause factor fairly high when configuring a collector this way
+    /// It is important to set the sleep factor fairly high when configuring a collector this way
     /// (close to or even somewhat larger than 1.0).
+    pub const STOP_THE_WORLD: Pacing = Pacing {
+        sleep_factor: 1.0,
+        min_sleep: 4096,
+        mark_factor: 0.0,
+        trace_factor: 0.0,
+        keep_factor: 0.0,
+        drop_factor: 0.0,
+        free_factor: 0.0,
+    };
+}
+
+impl Default for Pacing {
     #[inline]
-    pub fn stop_the_world() -> Pacing {
-        STOP_THE_WORLD_PACING
+    fn default() -> Pacing {
+        Self::DEFAULT
     }
 }
 
@@ -172,10 +197,9 @@ struct MetricsInner {
     dropped_gc_bytes: Cell<usize>,
     freed_gc_bytes: Cell<usize>,
 
-    // Statistics for `Gc` pointers that have been marked gray and queued for tracing (the first
-    // time only).
-    queued_gcs: Cell<usize>,
-    queued_gc_bytes: Cell<usize>,
+    // Statistics for `Gc` pointers that have been marked as non-white this cycle.
+    marked_gcs: Cell<usize>,
+    marked_gc_bytes: Cell<usize>,
 
     // Statistics for `Gc` pointers that have their contents traced.
     traced_gcs: Cell<usize>,
@@ -189,23 +213,9 @@ struct MetricsInner {
 #[derive(Clone)]
 pub struct Metrics(Rc<MetricsInner>);
 
-#[derive(Copy, Clone)]
-pub struct CycleResult {
-    pub remembered_gc_count: usize,
-    pub rememberd_gc_size: usize,
-
-    /// Set to `true` when all forgotten pointers were properly freed this cycle.
-    ///
-    /// Will not be true if any allocations were performed during the
-    /// [`crate::arena::CollectionPhase::Sweeping`] phase.
-    pub full_collection: bool,
-}
-
 impl Metrics {
     pub(crate) fn new() -> Self {
-        let this = Self(Default::default());
-        this.finish_cycle();
-        this
+        Self(Default::default())
     }
 
     /// Return a value identifying the arena, for logging purposes.
@@ -218,7 +228,7 @@ impl Metrics {
 
     /// Sets the pacing parameters used by the collection algorithm.
     ///
-    /// The factors that affect the gc pause time will not take effect until the start of the next
+    /// The factors that affect the gc sleep time will not take effect until the start of the next
     /// collection.
     #[inline]
     pub fn set_pacing(&self, pacing: Pacing) {
@@ -304,9 +314,9 @@ impl Metrics {
 
         // Right now, we treat allocating an external byte as 1.0 units of debt and deallocating an
         // external byte as 1.0 units of work (we also treat freeing more external bytes than were
-        // allocated in a cycle as performing *no* work). The result is that the *total* increase
-        // of externally allocated bytes (allocated minus freed) incurs debt exactly the same as GC
-        // allocated bytes.
+        // allocated in the current cycle as performing *no* work). The result is that the *total*
+        // increase of externally allocated bytes (allocated minus freed) incurs debt exactly the
+        // same as GC allocated bytes.
         let allocated_external_bytes = self
             .0
             .total_external_bytes
@@ -328,7 +338,7 @@ impl Metrics {
 
         let pacing = self.0.pacing.get();
 
-        let cycle_credits = self.0.queued_gc_bytes.get() as f64 * pacing.mark_factor
+        let cycle_credits = self.0.marked_gc_bytes.get() as f64 * pacing.mark_factor
             + self.0.traced_gc_bytes.get() as f64 * pacing.trace_factor
             + self.0.remembered_gc_bytes.get() as f64 * pacing.keep_factor
             + self.0.dropped_gc_bytes.get() as f64 * pacing.drop_factor
@@ -337,28 +347,13 @@ impl Metrics {
         (cycle_debits - cycle_credits).max(0.0)
     }
 
-    pub(crate) fn finish_cycle(&self) -> CycleResult {
+    pub(crate) fn finish_cycle(&self, reset_debt: bool) {
         let pacing = self.0.pacing.get();
-        let total_gcs = self.0.total_gcs.get();
-        let remembered_gcs = self.0.remembered_gcs.get();
         let remembered_size = self.0.remembered_gc_bytes.get();
         let wakeup_amount =
-            (remembered_size as f64 * pacing.pause_factor).max(pacing.min_sleep as f64);
+            (remembered_size as f64 * pacing.sleep_factor).max(pacing.min_sleep as f64);
 
-        // If we had no allocations during the entire sweep phase, then every unreachable pointer
-        // should be freed and our remembered count should be the same as our total count.
-        //
-        // We are relying on the count of total_gcs and remembered_gcs being *completely* accurate
-        // here to determine whether a full collection took place.
-        let full_collection = total_gcs == remembered_gcs;
-
-        // If we have completed a full collection, then we forcibly *reset* the artifical debt to
-        // zero. Otherwise, we set it to carry-over any remaining current debt.
-        //
-        // This prevents uselessly speeding up the next cycle when we can be *sure* that every
-        // pointer is already accounted for, and limits the impact of very high induced debt to a
-        // single full collection cycle.
-        let artificial_debt = if full_collection {
+        let artificial_debt = if reset_debt {
             0.0
         } else {
             self.allocation_debt()
@@ -373,43 +368,37 @@ impl Metrics {
         self.0.allocated_gc_bytes.set(0);
         self.0.dropped_gc_bytes.set(0);
         self.0.freed_gc_bytes.set(0);
-        self.0.queued_gcs.set(0);
-        self.0.queued_gc_bytes.set(0);
+        self.0.marked_gcs.set(0);
+        self.0.marked_gc_bytes.set(0);
         self.0.traced_gcs.set(0);
         self.0.traced_gc_bytes.set(0);
         self.0.remembered_gcs.set(0);
         self.0.remembered_gc_bytes.set(0);
-
-        CycleResult {
-            remembered_gc_count: remembered_gcs,
-            rememberd_gc_size: remembered_size,
-            full_collection,
-        }
     }
 
     #[inline]
-    pub(crate) fn mark_gc_allocation(&self, bytes: usize) {
+    pub(crate) fn mark_gc_allocated(&self, bytes: usize) {
         cell_update(&self.0.total_gcs, |c| c + 1);
         cell_update(&self.0.total_gc_bytes, |b| b + bytes);
         cell_update(&self.0.allocated_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
-    pub(crate) fn mark_gc_drop(&self, bytes: usize) {
+    pub(crate) fn mark_gc_dropped(&self, bytes: usize) {
         cell_update(&self.0.dropped_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
-    pub(crate) fn mark_gc_deallocation(&self, bytes: usize) {
+    pub(crate) fn mark_gc_freed(&self, bytes: usize) {
         cell_update(&self.0.total_gcs, |c| c - 1);
         cell_update(&self.0.total_gc_bytes, |b| b - bytes);
         cell_update(&self.0.freed_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]
-    pub(crate) fn mark_gc_queued(&self, bytes: usize) {
-        cell_update(&self.0.queued_gcs, |c| c + 1);
-        cell_update(&self.0.queued_gc_bytes, |b| b.saturating_add(bytes));
+    pub(crate) fn mark_gc_marked(&self, bytes: usize) {
+        cell_update(&self.0.marked_gcs, |c| c + 1);
+        cell_update(&self.0.marked_gc_bytes, |b| b.saturating_add(bytes));
     }
 
     #[inline]

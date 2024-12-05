@@ -3,7 +3,7 @@ use core::marker::PhantomData;
 
 use crate::{
     context::{Context, Finalization, Mutation, Phase, Stop, Target},
-    metrics::{CycleResult, Metrics},
+    metrics::Metrics,
     Collect,
 };
 
@@ -299,11 +299,9 @@ where
     /// then this restarts the collector and performs a full collection before transitioning back to
     /// the sleep phase.
     #[inline]
-    pub fn finish_collection(&mut self) -> CycleResult {
+    pub fn finish_collection(&mut self) {
         unsafe {
-            self.context
-                .do_collection(&self.root, Target::Finish, None)
-                .unwrap()
+            self.context.do_collection(&self.root, Target::Finish, None);
         }
     }
 
@@ -323,21 +321,6 @@ where
             Some(MarkedArena(self))
         } else {
             None
-        }
-    }
-
-    /// Run a full garbage collection cycle, stopping once we can prove that all unreachable
-    /// pointers are freed.
-    ///
-    /// If this is called during the [`CollectionPhase::Sweeping`] phase and there have been
-    /// allocations during that phase, then this must finish the current collection cycle and run a
-    /// full new one to ensure that all unreachable pointers are freed.
-    #[inline]
-    pub fn collect_all(&mut self) -> CycleResult {
-        unsafe {
-            self.context
-                .do_collection(&self.root, Target::Full, None)
-                .unwrap()
         }
     }
 }
