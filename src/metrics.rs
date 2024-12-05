@@ -398,19 +398,25 @@ impl Metrics {
     #[inline]
     pub(crate) fn mark_gc_marked(&self, bytes: usize) {
         cell_update(&self.0.marked_gcs, |c| c + 1);
-        cell_update(&self.0.marked_gc_bytes, |b| b.saturating_add(bytes));
+        cell_update(&self.0.marked_gc_bytes, |b| b + bytes);
     }
 
     #[inline]
     pub(crate) fn mark_gc_traced(&self, bytes: usize) {
         cell_update(&self.0.traced_gcs, |c| c + 1);
-        cell_update(&self.0.traced_gc_bytes, |b| b.saturating_add(bytes));
+        cell_update(&self.0.traced_gc_bytes, |b| b + bytes);
+    }
+
+    #[inline]
+    pub(crate) fn mark_gc_untraced(&self, bytes: usize) {
+        cell_update(&self.0.traced_gcs, |c| c - 1);
+        cell_update(&self.0.traced_gc_bytes, |b| b - bytes);
     }
 
     #[inline]
     pub(crate) fn mark_gc_remembered(&self, bytes: usize) {
         cell_update(&self.0.remembered_gcs, |c| c + 1);
-        cell_update(&self.0.remembered_gc_bytes, |b| b.saturating_add(bytes));
+        cell_update(&self.0.remembered_gc_bytes, |b| b + bytes);
     }
 }
 

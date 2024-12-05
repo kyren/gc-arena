@@ -392,8 +392,7 @@ impl Context {
             // often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
-                parent.header().set_color(GcColor::Gray);
-                this.gray_again.push(parent);
+                this.make_gray_again(parent);
             }
             barrier(&self, parent);
         }
@@ -409,8 +408,7 @@ impl Context {
             // often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
-                parent.header().set_color(GcColor::Gray);
-                this.gray_again.push(parent);
+                this.make_gray_again(parent);
             }
             barrier(&self, parent);
         }
@@ -556,13 +554,10 @@ impl Context {
     }
 
     fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
-        // We look for an object first in the normal gray queue, then the "gray again"
-        // queue. Objects from the normal gray queue count as regular work, but objects
-        // which are gray a second time have already been counted as work, so we don't
-        // double count them. Processing "gray again" objects later also gives them more
-        // time to be mutated again without triggering another write barrier.
+        // We look for an object first in the normal gray queue, then the "gray again" queue.
+        // Processing "gray again" objects later gives them more time to be mutated again without
+        // triggering another write barrier.
         let next_gray = if let Some(gc_box) = self.gray.pop() {
-            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
             Some(gc_box)
         } else if let Some(gc_box) = self.gray_again.pop() {
             Some(gc_box)
@@ -571,17 +566,21 @@ impl Context {
         };
 
         if let Some(gc_box) = next_gray {
-            // If we have an object in the gray queue, take one, trace it, and turn it
-            // black.
+            // We always mark work for objects processed from both the gray and "gray again" queue.
+            // When objects are placed into the "gray again" queue due to a write barrier, the
+            // original work is *undone*, so we do it again here.
+            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            gc_box.header().set_color(GcColor::Black);
+
+            // If we have an object in the gray queue, take one, trace it, and turn it black.
 
             // Our `Collect::trace` call may panic, and if it does the object will be lost from
             // the gray queue but potentially incompletely traced. By catching a panic during
             // `Arena::collect()`, this could lead to memory unsafety.
             //
-            // So, if the `Collect::trace` call panics, we need to add the popped object back to
-            // the `gray_again` queue. If the panic is caught, this will maybe give it some time to
-            // not panic before attempting to collect it again, and also this doesn't invalidate the
-            // collection debt math (since it has already been marked as traced).
+            // So, if the `Collect::trace` call panics, we need to add the popped object back to the
+            // `gray_again` queue. If the panic is caught, this will maybe give some time for its
+            // trace method to not panic before attempting to collect it again.
             struct DropGuard<'a> {
                 context: &'a mut Context,
                 gc_box: GcBox,
@@ -589,7 +588,7 @@ impl Context {
 
             impl<'a> Drop for DropGuard<'a> {
                 fn drop(&mut self) {
-                    self.context.gray_again.push(self.gc_box);
+                    self.context.make_gray_again(self.gc_box);
                 }
             }
 
@@ -600,13 +599,11 @@ impl Context {
             debug_assert!(gc_box.header().is_live());
             unsafe { gc_box.trace_value(guard.context) }
             mem::forget(guard);
-            gc_box.header().set_color(GcColor::Black);
 
             ControlFlow::Continue(())
         } else if self.root_needs_trace {
-            // We treat the root object as gray if `root_needs_trace` is set, and we
-            // process it at the end of the gray queue for the same reason as the "gray
-            // again" objects.
+            // We treat the root object as gray if `root_needs_trace` is set, and we process it at
+            // the end of the gray queue for the same reason as the "gray again" objects.
             root.trace(self);
             self.root_needs_trace = false;
             ControlFlow::Continue(())
@@ -687,6 +684,15 @@ impl Context {
         }
 
         ControlFlow::Continue(())
+    }
+
+    // Take a black pointer and turn it gray and put it in the `gray_again` queue.
+    fn make_gray_again(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        debug_assert_eq!(header.color(), GcColor::Black);
+        header.set_color(GcColor::Gray);
+        self.gray_again.push(gc_box);
+        self.metrics.mark_gc_untraced(header.size_of_box());
     }
 }
 
