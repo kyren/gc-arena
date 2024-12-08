@@ -1,5 +1,7 @@
 use crate::{Gc, GcWeak};
 
+pub use gc_arena_derive::Collect;
+
 /// A trait for garbage collected objects that can be placed into `Gc` pointers. This trait is
 /// unsafe, because `Gc` pointers inside an Arena are assumed never to be dangling, and in order to
 /// ensure this certain rules must be followed:

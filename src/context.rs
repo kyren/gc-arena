@@ -142,9 +142,19 @@ pub(crate) enum Phase {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum EarlyStop {
-    BeforeSweep,
-    AfterSweep,
+pub(crate) enum Target {
+    // Run collection until our debt is negative.
+    PayDebt,
+    // Run collection until we reach the end of the sweep phase.
+    Finish,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub(crate) enum Stop {
+    // Don't proceed past the end of marking, *just* before the sweep phase
+    FullyMarked,
+    // Don't proceed past the very beginning of the sweep phase
+    AtSweep,
 }
 
 pub(crate) struct Context {
@@ -189,12 +199,19 @@ impl Drop for Context {
             fn drop(&mut self) {
                 if let Some(gc_box) = self.1.take() {
                     let mut drop_resume = DropAll(self.0, Some(gc_box));
-                    while let Some(gc_box) = drop_resume.1.take() {
+                    while let Some(mut gc_box) = drop_resume.1.take() {
                         let header = gc_box.header();
                         drop_resume.1 = header.next();
-                        self.0.mark_gc_deallocated(header.size_of_box());
+                        let gc_size = header.size_of_box();
                         // SAFETY: the context owns its GC'd objects
-                        unsafe { free_gc_box(gc_box) }
+                        unsafe {
+                            if header.is_live() {
+                                gc_box.drop_in_place();
+                                self.0.mark_gc_dropped(gc_size);
+                            }
+                            gc_box.dealloc();
+                            self.0.mark_gc_freed(gc_size);
+                        }
                     }
                 }
             }
@@ -254,40 +271,40 @@ impl Context {
         !self.gray.is_empty() || !self.gray_again.is_empty() || self.root_needs_trace
     }
 
-    // Do some collection work until either the debt goes down below the target amount or we have
-    // finished the gc sweep phase. The unit of "work" here is a byte count of objects either turned
-    // black or freed, so to completely collect a heap with 1000 bytes of objects should take 1000
-    // units of work, whatever percentage of them are live or not.
+    // Do some collection work until either we have achieved our `target` (paying off debt or
+    // finishing a full collection) or we have reached the `stop` condition.
     //
     // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
     // reachable from the given root object.
     //
-    // If we are currently in `Phase::Sleep`, this will transition the collector to `Phase::Mark`.
+    // If we are currently in `Phase::Sleep` and have positive debt, this will immediately
+    // transition the collector to `Phase::Mark`.
     #[deny(unsafe_op_in_unsafe_fn)]
     pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
         root: &R,
-        mut target_debt: f64,
-        early_stop: Option<EarlyStop>,
+        target: Target,
+        stop: Option<Stop>,
     ) {
         let mut cx = PhaseGuard::enter(self, None);
 
-        if !(cx.metrics.allocation_debt() > target_debt) {
+        if target == Target::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
             cx.log_progress("GC: paused");
             return;
         }
 
+        let start_phase = cx.phase;
+
         loop {
             match cx.phase {
                 Phase::Sleep => {
-                    // Immediately enter the mark phase; no need to update metrics here.
+                    // Immediately enter the mark phase
                     cx.switch(Phase::Mark);
-                    continue;
                 }
                 Phase::Mark => {
                     if cx.mark_one(root).is_break() {
-                        if early_stop == Some(EarlyStop::BeforeSweep) {
-                            target_debt = f64::INFINITY;
+                        if matches!(stop, Some(stop) if stop <= Stop::FullyMarked) {
+                            break;
                         } else {
                             // If we have no gray objects left, we enter the sweep phase.
                             cx.switch(Phase::Sweep);
@@ -296,33 +313,36 @@ impl Context {
                             // allocations during the newly-entered `Phase:Sweep` will update `all`,
                             // but will *not* be reachable from `this.sweep`.
                             cx.sweep = cx.all.get();
-
-                            // No need to update metrics here.
-                            continue;
                         }
                     }
                 }
                 Phase::Sweep => {
-                    if early_stop == Some(EarlyStop::AfterSweep) {
-                        target_debt = f64::INFINITY;
+                    if matches!(stop, Some(stop) if stop <= Stop::AtSweep) {
+                        break;
                     } else if cx.sweep_one().is_break() {
-                        // Collection is done, forcibly exit the loop.
-                        target_debt = f64::INFINITY;
-
                         // Begin a new cycle.
+                        //
+                        // We reset our debt if we have done an entire collection cycle as a single
+                        // atomic unit. This keeps inherited debt from growing without bound.
+                        cx.metrics.finish_cycle(start_phase == Phase::Sleep);
                         cx.root_needs_trace = true;
                         cx.switch(Phase::Sleep);
-                        cx.metrics.start_cycle();
+
+                        if target == Target::Finish {
+                            cx.log_progress("GC: finished");
+                            return;
+                        }
                     }
                 }
                 Phase::Drop => unreachable!(),
             }
 
-            if !(cx.metrics.allocation_debt() > target_debt) {
-                cx.log_progress("GC: yielding...");
-                return;
+            if target == Target::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+                break;
             }
         }
+
+        cx.log_progress("GC: yielding...");
     }
 
     fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
@@ -332,7 +352,6 @@ impl Context {
         header.set_needs_trace(T::NEEDS_TRACE);
 
         let alloc_size = header.size_of_box();
-        self.metrics.mark_gc_allocated(alloc_size);
 
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
@@ -348,6 +367,8 @@ impl Context {
         if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
             self.sweep_prev.set(self.all.get());
         }
+
+        self.metrics.mark_gc_allocated(alloc_size);
 
         ptr
     }
@@ -371,8 +392,7 @@ impl Context {
             // often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
-                parent.header().set_color(GcColor::Gray);
-                this.gray_again.push(parent);
+                this.make_gray_again(parent);
             }
             barrier(&self, parent);
         }
@@ -388,8 +408,7 @@ impl Context {
             // often) to promote the inlining of the write barrier.
             #[cold]
             fn barrier(this: &Context, parent: GcBox) {
-                parent.header().set_color(GcColor::Gray);
-                this.gray_again.push(parent);
+                this.make_gray_again(parent);
             }
             barrier(&self, parent);
         }
@@ -438,7 +457,8 @@ impl Context {
     #[inline]
     fn trace(&self, gc_box: GcBox) {
         let header = gc_box.header();
-        match header.color() {
+        let color = header.color();
+        match color {
             GcColor::Black | GcColor::Gray => {}
             GcColor::White | GcColor::WhiteWeak => {
                 if header.needs_trace() {
@@ -450,7 +470,11 @@ impl Context {
                 } else {
                     // A white object that doesn't need tracing simply becomes black.
                     header.set_color(GcColor::Black);
-                    self.metrics.mark_gc_traced(header.size_of_box());
+                }
+
+                // Only marking the *first* time counts as a mark metric.
+                if color == GcColor::White {
+                    self.metrics.mark_gc_marked(header.size_of_box());
                 }
             }
         }
@@ -461,6 +485,7 @@ impl Context {
         let header = gc_box.header();
         if header.color() == GcColor::White {
             header.set_color(GcColor::WhiteWeak);
+            self.metrics.mark_gc_marked(header.size_of_box());
         }
     }
 
@@ -517,20 +542,22 @@ impl Context {
         let header = gc_box.header();
         debug_assert_eq!(self.phase, Phase::Mark);
         debug_assert!(header.is_live());
+        let color = header.color();
         if matches!(header.color(), GcColor::White | GcColor::WhiteWeak) {
             header.set_color(GcColor::Gray);
             self.gray.push(gc_box);
+            // Only marking the *first* time counts as a mark metric.
+            if color == GcColor::White {
+                self.metrics.mark_gc_marked(header.size_of_box());
+            }
         }
     }
 
     fn mark_one<'gc, R: Collect<'gc> + ?Sized>(&mut self, root: &R) -> ControlFlow<()> {
-        // We look for an object first in the normal gray queue, then the "gray again"
-        // queue. Objects from the normal gray queue count as regular work, but objects
-        // which are gray a second time have already been counted as work, so we don't
-        // double count them. Processing "gray again" objects later also gives them more
-        // time to be mutated again without triggering another write barrier.
+        // We look for an object first in the normal gray queue, then the "gray again" queue.
+        // Processing "gray again" objects later gives them more time to be mutated again without
+        // triggering another write barrier.
         let next_gray = if let Some(gc_box) = self.gray.pop() {
-            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
             Some(gc_box)
         } else if let Some(gc_box) = self.gray_again.pop() {
             Some(gc_box)
@@ -539,17 +566,21 @@ impl Context {
         };
 
         if let Some(gc_box) = next_gray {
-            // If we have an object in the gray queue, take one, trace it, and turn it
-            // black.
+            // We always mark work for objects processed from both the gray and "gray again" queue.
+            // When objects are placed into the "gray again" queue due to a write barrier, the
+            // original work is *undone*, so we do it again here.
+            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            gc_box.header().set_color(GcColor::Black);
 
-            // Our `Collect::trace` call may panic, and if it does the object will be
-            // lost from the gray queue but potentially incompletely traced. By catching
-            // a panic during `Arena::collect()`, this could lead to memory unsafety.
+            // If we have an object in the gray queue, take one, trace it, and turn it black.
+
+            // Our `Collect::trace` call may panic, and if it does the object will be lost from
+            // the gray queue but potentially incompletely traced. By catching a panic during
+            // `Arena::collect()`, this could lead to memory unsafety.
             //
-            // So, if the `Collect::trace` call panics, we need to add the popped object
-            // back to the `gray_again` queue. If the panic is caught, this will maybe
-            // give it some time to not panic before attempting to collect it again, and
-            // also this doesn't invalidate the collection debt math.
+            // So, if the `Collect::trace` call panics, we need to add the popped object back to the
+            // `gray_again` queue. If the panic is caught, this will maybe give some time for its
+            // trace method to not panic before attempting to collect it again.
             struct DropGuard<'a> {
                 context: &'a mut Context,
                 gc_box: GcBox,
@@ -557,7 +588,7 @@ impl Context {
 
             impl<'a> Drop for DropGuard<'a> {
                 fn drop(&mut self) {
-                    self.context.gray_again.push(self.gc_box);
+                    self.context.make_gray_again(self.gc_box);
                 }
             }
 
@@ -568,13 +599,11 @@ impl Context {
             debug_assert!(gc_box.header().is_live());
             unsafe { gc_box.trace_value(guard.context) }
             mem::forget(guard);
-            gc_box.header().set_color(GcColor::Black);
 
             ControlFlow::Continue(())
         } else if self.root_needs_trace {
-            // We treat the root object as gray if `root_needs_trace` is set, and we
-            // process it at the end of the gray queue for the same reason as the "gray
-            // again" objects.
+            // We treat the root object as gray if `root_needs_trace` is set, and we process it at
+            // the end of the gray queue for the same reason as the "gray again" objects.
             root.trace(self);
             self.root_needs_trace = false;
             ControlFlow::Continue(())
@@ -590,6 +619,7 @@ impl Context {
         };
 
         let sweep_header = sweep.header();
+        let sweep_size = sweep_header.size_of_box();
 
         let next_box = sweep_header.next();
         self.sweep = next_box;
@@ -606,34 +636,44 @@ impl Context {
                     debug_assert_eq!(self.all.get(), Some(sweep));
                     self.all.set(next_box);
                 }
-                self.metrics.mark_gc_deallocated(sweep_header.size_of_box());
 
-                // SAFETY: this object is white, and wasn't traced by a `GcWeak`
-                // during this cycle, meaning it cannot have either strong or weak
-                // pointers, so we can drop the whole object.
-                unsafe { free_gc_box(sweep) }
+                // SAFETY: this object is white, and wasn't traced by a `GcWeak` during this cycle,
+                // meaning it cannot have either strong or weak pointers, so we can drop the whole
+                // object.
+                unsafe {
+                    if sweep_header.is_live() {
+                        // If the alive flag is set, that means we haven't dropped the inner value
+                        // of this object,
+                        sweep.drop_in_place();
+                        self.metrics.mark_gc_dropped(sweep_size);
+                    }
+                    sweep.dealloc();
+                    self.metrics.mark_gc_freed(sweep_size);
+                }
             }
-            // Keep the `GcBox` as part of the linked list if we traced a weak
-            // pointer to it. The weak pointer still needs access to the `GcBox` to
-            // be able to check if the object is still alive. We can only deallocate
-            // the `GcBox`, once there are no weak pointers left.
+            // Keep the `GcBox` as part of the linked list if we traced a weak pointer to it. The
+            // weak pointer still needs access to the `GcBox` to be able to check if the object
+            // is still alive. We can only deallocate the `GcBox`, once there are no weak pointers
+            // left.
             GcColor::WhiteWeak => {
                 self.sweep_prev.set(Some(sweep));
                 sweep_header.set_color(GcColor::White);
                 if sweep_header.is_live() {
                     sweep_header.set_live(false);
-                    // SAFETY: Since this object is white, that means there are no
-                    // more strong pointers to this object, only weak pointers, so
-                    // we can safely drop its contents.
+                    // SAFETY: Since this object is white, that means there are no more strong
+                    // pointers to this object, only weak pointers, so we can safely drop its
+                    // contents.
                     unsafe { sweep.drop_in_place() }
+                    self.metrics.mark_gc_dropped(sweep_size);
                 }
+                self.metrics.mark_gc_remembered(sweep_size);
             }
             // If the next object in the sweep portion of the main list is black, we
             // need to keep it but turn it back white.
             GcColor::Black => {
                 self.sweep_prev.set(Some(sweep));
-                self.metrics.mark_gc_remembered(sweep_header.size_of_box());
                 sweep_header.set_color(GcColor::White);
+                self.metrics.mark_gc_remembered(sweep_size);
             }
             // No gray objects should be in this part of the main list, they should
             // be added to the beginning of the list before the sweep pointer, so it
@@ -645,15 +685,15 @@ impl Context {
 
         ControlFlow::Continue(())
     }
-}
 
-// SAFETY: the gc_box must never be accessed after calling this function.
-unsafe fn free_gc_box<'gc>(mut gc_box: GcBox) {
-    if gc_box.header().is_live() {
-        // If the alive flag is set, that means we haven't dropped the inner value of this object,
-        gc_box.drop_in_place();
+    // Take a black pointer and turn it gray and put it in the `gray_again` queue.
+    fn make_gray_again(&self, gc_box: GcBox) {
+        let header = gc_box.header();
+        debug_assert_eq!(header.color(), GcColor::Black);
+        header.set_color(GcColor::Gray);
+        self.gray_again.push(gc_box);
+        self.metrics.mark_gc_untraced(header.size_of_box());
     }
-    gc_box.dealloc();
 }
 
 /// Helper type for managing phase transitions.

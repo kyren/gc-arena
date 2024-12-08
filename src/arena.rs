@@ -1,8 +1,8 @@
 use alloc::boxed::Box;
-use core::{f64, marker::PhantomData};
+use core::marker::PhantomData;
 
 use crate::{
-    context::{Context, EarlyStop, Finalization, Mutation, Phase},
+    context::{Context, Finalization, Mutation, Phase, Stop, Target},
     metrics::Metrics,
     Collect,
 };
@@ -264,33 +264,27 @@ where
     R: for<'a> Rootable<'a>,
     for<'a> Root<'a, R>: Collect<'a>,
 {
-    /// Run incremental garbage collection until the allocation debt is <= 0.0.
+    /// Run incremental garbage collection until the allocation debt is zero.
     ///
     /// There is no minimum unit of work enforced here, so it may be faster to only call this method
     /// when the allocation debt is above some threshold.
-    ///
-    /// This method will always return at least once when collection enters the `Sleeping` phase,
-    /// i.e. it will never transition from the `Sweeping` phase to the `Marking` phase without
-    /// returning in-between.
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
-            self.context.do_collection(&self.root, 0.0, None);
+            self.context
+                .do_collection(&self.root, Target::PayDebt, None);
         }
     }
 
-    /// Run only the *marking* part of incremental garbage collection until allocation debt is
-    /// <= 0.0.
+    /// Run only the *marking* part of incremental garbage collection until allocation debt is zero.
     ///
     /// This does *not* transition collection past the `Marked` phase. Does nothing if the
-    /// collection phase is `Marked` or `Sweeping`, otherwise acts like `Arena::collect_debt`.
+    /// collection phase is `Marked` or `Sweeping`, otherwise acts like [`Arena::collect_debt`].
     #[inline]
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
-        if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
-            unsafe {
-                self.context
-                    .do_collection(&self.root, 0.0, Some(EarlyStop::BeforeSweep));
-            }
+        unsafe {
+            self.context
+                .do_collection(&self.root, Target::PayDebt, Some(Stop::FullyMarked));
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -301,14 +295,13 @@ where
     }
 
     /// Run the current garbage collection cycle to completion, stopping once garbage collection
-    /// has restarted in the sleep phase. If the collector is currently in the sleep phase, this
-    /// restarts the collection and performs a full collection before transitioning back to the
-    /// sleep phase.
+    /// has entered the [`CollectionPhase::Sleeping`] phase. If the collector is currently sleeping,
+    /// then this restarts the collector and performs a full collection before transitioning back to
+    /// the sleep phase.
     #[inline]
-    pub fn collect_all(&mut self) {
+    pub fn finish_collection(&mut self) {
         unsafe {
-            self.context
-                .do_collection(&self.root, f64::NEG_INFINITY, None);
+            self.context.do_collection(&self.root, Target::Finish, None);
         }
     }
 
@@ -318,15 +311,10 @@ where
     /// phase, and does nothing if the collector is currently in the `Marked` phase or the
     /// `Sweeping` phase.
     #[inline]
-    pub fn mark_all(&mut self) -> Option<MarkedArena<'_, R>> {
-        if matches!(self.context.phase(), Phase::Mark | Phase::Sleep) {
-            unsafe {
-                self.context.do_collection(
-                    &self.root,
-                    f64::NEG_INFINITY,
-                    Some(EarlyStop::BeforeSweep),
-                );
-            }
+    pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R>> {
+        unsafe {
+            self.context
+                .do_collection(&self.root, Target::Finish, Some(Stop::FullyMarked));
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
@@ -370,11 +358,9 @@ where
     #[inline]
     pub fn start_sweeping(self) {
         unsafe {
-            self.0.context.do_collection(
-                &self.0.root,
-                f64::NEG_INFINITY,
-                Some(EarlyStop::AfterSweep),
-            );
+            self.0
+                .context
+                .do_collection(&self.0.root, Target::Finish, Some(Stop::AtSweep));
         }
         assert_eq!(self.0.context.phase(), Phase::Sweep);
     }
