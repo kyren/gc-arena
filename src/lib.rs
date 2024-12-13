@@ -28,7 +28,7 @@ pub mod allocator_api;
 mod hashbrown;
 
 #[doc(hidden)]
-pub use gc_arena_derive::*;
+pub use gc_arena_derive::__unelide_lifetimes;
 
 #[doc(hidden)]
 pub use self::{arena::__DynRootable, no_drop::__MustNotImplDrop, unsize::__CoercePtrInternal};
