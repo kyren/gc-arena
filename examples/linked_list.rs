@@ -146,7 +146,7 @@ fn main() {
     // automatically. We have to trigger collection *outside* of a mutation
     // method.
     //
-    // The `Arena::finish_collection` runs a full collection cycle, but this
+    // The `Arena::finish_cycle` method runs a full collection cycle, but this
     // is not the only way to trigger collection.
     //
     // `gc-arena` is an incremental collector, and so keeps track of "debt"
@@ -159,7 +159,7 @@ fn main() {
     // Since the collector has not yet started its marking phase, calling this
     // will fully mark the arena and collect all the garbage, so this method
     // will always free the 4 node.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate_root(|_, root| {
         // Now we can see that if we rotate through our circular list, we will

@@ -142,11 +142,11 @@ pub(crate) enum Phase {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum Target {
-    // Run collection until our debt is negative.
+pub(crate) enum RunUntil {
+    // Run collection until we reach the stop condition *or* debt is zero.
     PayDebt,
-    // Run collection until we reach the end of the sweep phase.
-    Finish,
+    // Run collection until we reach our stop condition.
+    Stop,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
@@ -155,6 +155,12 @@ pub(crate) enum Stop {
     FullyMarked,
     // Don't proceed past the very beginning of the sweep phase
     AtSweep,
+    // Stop once we reach the end of the current cycle and are in `Phase::Sleep`.
+    FinishCycle,
+    // Stop once we have done an entire cycle as a single atomic unit. This is the maximum amount
+    // of work that a call to `Context::do_collection` will do, since a full collection as a single
+    // atomic unit means that all unreachable values *must* already be freed.
+    Full,
 }
 
 pub(crate) struct Context {
@@ -283,12 +289,12 @@ impl Context {
     pub(crate) unsafe fn do_collection<'gc, R: Collect<'gc> + ?Sized>(
         &mut self,
         root: &R,
-        target: Target,
-        stop: Option<Stop>,
+        run_until: RunUntil,
+        stop: Stop,
     ) {
         let mut cx = PhaseGuard::enter(self, None);
 
-        if target == Target::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+        if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
             cx.log_progress("GC: paused");
             return;
         }
@@ -303,7 +309,7 @@ impl Context {
                 }
                 Phase::Mark => {
                     if cx.mark_one(root).is_break() {
-                        if matches!(stop, Some(stop) if stop <= Stop::FullyMarked) {
+                        if stop <= Stop::FullyMarked {
                             break;
                         } else {
                             // If we have no gray objects left, we enter the sweep phase.
@@ -317,27 +323,43 @@ impl Context {
                     }
                 }
                 Phase::Sweep => {
-                    if matches!(stop, Some(stop) if stop <= Stop::AtSweep) {
+                    if stop <= Stop::AtSweep {
                         break;
                     } else if cx.sweep_one().is_break() {
+                        // True if we have done an entire collection cycle (marking and sweeping) as
+                        // a single atomic unit.
+                        let atomic_cycle = start_phase == Phase::Sleep;
+
                         // Begin a new cycle.
                         //
                         // We reset our debt if we have done an entire collection cycle as a single
                         // atomic unit. This keeps inherited debt from growing without bound.
-                        cx.metrics.finish_cycle(start_phase == Phase::Sleep);
+                        cx.metrics.finish_cycle(atomic_cycle);
                         cx.root_needs_trace = true;
                         cx.switch(Phase::Sleep);
 
-                        if target == Target::Finish {
+                        // We treat a stop condition of `Stop::Finish` as special for the purposes
+                        // of logging, and log that we finished a cycle.
+                        if stop == Stop::FinishCycle {
                             cx.log_progress("GC: finished");
                             return;
+                        }
+
+                        // Otherwise we always break if we have performed a full cycle as a single
+                        // atomic unit, because there cannot be any more work to do in this case.
+                        if atomic_cycle {
+                            // We shouldn't be stopping here if the stop condition is something like
+                            // `Stop::AtSweep`, but this should be impossible since the only way to
+                            // get here is to have started in the sleeping phase.
+                            assert!(stop == Stop::Full);
+                            break;
                         }
                     }
                 }
                 Phase::Drop => unreachable!(),
             }
 
-            if target == Target::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+            if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
                 break;
             }
         }

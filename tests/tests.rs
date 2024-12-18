@@ -44,7 +44,7 @@ fn weak_allocation() {
             weak,
         }
     });
-    arena.finish_collection();
+    arena.finish_cycle();
     arena.mutate(|mc, root| {
         assert!(root
             .weak
@@ -92,7 +92,7 @@ fn dyn_sized_allocation() {
         TestRoot { slice }
     });
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // Check that no counter was dropped.
     assert_eq!(Rc::strong_count(&counter.0), SIZE + 1);
@@ -101,7 +101,7 @@ fn dyn_sized_allocation() {
     arena.mutate_root(|mc, root| {
         root.slice = unsize!(Gc::new(mc, []) => [_]);
     });
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // Check that all counters were dropped.
     assert_eq!(Rc::strong_count(&counter.0), 1);
@@ -148,8 +148,8 @@ fn repeated_allocation_deallocation() {
         arena.collect_debt();
     }
 
-    arena.finish_collection();
-    arena.finish_collection();
+    arena.finish_cycle();
+    arena.finish_cycle();
 
     let live_size = arena.mutate(|_, root| root.0.borrow().len());
     assert_eq!(Rc::strong_count(&r.0), live_size + 1);
@@ -204,7 +204,7 @@ fn all_garbage_collected() {
     arena.mutate(|mc, root| {
         root.0.unlock(mc).borrow_mut().clear();
     });
-    arena.finish_collection();
+    arena.finish_cycle();
     assert_eq!(Rc::strong_count(&r.0), 1);
 }
 
@@ -422,7 +422,7 @@ fn test_dynamic_roots() {
     assert_eq!(Rc::strong_count(&rc_a), 2);
     assert_eq!(Rc::strong_count(&rc_b), 2);
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     assert_eq!(Rc::strong_count(&rc_a), 2);
     assert_eq!(Rc::strong_count(&rc_b), 2);
@@ -444,7 +444,7 @@ fn test_dynamic_roots() {
     drop(root_a);
     drop(root_b);
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     assert_eq!(Rc::strong_count(&rc_a), 2);
     assert_eq!(Rc::strong_count(&rc_b), 2);
@@ -452,7 +452,7 @@ fn test_dynamic_roots() {
     drop(root_a_clone);
     drop(root_b_clone);
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     assert_eq!(Rc::strong_count(&rc_a), 1);
     // There is still `root_b_dup` which should point to the same object.
@@ -460,7 +460,7 @@ fn test_dynamic_roots() {
 
     drop(root_b_dup);
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     assert_eq!(Rc::strong_count(&rc_b), 1);
 }
@@ -520,7 +520,7 @@ fn test_collection_bounded() {
     });
 
     // Finish the current collection cycle so that the new min_sleep is used.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     for _ in 0..1024 {
         for _ in 0..4 {
@@ -640,7 +640,7 @@ fn okay_panic() {
 
     for _ in 0..10 {
         if let Err(err) = catch_unwind(AssertUnwindSafe(|| {
-            arena.finish_collection();
+            arena.finish_cycle();
         })) {
             assert_eq!(*err.downcast::<&'static str>().unwrap(), "test panic");
         } else {
@@ -717,7 +717,7 @@ fn gc_sleep_actually_sleeps() {
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
     // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
     // than 1024.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
     assert!(arena.metrics().allocation_debt() == 0.0);
@@ -763,7 +763,7 @@ fn gc_external_allocation_affects_timing() {
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
     // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
     // than 1024.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
     assert!(arena.metrics().allocation_debt() == 0.0);
@@ -812,7 +812,7 @@ fn stop_the_world_works() {
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
     // for exactly min_sleep, since the sleep factor is 1.5 and 1.5x 256 bytes is 384 which is less
     // than 1024.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
     assert!(arena.metrics().allocation_debt() == 0.0);
@@ -891,7 +891,7 @@ fn basic_finalization() {
         .unwrap()
         .finalize(|fc, root| root.c.resurrect(fc).is_some());
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.finish_marking().unwrap().finalize(|fc, root| {
         assert!(root.c.upgrade(&fc).is_some());
@@ -899,7 +899,7 @@ fn basic_finalization() {
         assert!(!root.d.is_dead(fc));
     });
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.finish_marking().unwrap().finalize(|fc, root| {
         assert!(root.c.upgrade(&fc).is_none());
@@ -928,7 +928,7 @@ fn transitive_death() {
         assert!(!Gc::is_dead(fc, *root.b.upgrade(&fc).unwrap()));
     });
 
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate_root(|_, root| {
         root.a = None;
@@ -952,7 +952,7 @@ fn test_phases() {
         let test = Gc::new(mc, [0; 1024 * 64]);
         TestRoot { test }
     });
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // The collector must start out in the sleeping phase.
     assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
@@ -995,7 +995,7 @@ fn test_phases() {
     assert_eq!(arena.collection_phase(), CollectionPhase::Sweeping);
 
     // This should not move from Sweeping to Marking in one call, it must pass through Sleeping.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     // We must end back up at Sleeping.
     assert!(arena.collection_phase() == CollectionPhase::Sleeping);
@@ -1043,7 +1043,7 @@ fn barriers() {
     });
 
     // Finish collection, if the barrier didn't work this would delete the allocated pointer.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate(|_, root| {
         assert_eq!(*root.node.strong_child.get().unwrap(), 17);
@@ -1060,7 +1060,7 @@ fn barriers() {
     });
 
     // Finish collection, if the barrier didn't work this would delete the allocated pointer.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate(|_, root| {
         assert!(root.node.weak_child.get().unwrap().is_dropped());
@@ -1083,7 +1083,7 @@ fn barriers() {
     });
 
     // Finish collection, if the barrier didn't work this would delete the allocated pointer.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate(|_, root| {
         assert_eq!(*root.node.strong_child.get().unwrap(), 17);
@@ -1100,11 +1100,59 @@ fn barriers() {
     });
 
     // Finish collection, if the barrier didn't work this would delete the allocated pointer.
-    arena.finish_collection();
+    arena.finish_cycle();
 
     arena.mutate(|_, root| {
         assert!(root.node.weak_child.get().unwrap().is_dropped());
     });
+}
+
+#[test]
+fn cycle_debt_stops() {
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct TestRoot<'gc> {
+        test: Gc<'gc, [u8; 512]>,
+    }
+
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
+        let test = Gc::new(mc, [0; 512]);
+        TestRoot { test }
+    });
+    arena.metrics().set_pacing(Pacing {
+        min_sleep: 1024,
+        ..Pacing::DEFAULT
+    });
+
+    arena.finish_cycle();
+
+    assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
+
+    loop {
+        arena.mutate(|mc, _| {
+            Gc::new(mc, [0u8; 128]);
+        });
+        if let Some(marked_arena) = arena.mark_debt() {
+            marked_arena.start_sweeping();
+            break;
+        }
+    }
+
+    assert_eq!(arena.collection_phase(), CollectionPhase::Sweeping);
+
+    loop {
+        arena.mutate(|mc, _| {
+            Gc::new(mc, [0u8; 2048]);
+        });
+        arena.cycle_debt();
+        match arena.collection_phase() {
+            CollectionPhase::Sweeping => {}
+            CollectionPhase::Sleeping => break,
+            CollectionPhase::Marking | CollectionPhase::Marked => {
+                panic!("`Arena::cycle_debt` should not transition past sleeping in one call!")
+            }
+        }
+    }
 }
 
 #[test]
