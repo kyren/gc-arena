@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 use crate::{
-    context::{Context, Finalization, Mutation, Phase, Stop, Target},
+    context::{Context, Finalization, Mutation, Phase, RunUntil, Stop},
     metrics::Metrics,
     Collect,
 };
@@ -266,31 +266,83 @@ where
 {
     /// Run incremental garbage collection until the allocation debt is zero.
     ///
+    /// This will run through ALL phases of the collection cycle until the debt is zero, including
+    /// implicitly finishing the current cycle and starting a new one (transitioning from
+    /// [`CollectionPhase::Sweeping`] to [`CollectionPhase::Sleeping`]). Since this method runs
+    /// until debt is zero with no guaranteed return at any specific transition, you may need to use
+    /// other methods like [`Arena::mark_debt`] and [`Arena::cycle_debt`] if you need to keep close
+    /// track of the current collection phase.
+    ///
     /// There is no minimum unit of work enforced here, so it may be faster to only call this method
-    /// when the allocation debt is above some threshold.
+    /// when the allocation debt is above some minimum threshold.
     #[inline]
     pub fn collect_debt(&mut self) {
         unsafe {
             self.context
-                .do_collection(&self.root, Target::PayDebt, None);
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::Full);
         }
     }
 
     /// Run only the *marking* part of incremental garbage collection until allocation debt is zero.
     ///
-    /// This does *not* transition collection past the `Marked` phase. Does nothing if the
-    /// collection phase is `Marked` or `Sweeping`, otherwise acts like [`Arena::collect_debt`].
+    /// This does *not* transition collection past the [`CollectionPhase::Marked`]
+    /// phase. Does nothing if the collection phase is [`CollectionPhase::Marked`] or
+    /// [`CollectionPhase::Sweeping`], otherwise acts like [`Arena::collect_debt`].
+    ///
+    /// If this method stops because the arena is now fully marked (the collection phase is
+    /// [`CollectionPhase::Marked`]), then a [`MarkedArena`] object will be returned to allow
+    /// you to examine the state of the fully marked arena.
     #[inline]
     pub fn mark_debt(&mut self) -> Option<MarkedArena<'_, R>> {
         unsafe {
             self.context
-                .do_collection(&self.root, Target::PayDebt, Some(Stop::FullyMarked));
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::FullyMarked);
         }
 
         if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
             Some(MarkedArena(self))
         } else {
             None
+        }
+    }
+
+    /// Runs ALL of the remaining *marking* part of the current garbage collection cycle.
+    ///
+    /// Similarly to [`Arena::mark_debt`], this does not transition collection past the
+    /// [`CollectionPhase::Marked`] phase, and does nothing if the collector is currently in the
+    /// [`CollectionPhase::Marked`] phase or the [`CollectionPhase::Sweeping`] phase.
+    ///
+    /// This method will always fully mark the arena and return a [`MarkedArena`] object as long as
+    /// the current phase is not [`CollectionPhase::Sweeping`].
+    #[inline]
+    pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R>> {
+        unsafe {
+            self.context
+                .do_collection(&self.root, RunUntil::Stop, Stop::FullyMarked);
+        }
+
+        if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
+            Some(MarkedArena(self))
+        } else {
+            None
+        }
+    }
+
+    /// Run the *current* collection cycle until the allocation debt is zero.
+    ///
+    /// This is nearly identical to the [`Arena::collect_debt`] method, except it
+    /// *always* returns immediately when a cycle is finished (when phase transitions
+    /// to [`CollectionPhase::Sleeping`]), and will never transition directly from
+    /// [`CollectionPhase::Sweeping`] to [`CollectionPhase::Marking`] within a single call, even if
+    /// there is enough outstanding debt to do so.
+    ///
+    /// This mostly only important when the user of an `Arena` needs to closely track collection
+    /// phases, otherwise [`Arena::collect_debt`] simpler to use.
+    #[inline]
+    pub fn cycle_debt(&mut self) {
+        unsafe {
+            self.context
+                .do_collection(&self.root, RunUntil::PayDebt, Stop::FinishCycle);
         }
     }
 
@@ -299,28 +351,10 @@ where
     /// then this restarts the collector and performs a full collection before transitioning back to
     /// the sleep phase.
     #[inline]
-    pub fn finish_collection(&mut self) {
-        unsafe {
-            self.context.do_collection(&self.root, Target::Finish, None);
-        }
-    }
-
-    /// Runs all of the remaining *marking* part of the current garbage collection cycle.
-    ///
-    /// Similarly to `Arena::mark_debt`, this does not transition collection  past the `Marked`
-    /// phase, and does nothing if the collector is currently in the `Marked` phase or the
-    /// `Sweeping` phase.
-    #[inline]
-    pub fn finish_marking(&mut self) -> Option<MarkedArena<'_, R>> {
+    pub fn finish_cycle(&mut self) {
         unsafe {
             self.context
-                .do_collection(&self.root, Target::Finish, Some(Stop::FullyMarked));
-        }
-
-        if self.context.phase() == Phase::Mark && !self.context.gray_remaining() {
-            Some(MarkedArena(self))
-        } else {
-            None
+                .do_collection(&self.root, RunUntil::Stop, Stop::FinishCycle);
         }
     }
 }
@@ -360,7 +394,7 @@ where
         unsafe {
             self.0
                 .context
-                .do_collection(&self.0.root, Target::Finish, Some(Stop::AtSweep));
+                .do_collection(&self.0.root, RunUntil::Stop, Stop::AtSweep);
         }
         assert_eq!(self.0.context.phase(), Phase::Sweep);
     }
