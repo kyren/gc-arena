@@ -299,11 +299,12 @@ impl Context {
             return;
         }
 
-        let start_phase = cx.phase;
+        let mut has_slept = false;
 
         loop {
             match cx.phase {
                 Phase::Sleep => {
+                    has_slept = true;
                     // Immediately enter the mark phase
                     cx.switch(Phase::Mark);
                 }
@@ -326,15 +327,12 @@ impl Context {
                     if stop <= Stop::AtSweep {
                         break;
                     } else if cx.sweep_one().is_break() {
-                        // True if we have done an entire collection cycle (marking and sweeping) as
-                        // a single atomic unit.
-                        let atomic_cycle = start_phase == Phase::Sleep;
-
                         // Begin a new cycle.
                         //
-                        // We reset our debt if we have done an entire collection cycle as a single
-                        // atomic unit. This keeps inherited debt from growing without bound.
-                        cx.metrics.finish_cycle(atomic_cycle);
+                        // We reset our debt if we have done an entire collection cycle (marking and
+                        // sweeping) as a single atomic unit. This keeps inherited debt from growing
+                        // without bound.
+                        cx.metrics.finish_cycle(has_slept);
                         cx.root_needs_trace = true;
                         cx.switch(Phase::Sleep);
 
@@ -347,10 +345,10 @@ impl Context {
 
                         // Otherwise we always break if we have performed a full cycle as a single
                         // atomic unit, because there cannot be any more work to do in this case.
-                        if atomic_cycle {
+                        if has_slept {
                             // We shouldn't be stopping here if the stop condition is something like
                             // `Stop::AtSweep`, but this should be impossible since the only way to
-                            // get here is to have started in the sleeping phase.
+                            // get here is to have gone through the entire cycle.
                             assert!(stop == Stop::Full);
                             break;
                         }
