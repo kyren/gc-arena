@@ -128,7 +128,11 @@ unsafe impl<'gc> Collect<'gc> for Global {
     const NEEDS_TRACE: bool = false;
 }
 
-unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for boxed::Box<T, A> {
+unsafe impl<'gc, T, A> Collect<'gc> for boxed::Box<T, A>
+where
+    T: Collect<'gc> + ?Sized,
+    A: Collect<'gc> + Allocator,
+{
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
     #[inline]
