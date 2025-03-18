@@ -1,6 +1,5 @@
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::collections::{LinkedList, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -210,6 +209,20 @@ where
 }
 
 unsafe impl<'gc, T> Collect<'gc> for BTreeSet<T>
+where
+    T: Collect<'gc>,
+{
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        for v in self {
+            cc.trace(v);
+        }
+    }
+}
+
+unsafe impl<'gc, T> Collect<'gc> for BinaryHeap<T>
 where
     T: Collect<'gc>,
 {
