@@ -2,10 +2,7 @@ error[E0277]: the trait bound `NotCollect: Collect<'_>` is not satisfied
  --> tests/ui/bad_collect_bound.rs:8:12
   |
 8 |     field: NotCollect
-  |            ^^^^^^^^^^
-  |            |
-  |            the trait `Collect<'_>` is not implemented for `NotCollect`
-  |            the trait `Collect<'_>` is not implemented for `NotCollect`
+  |            ^^^^^^^^^^ the trait `Collect<'_>` is not implemented for `NotCollect`
   |
   = help: the following other types implement trait `Collect<'gc>`:
             &'static T

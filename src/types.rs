@@ -263,11 +263,6 @@ pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
 
 /// Utility functions for tagging and untagging pointers.
 mod tagged_ptr {
-    #![cfg_attr(not(miri), allow(unstable_name_collisions))]
-
-    #[cfg(not(miri))]
-    use sptr::Strict as _;
-
     use core::cell::Cell;
 
     trait ValidMask<const MASK: usize> {
