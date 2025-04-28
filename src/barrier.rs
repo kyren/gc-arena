@@ -118,6 +118,22 @@ impl<T, E> Write<Result<T, E>> {
     }
 }
 
+impl<T: ?Sized> Write<alloc::boxed::Box<T>> {
+    /// Converts from `&Write<Box<T>>` to `&Write<T>`.
+    #[inline(always)]
+    pub fn deref_write(&self) -> &Write<T> {
+        unsafe { Write::assume(&*self.__inner) }
+    }
+}
+
+impl<T> Write<[T]> {
+    /// Writes to a specific element in a `&Write<[T]>`, returning a `&Write<T>`.
+    #[inline(always)]
+    pub fn write_at(&self, index: usize) -> &Write<T> {
+        unsafe { Write::assume(&self.__inner[index]) }
+    }
+}
+
 /// Types that support additional operations (typically, mutation) when behind a write barrier.
 pub trait Unlock {
     /// This will typically be a cell-like type providing some sort of interior mutability.
