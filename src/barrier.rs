@@ -118,6 +118,14 @@ impl<T, E> Write<Result<T, E>> {
     }
 }
 
+impl<T> Write<[T]> {
+    /// Writes to a specific array element.
+    #[inline(always)]
+    pub fn write_at(&self, index: usize) -> &Write<T> {
+        unsafe { Write::assume(&self.__inner[index]) }
+    }
+}
+
 /// Types that support additional operations (typically, mutation) when behind a write barrier.
 pub trait Unlock {
     /// This will typically be a cell-like type providing some sort of interior mutability.
