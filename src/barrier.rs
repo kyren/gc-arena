@@ -1,10 +1,21 @@
 //! Write barrier management.
 
+use core::borrow::Borrow;
 use core::mem;
-use core::ops::{Deref, DerefMut};
+use core::ops::{
+    Deref, DerefMut, Index, Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive,
+};
+
+use alloc::collections::{BTreeMap, VecDeque};
+use alloc::vec::Vec;
+
+#[cfg(feature = "std")]
+use std::{collections::HashMap, hash::BuildHasher, hash::Hash};
 
 #[cfg(doc)]
 use crate::Gc;
+#[cfg(doc)]
+use core::ops::IndexMut;
 
 /// An (interiorly-)mutable reference inside a GC'd object graph.
 ///
@@ -33,6 +44,16 @@ impl<T: ?Sized> DerefMut for Write<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.__inner
+    }
+}
+
+impl<T: IndexWrite<I> + ?Sized, I> Index<I> for Write<T> {
+    type Output = Write<T::Output>;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        // SAFETY: `IndexWrite` guarantees that the `Index` impl is `Write`-compatible.
+        unsafe { Write::assume(&self.__inner[index]) }
     }
 }
 
@@ -88,6 +109,16 @@ impl<T: ?Sized> Write<T> {
         // SAFETY: a `&Write<T>` implies that a write barrier was triggered on the parent `Gc`.
         unsafe { self.__inner.unlock_unchecked() }
     }
+
+    /// Propagates a write barrier through a smart pointer dereference.
+    #[inline(always)]
+    pub fn as_deref(&self) -> &Write<T::Target>
+    where
+        T: DerefWrite,
+    {
+        // SAFETY: `DerefWrite` guarantees that the `Deref` impl is `Write`-compatible.
+        unsafe { Write::assume(&*self) }
+    }
 }
 
 impl<T> Write<Option<T>> {
@@ -116,6 +147,68 @@ impl<T, E> Write<Result<T, E>> {
             }
         }
     }
+}
+
+/// Types which preserve write barriers when dereferenced.
+///
+/// # Safety
+/// Implementing this trait is a promise that the corresponding [`Deref`] impl
+/// (and [`DerefMut`], if it exists) can be used to project a [`Write`] reference.
+///
+/// In particular, both `Deref::deref` and `DerefMut::deref_mut`:
+/// - must return a reference into the *same* GC'd object as the input;
+/// - must not adopt new [`Gc`] pointers.
+pub unsafe trait DerefWrite: Deref {}
+
+// SAFETY: All these types have pure & non-GC-traversing Deref(Mut) impls
+unsafe impl<T: ?Sized> DerefWrite for &T {}
+unsafe impl<T: ?Sized> DerefWrite for alloc::boxed::Box<T> {}
+unsafe impl<T> DerefWrite for Vec<T> {}
+unsafe impl<T: ?Sized> DerefWrite for alloc::rc::Rc<T> {}
+#[cfg(target_has_atomic = "ptr")]
+unsafe impl<T: ?Sized> DerefWrite for alloc::sync::Arc<T> {}
+
+/// Types which preserve write barriers when indexed.
+///
+/// # Safety
+/// Implementing this trait is a promise that the corresponding [`Index<I>`] impl
+/// (and [`IndexMut<I>`], if it exists) can be used to project a [`Write`] reference.
+///
+/// In particular, both `Index::index` and `IndexMut::index_mut`:
+/// - must return a reference into the *same* GC'd object as the input;
+/// - must not adopt new [`Gc`] pointers.
+pub unsafe trait IndexWrite<I: ?Sized>: Index<I> {}
+
+// SAFETY: All these types have pure & non-GC-traversing Index(Mut) impls
+// Note that we don't write `impl<..., I> IndexWrite<I> for ... where ...: Index<I>`,
+// as this would allow arbitrary implementations through third-party `I` types.
+unsafe impl<T> IndexWrite<usize> for [T] {}
+unsafe impl<T> IndexWrite<Range<usize>> for [T] {}
+unsafe impl<T> IndexWrite<RangeFrom<usize>> for [T] {}
+unsafe impl<T> IndexWrite<RangeInclusive<usize>> for [T] {}
+unsafe impl<T> IndexWrite<RangeTo<usize>> for [T] {}
+unsafe impl<T> IndexWrite<RangeToInclusive<usize>> for [T] {}
+unsafe impl<T, I, const N: usize> IndexWrite<I> for [T; N] where [T]: IndexWrite<I> {}
+unsafe impl<T, I> IndexWrite<I> for Vec<T>
+where
+    [T]: IndexWrite<I>,
+    Self: Index<I>,
+{
+}
+unsafe impl<T> IndexWrite<usize> for VecDeque<T> {}
+unsafe impl<K, V, Q> IndexWrite<&Q> for BTreeMap<K, V>
+where
+    K: Borrow<Q> + Ord,
+    Q: Ord + ?Sized,
+{
+}
+#[cfg(feature = "std")]
+unsafe impl<K, V, S, Q> IndexWrite<&Q> for HashMap<K, V, S>
+where
+    K: Eq + Hash + Borrow<Q>,
+    Q: Eq + Hash + ?Sized,
+    S: BuildHasher,
+{
 }
 
 /// Types that support additional operations (typically, mutation) when behind a write barrier.

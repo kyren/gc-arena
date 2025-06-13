@@ -1,7 +1,10 @@
 #[cfg(feature = "allocator-api2")]
 mod inner {
+    use core::hash::{BuildHasher, Hash};
+
     use allocator_api2::alloc::Allocator;
 
+    use crate::barrier::IndexWrite;
     use crate::collect::{Collect, Trace};
 
     unsafe impl<'gc, K, V, S, A> Collect<'gc> for hashbrown::HashMap<K, V, S, A>
@@ -55,10 +58,22 @@ mod inner {
             cc.trace(self.allocator());
         }
     }
+
+    unsafe impl<K, V, S, A, Q> IndexWrite<&Q> for hashbrown::HashMap<K, V, S, A>
+    where
+        K: Eq + Hash,
+        Q: Hash + hashbrown::Equivalent<K> + ?Sized,
+        S: BuildHasher,
+        A: Allocator,
+    {
+    }
 }
 
 #[cfg(not(feature = "allocator-api2"))]
 mod inner {
+    use core::hash::{BuildHasher, Hash};
+
+    use crate::barrier::IndexWrite;
     use crate::collect::{Collect, Trace};
 
     unsafe impl<'gc, K, V, S> Collect<'gc> for hashbrown::HashMap<K, V, S>
@@ -105,5 +120,13 @@ mod inner {
                 cc.trace(v);
             }
         }
+    }
+
+    unsafe impl<K, V, S, Q> IndexWrite<&Q> for hashbrown::HashMap<K, V, S>
+    where
+        K: Eq + Hash,
+        Q: Hash + hashbrown::Equivalent<K> + ?Sized,
+        S: BuildHasher,
+    {
     }
 }

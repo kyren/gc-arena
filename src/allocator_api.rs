@@ -1,4 +1,4 @@
-use std::{alloc::Layout, marker::PhantomData, ptr::NonNull};
+use core::{alloc::Layout, marker::PhantomData, ops::Index, ptr::NonNull};
 
 use allocator_api2::{
     alloc::{AllocError, Allocator, Global},
@@ -6,6 +6,7 @@ use allocator_api2::{
 };
 
 use crate::{
+    barrier::{DerefWrite, IndexWrite},
     collect::{Collect, Trace},
     context::Mutation,
     metrics::Metrics,
@@ -142,6 +143,8 @@ where
     }
 }
 
+unsafe impl<T: ?Sized, A: Allocator> DerefWrite for boxed::Box<T, A> {}
+
 unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for vec::Vec<T, A> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE || A::NEEDS_TRACE;
 
@@ -152,4 +155,12 @@ unsafe impl<'gc, T: Collect<'gc>, A: Collect<'gc> + Allocator> Collect<'gc> for 
         }
         cc.trace(self.allocator());
     }
+}
+
+unsafe impl<T, A: Allocator> DerefWrite for vec::Vec<T, A> {}
+unsafe impl<T, A: Allocator, I> IndexWrite<I> for vec::Vec<T, A>
+where
+    [T]: IndexWrite<I>,
+    Self: Index<I>,
+{
 }
