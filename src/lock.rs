@@ -1,7 +1,7 @@
 //! GC-aware interior mutability types.
 
 use core::{
-    cell::{BorrowError, BorrowMutError, Cell, Ref, RefCell, RefMut},
+    cell::{BorrowError, BorrowMutError, Cell, OnceCell, Ref, RefCell, RefMut},
     cmp::Ordering,
     fmt,
 };
@@ -18,8 +18,10 @@ macro_rules! make_lock_wrapper {
         $(#[$meta:meta])*
         locked = $locked_type:ident as $gc_locked_type:ident;
         unlocked = $unlocked_type:ident unsafe $unsafe_unlock_method:ident;
-        impl Sized { $($sized_items:tt)* }
-        impl ?Sized { $($unsized_items:tt)* }
+        $(
+            impl $Sized:ident { $($sized_items:tt)* }
+            impl ?Sized { $($unsized_items:tt)* }
+        )?
     ) => {
         /// A wrapper around a [`
         #[doc = stringify!($unlocked_type)]
@@ -35,13 +37,14 @@ macro_rules! make_lock_wrapper {
         /// since methods on [`Gc`] can ensure that the write barrier is called.
         $(#[$meta])*
         #[repr(transparent)]
-        pub struct $locked_type<T: ?Sized> {
+        pub struct $locked_type<T $(: ?$Sized)?> {
             cell: $unlocked_type<T>,
         }
 
         #[doc = concat!("An alias for `Gc<'gc, ", stringify!($locked_type), "<T>>`.")]
         pub type $gc_locked_type<'gc, T> = Gc<'gc, $locked_type<T>>;
 
+        $(
         impl<T> $locked_type<T> {
             #[inline]
             pub fn new(t: T) -> $locked_type<T> {
@@ -56,7 +59,7 @@ macro_rules! make_lock_wrapper {
             $($sized_items)*
         }
 
-        impl<T: ?Sized> $locked_type<T> {
+        impl<T: ?$Sized> $locked_type<T> {
             #[inline]
             pub fn as_ptr(&self) -> *mut T {
                 self.cell.as_ptr()
@@ -83,8 +86,9 @@ macro_rules! make_lock_wrapper {
                 self.cell.get_mut()
             }
         }
+        )?
 
-        impl<T: ?Sized> Unlock for $locked_type<T> {
+        impl<T $(: ?$Sized)?> Unlock for $locked_type<T> {
             type Unlocked = $unlocked_type<T>;
 
             #[inline]
@@ -96,7 +100,7 @@ macro_rules! make_lock_wrapper {
         impl<T> From<T> for $locked_type<T> {
             #[inline]
             fn from(t: T) -> Self {
-                Self::new(t)
+                Self { cell: t.into() }
             }
         }
 
@@ -248,15 +252,7 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
             Err(_) => {
                 // The RefLock is mutably borrowed so we can't look at its value
                 // here. Show a placeholder instead.
-                struct BorrowedPlaceholder;
-
-                impl fmt::Debug for BorrowedPlaceholder {
-                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                        f.write_str("<borrowed>")
-                    }
-                }
-
-                fmt.field(&BorrowedPlaceholder)
+                fmt.field(&format_args!("<borrowed>"))
             }
         }
         .finish()
@@ -293,5 +289,89 @@ unsafe impl<'gc, T: Collect<'gc> + 'gc + ?Sized> Collect<'gc> for RefLock<T> {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace(&*self.borrow());
+    }
+}
+
+make_lock_wrapper!(
+    #[derive(Clone, Eq, PartialEq)]
+    locked = OnceLock as GcOnceLock;
+    unlocked = OnceCell unsafe as_once_cell;
+);
+
+// Can't use `#[derive]` because of the non-standard bounds.
+impl<T> Default for OnceLock<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for OnceLock<T> {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let mut d = fmt.debug_tuple("OnceLock");
+        match self.get() {
+            Some(v) => d.field(v),
+            None => d.field(&format_args!("<uninit>")),
+        };
+        d.finish()
+    }
+}
+
+impl<T> OnceLock<T> {
+    #[inline]
+    pub fn new() -> Self {
+        Self {
+            cell: OnceCell::new(),
+        }
+    }
+
+    #[inline]
+    pub fn get(&self) -> Option<&T> {
+        self.cell.get()
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self) -> Option<&mut T> {
+        self.cell.get_mut()
+    }
+}
+
+unsafe impl<'gc, T: Collect<'gc>> Collect<'gc> for OnceLock<T> {
+    const NEEDS_TRACE: bool = T::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
+        if let Some(val) = self.get() {
+            cc.trace(val);
+        }
+    }
+}
+
+impl<'gc, T: 'gc> Gc<'gc, OnceLock<T>> {
+    #[inline]
+    pub fn get(self) -> Option<&'gc T> {
+        self.as_ref().get()
+    }
+
+    #[inline]
+    pub fn set(self, mc: &Mutation<'gc>, value: T) -> Result<(), T> {
+        // SAFETY: we emit a write barrier if (and only if) the value is modified.
+        let result = self.cell.set(value);
+        if result.is_ok() {
+            mc.backward_barrier(Gc::erase(self), None);
+        }
+        result
+    }
+
+    #[inline]
+    pub fn get_or_init<F>(self, mc: &Mutation<'gc>, f: F) -> &'gc T
+    where
+        F: FnOnce() -> T,
+    {
+        // SAFETY: we emit a write barrier if (and only if) the value is modified.
+        self.as_ref().cell.get_or_init(|| {
+            mc.backward_barrier(Gc::erase(self), None);
+            f()
+        })
     }
 }
