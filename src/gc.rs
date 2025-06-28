@@ -166,9 +166,7 @@ impl<'gc, T: Unlock + ?Sized + 'gc> Gc<'gc, T> {
     /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
     #[inline]
     pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc T::Unlocked {
-        Gc::write(mc, self);
-        // SAFETY: see doc-comment.
-        unsafe { self.as_ref().unlock_unchecked() }
+        Gc::write(mc, self).unlock()
     }
 }
 
