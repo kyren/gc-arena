@@ -7,9 +7,9 @@ use core::{
 };
 
 use crate::{
+    Gc, Mutation,
     barrier::Unlock,
     collect::{Collect, Trace},
-    Gc, Mutation,
 };
 
 // Helper macro to factor out the common parts of locks types.

@@ -6,10 +6,10 @@ use alloc::{
 };
 
 use crate::{
+    Gc, Mutation, Rootable,
     arena::Root,
     collect::{Collect, Trace},
     metrics::Metrics,
-    Gc, Mutation, Rootable,
 };
 
 /// A way of registering GC roots dynamically.

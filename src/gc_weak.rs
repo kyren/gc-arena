@@ -1,8 +1,8 @@
+use crate::Mutation;
 use crate::collect::{Collect, Trace};
 use crate::context::Finalization;
 use crate::gc::Gc;
 use crate::types::GcBox;
-use crate::Mutation;
 
 use core::fmt::{self, Debug};
 
@@ -120,8 +120,9 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: GcWeak<'gc, T>) -> GcWeak<'gc, U> {
-        GcWeak {
-            inner: Gc::cast::<U>(this.inner),
+        unsafe {
+            let inner = Gc::cast::<U>(this.inner);
+            GcWeak { inner }
         }
     }
 
@@ -145,8 +146,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// pointer).
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> GcWeak<'gc, T> {
-        GcWeak {
-            inner: Gc::from_ptr(ptr),
-        }
+        let inner = unsafe { Gc::from_ptr(ptr) };
+        GcWeak { inner }
     }
 }

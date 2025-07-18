@@ -1,11 +1,11 @@
 use proc_macro2::{Span, TokenStream};
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{ToTokens, quote, quote_spanned};
 use syn::{
     parse::{Parse, ParseStream},
     spanned::Spanned,
     visit_mut::VisitMut,
 };
-use synstructure::{decl_derive, AddBounds};
+use synstructure::{AddBounds, decl_derive};
 
 fn collect_derive(s: synstructure::Structure) -> TokenStream {
     fn find_collect_meta(attrs: &[syn::Attribute]) -> syn::Result<Option<&syn::Attribute>> {
@@ -225,7 +225,9 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                 if all_lifetimes.next().is_none() {
                     gc_lifetime = Some(lt.lifetime.clone());
                 } else {
-                    panic!("deriving `Collect` on a type with multiple lifetime parameters requires a `#[collect(gc_lifetime = ...)]` attribute");
+                    panic!(
+                        "deriving `Collect` on a type with multiple lifetime parameters requires a `#[collect(gc_lifetime = ...)]` attribute"
+                    );
                 }
             }
         };
