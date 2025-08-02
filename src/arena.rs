@@ -2,9 +2,9 @@ use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 use crate::{
+    Collect,
     context::{Context, Finalization, Mutation, Phase, RunUntil, Stop},
     metrics::Metrics,
-    Collect,
 };
 
 /// A trait that produces a [`Collect`]-able type for the given lifetime. This is used to produce

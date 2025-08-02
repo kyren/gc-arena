@@ -22,7 +22,7 @@ impl GcBox {
     pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
         // This cast is sound because `GcBoxInner` is `repr(C)`.
         let erased = ptr.as_ptr() as *mut GcBoxInner<()>;
-        Self(NonNull::new_unchecked(erased))
+        unsafe { Self(NonNull::new_unchecked(erased)) }
     }
 
     /// Gets a pointer to the value stored inside this box.
@@ -48,7 +48,7 @@ impl GcBox {
     /// **SAFETY**: `Self::drop_in_place` must not have been called.
     #[inline(always)]
     pub(crate) unsafe fn trace_value(&self, cc: &mut Context) {
-        (self.header().vtable().trace_value)(*self, cc)
+        unsafe { (self.header().vtable().trace_value)(*self, cc) }
     }
 
     /// Drops the stored value.
@@ -57,7 +57,7 @@ impl GcBox {
     /// (but accessing the `GcBox` itself is still safe).
     #[inline(always)]
     pub(crate) unsafe fn drop_in_place(&mut self) {
-        (self.header().vtable().drop_value)(*self)
+        unsafe { (self.header().vtable().drop_value)(*self) }
     }
 
     /// Deallocates the box. Failing to call `Self::drop_in_place` beforehand
@@ -67,10 +67,12 @@ impl GcBox {
     /// pointers again.
     #[inline(always)]
     pub(crate) unsafe fn dealloc(self) {
-        let layout = self.header().vtable().box_layout;
-        let ptr = self.0.as_ptr() as *mut u8;
-        // SAFETY: the pointer was `Box`-allocated with this layout.
-        alloc::alloc::dealloc(ptr, layout);
+        unsafe {
+            let layout = self.header().vtable().box_layout;
+            let ptr = self.0.as_ptr() as *mut u8;
+            // SAFETY: the pointer was `Box`-allocated with this layout.
+            alloc::alloc::dealloc(ptr, layout);
+        }
     }
 }
 

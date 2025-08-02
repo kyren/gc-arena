@@ -1,5 +1,5 @@
-use crate::collect::Collect;
 use crate::Rootable;
+use crate::collect::Collect;
 
 use alloc::borrow::{Borrow, BorrowMut};
 use core::convert::{AsMut, AsRef};

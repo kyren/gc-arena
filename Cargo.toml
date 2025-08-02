@@ -8,7 +8,7 @@ members = [
 [workspace.package]
 version = "0.5.3"
 authors = ["kyren <catherine@kyju.org>", "moulins", "Aaron Hill <aa1ronham@gmail.com>"]
-edition = "2021"
+edition = "2024"
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/kyren/gc-arena"
