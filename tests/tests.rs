@@ -17,12 +17,19 @@ fn simple_allocation() {
         test: Gc<'gc, i32>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
         test: Gc::new(mc, 42),
     });
 
     arena.mutate(|_mc, root| {
         assert_eq!(*((*root).test), 42);
+    });
+
+    let test_ref = arena.get_mut_gc(|root| root.test);
+    *test_ref = 100;
+
+    arena.mutate(|_mc, root| {
+        assert_eq!(*((*root).test), 100);
     });
 }
 
