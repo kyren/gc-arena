@@ -45,7 +45,7 @@ impl<'a, T: ?Sized + Rootable<'a>> Rootable<'a> for __DynRootable<T> {
 ///
 /// type MyArena = Arena<Rootable![MyRoot<'_>]>;
 ///
-/// // If desired, the branding lifetime can also be explicitely named:
+/// // If desired, the branding lifetime can also be explicitly named:
 /// type MyArena2 = Arena<Rootable!['gc => MyRoot<'gc>]>;
 /// # }
 /// ```

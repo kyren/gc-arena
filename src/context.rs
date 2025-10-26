@@ -523,7 +523,7 @@ impl Context {
         // Consider the different possible phases of the GC:
         // * In `Phase::Sleep`, the GC is not running, so we can upgrade.
         //   If the newly-created `Gc` or `GcCell` survives the current `arena.mutate`
-        //   call, then the situtation is equivalent to having copied an existing `Gc`/`GcCell`,
+        //   call, then the situation is equivalent to having copied an existing `Gc`/`GcCell`,
         //   or having created a new allocation.
         //
         // * In `Phase::Mark`:
