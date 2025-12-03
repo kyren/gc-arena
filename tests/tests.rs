@@ -5,8 +5,11 @@ use rand::distributions::Distribution;
 use std::{collections::HashMap, rc::Rc};
 
 use gc_arena::{
-    Arena, Collect, DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable, arena::CollectionPhase,
-    metrics::Pacing, static_collect, unsize,
+    Arena, Collect, DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
+    arena::CollectionPhase,
+    collect::{DynCollect, dyn_collect},
+    metrics::Pacing,
+    static_collect, unsize,
 };
 
 #[test]
@@ -1154,6 +1157,62 @@ fn cycle_debt_stops() {
             }
         }
     }
+}
+
+#[test]
+fn dyn_collect() {
+    trait MyTrait<'gc>: 'gc + DynCollect<'gc> {}
+    dyn_collect!(dyn MyTrait<'gc>);
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Test<'gc> {
+        field: Box<dyn MyTrait<'gc> + 'gc>,
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Impl<'gc>(Gc<'gc, ()>);
+
+    impl<'gc> MyTrait<'gc> for Impl<'gc> {}
+
+    #[allow(unused)]
+    fn test_fn<'gc>(p: impl MyTrait<'gc> + Collect<'gc> + 'gc) -> Box<dyn MyTrait<'gc> + 'gc> {
+        Box::new(p)
+    }
+
+    gc_arena::arena::rootless_mutate(|mc| {
+        let _test = Gc::new(
+            mc,
+            Test {
+                field: Box::new(Impl(Gc::new(mc, ()))),
+            },
+        );
+    });
+
+    trait MyTrait2<'gc, T>: DynCollect<'gc>
+    where
+        T: Clone,
+    {
+    }
+
+    dyn_collect!(<T> dyn MyTrait2<'gc, T> where T: Clone);
+
+    #[allow(unused)]
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Test2<'gc> {
+        field: Box<dyn MyTrait2<'gc, ()>>,
+    }
+}
+
+#[test]
+fn static_collect_with_param() {
+    #[allow(unused)]
+    #[derive(Clone)]
+    struct Test<T>(Rc<T>);
+    static_collect!(<T> Test<T>);
 }
 
 #[test]

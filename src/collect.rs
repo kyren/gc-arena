@@ -80,3 +80,112 @@ pub trait Trace<'gc> {
         }
     }
 }
+
+/// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
+/// simple empty `Collect` implementation.
+///
+/// This macro may be called in multiple ways:
+///
+/// ```ignore
+/// static_collect!(MyTrait<'gc>);
+/// static_collect!(<T> MyTrait<'gc, T> where T: Clone);
+/// static_collect!(<T> MyTrait<'gc, Assoc = T>);
+/// ```
+///
+/// Type parameters may be declared using `<A, B>` at the beginning of the macro, along with an
+/// optional trailing where clause.
+#[macro_export]
+macro_rules! static_collect {
+    (<$($params:tt),+ $(,)*> $type:ty $(where $($bounds:tt)+)?) => {
+        unsafe impl<'gc, $($params),*> $crate::Collect<'gc> for $type
+        where
+            $type: 'static,
+            $($($bounds)+)*
+        {
+            const NEEDS_TRACE: bool = false;
+        }
+    };
+    ($type:ty) => {
+        unsafe impl<'gc> $crate::Collect<'gc> for $type
+        where
+            $type: 'static,
+        {
+            const NEEDS_TRACE: bool = false;
+        }
+    }
+}
+
+/// An object safe version of the [`Collect`] trait.
+///
+/// This is automatically implemented for all types that implement the normal `Collect` trait.
+///
+/// The `dyn DynCollect` trait object implements `Collect` automatically, but trait objects for user
+/// defined traits that have `DynCollect` as a parent trait can also be made to implement `Collect`
+/// by using the [`dyn_collect`] macro.
+pub unsafe trait DynCollect<'gc> {
+    fn dyn_trace(&self, cc: &mut dyn Trace<'gc>);
+}
+
+unsafe impl<'gc> Collect<'gc> for dyn DynCollect<'gc> {
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+        self.dyn_trace(cc)
+    }
+}
+
+unsafe impl<'gc, T: Collect<'gc>> DynCollect<'gc> for T {
+    fn dyn_trace(&self, cc: &mut dyn Trace<'gc>) {
+        struct TraceWrap<'a, 'gc>(&'a mut dyn Trace<'gc>);
+
+        impl<'a, 'gc> Trace<'gc> for TraceWrap<'a, 'gc> {
+            fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
+                self.0.trace_gc(gc)
+            }
+
+            fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
+                self.0.trace_gc_weak(gc)
+            }
+        }
+
+        self.trace(&mut TraceWrap(cc))
+    }
+}
+
+/// Implement [`Collect`] for custom trait objects.
+///
+/// The trait being implemented must have [`DynCollect`] as a supertrait.
+///
+/// This macro may be called in multiple ways:
+///
+/// ```ignore
+/// dyn_collect!(MyTrait<'gc>);
+/// dyn_collect!(<T> MyTrait<'gc, T> where T: Clone);
+/// dyn_collect!(<T> MyTrait<'gc, Assoc = T>);
+/// ```
+///
+/// The generated impl always has a single `'gc` lifetime parameter that is used as the `'gc`
+/// parameter on the `Collect` trait. Additional type and lifetime parameters may be declared using
+/// `<A, B>` at the beginning of the macro, along with an optional trailing where clause.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __dyn_collect {
+    (<$($params:tt),+ $(,)*> $trait:ty $(where $($bounds:tt)+)?) => {
+        unsafe impl<'gc, $($params),*> $crate::Collect<'gc> for $trait
+        where
+            $($($bounds)+)*
+        {
+            fn trace<_T: $crate::collect::Trace<'gc>>(&self, cc: &mut _T) {
+                $crate::collect::DynCollect::dyn_trace(self, cc);
+            }
+        }
+    };
+    ($trait:ty) => {
+        unsafe impl<'gc> $crate::Collect<'gc> for $trait {
+            fn trace<_T: $crate::collect::Trace<'gc>>(&self, cc: &mut _T) {
+                $crate::collect::DynCollect::dyn_trace(self, cc);
+            }
+        }
+    }
+}
+
+#[doc(inline)]
+pub use crate::__dyn_collect as dyn_collect;

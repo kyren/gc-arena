@@ -10,20 +10,6 @@ use std::collections::{HashMap, HashSet};
 
 use crate::collect::{Collect, Trace};
 
-/// If a type is static, we know that it can never hold `Gc` pointers, so it is safe to provide a
-/// simple empty `Collect` implementation.
-#[macro_export]
-macro_rules! static_collect {
-    ($type:ty) => {
-        unsafe impl<'gc> Collect<'gc> for $type
-        where
-            $type: 'static,
-        {
-            const NEEDS_TRACE: bool = false;
-        }
-    };
-}
-
 static_collect!(bool);
 static_collect!(char);
 static_collect!(u8);
