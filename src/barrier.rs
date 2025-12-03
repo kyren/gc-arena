@@ -26,7 +26,7 @@ use core::ops::IndexMut;
 #[repr(transparent)]
 pub struct Write<T: ?Sized> {
     // Public so that the `field!` macro can pattern-match on it; the `non_exhaustive` attribute
-    // prevents 3rd-party code from instanciating the struct directly.
+    // prevents 3rd-party code from instantiating the struct directly.
     #[doc(hidden)]
     pub __inner: T,
 }

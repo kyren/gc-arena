@@ -53,7 +53,7 @@ static_collect!(std::ffi::OsStr);
 static_collect!(std::ffi::OsString);
 
 /// SAFETY: We know that a `&'static` reference cannot possibly point to `'gc` data, so it is safe
-/// to keep in a rooted objet and we do not have to trace through it.
+/// to keep in a rooted object and we do not have to trace through it.
 ///
 /// HOWEVER, There is an extra bound here that seems superfluous. If we have a `&'static T`, why do
 /// we require `T: 'static`, shouldn't this be implied, otherwise a `&'static T` would not be well-

@@ -130,7 +130,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
 
         // Ignore all bindings that have `#[collect(require_static)]` For each binding with
         // `#[collect(require_static)]`, we push a bound of the form `FieldType: 'static` to
-        // `static_bindings`, which will be added to the genererated `Collect` impl. The presence of
+        // `static_bindings`, which will be added to the generated `Collect` impl. The presence of
         // the bound guarantees that the field cannot hold any `Gc` pointers, so it's safe to ignore
         // that field in `needs_trace` and `trace`
         impl_struct.filter(|b| match find_collect_meta(&b.ast().attrs) {
@@ -167,7 +167,7 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     if attr.path().is_ident("collect") {
                         errors.push(syn::parse::Error::new_spanned(
                             attr.path(),
-                            "`#[collect]` is not suppported on enum variants",
+                            "`#[collect]` is not supported on enum variants",
                         ));
                     }
                 }
@@ -198,9 +198,9 @@ fn collect_derive(s: synstructure::Structure) -> TokenStream {
                     // Use a temporary variable to ensure that all tokens in the call to
                     // `gc_arena::Collect::trace` have the same hygiene information. If we used
                     // #bi directly, then we would have a mix of hygiene contexts, which would
-                    // cause rustc to produce sub-optimal error messagse due to its inability to
+                    // cause rustc to produce sub-optimal error messages due to its inability to
                     // merge the spans. This is purely for diagnostic purposes, and has no effect
-                    // on correctness
+                    // on correctness.
                     let bi = #bi;
                     cc.trace(bi);
                 }
