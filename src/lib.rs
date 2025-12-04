@@ -8,6 +8,7 @@ extern crate alloc;
 
 pub mod arena;
 pub mod barrier;
+#[macro_use]
 pub mod collect;
 mod collect_impl;
 mod context;
