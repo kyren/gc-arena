@@ -2,7 +2,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use crate::{
-    types::GcBoxInner,
+    types::GcBox,
     {Gc, GcWeak},
 };
 
@@ -83,10 +83,10 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
     where
         F: FnOnce(*mut T) -> *mut U,
     {
-        let ptr = self.ptr.as_ptr() as *mut T;
+        let ptr = self.ptr.get_ptr().as_ptr();
         unsafe {
             Gc {
-                ptr: NonNull::new_unchecked(coerce(ptr) as *mut GcBoxInner<U>),
+                ptr: GcBox::from_ptr(NonNull::new_unchecked(coerce(ptr) as *mut U)),
                 _invariant: PhantomData,
             }
         }

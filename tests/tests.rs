@@ -1,8 +1,8 @@
-use core::{cell::Cell, mem};
+use core::{cell::Cell, mem, mem::MaybeUninit, ptr::drop_in_place};
 #[cfg(feature = "std")]
 use rand::distributions::Distribution;
 #[cfg(feature = "std")]
-use std::{collections::HashMap, rc::Rc};
+use std::{alloc::Layout, collections::HashMap, rc::Rc};
 
 use gc_arena::{
     Arena, Collect, DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
@@ -1207,6 +1207,92 @@ fn dyn_collect() {
     struct Test2<'gc> {
         field: Box<dyn MyTrait2<'gc, ()>>,
     }
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn dynamic_layout() {
+    /// Slice of Rc<()> that stores its values in-place.
+    struct Foo {
+        len: usize,
+    }
+    static_collect!(Foo);
+
+    impl Foo {
+        /// SAFETY: `foo` must point to memory that's layout-compatible with `layout_for_len(len)`.
+        unsafe fn init(foo: *mut Foo, len: usize, rc: &Rc<()>) {
+            assert_eq!(size_of::<Rc<()>>(), size_of::<usize>());
+
+            // SAFETY: This is the length, which is in-bounds.
+            unsafe { foo.cast::<usize>().write(len) }
+
+            // SAFETY: A one-past-the-end pointer is valid if len=0, otherwise this is in-bounds.
+            let data = unsafe { foo.cast::<usize>().offset(1).cast::<Rc<()>>() };
+            for i in 0..len {
+                // SAFETY: This is in-bounds.
+                unsafe { data.add(i).write(rc.clone()) }
+            }
+        }
+
+        fn layout_for_len(len: usize) -> Layout {
+            Layout::new::<usize>()
+                .extend(Layout::array::<Rc<()>>(len).unwrap())
+                .unwrap()
+                .0
+        }
+    }
+
+    impl Drop for Foo {
+        fn drop(&mut self) {
+            // SAFETY: A one-past-the-end pointer is valid if len=0, otherwise this is in-bounds.
+            let data = unsafe { (&mut self.len as *mut usize).offset(1).cast::<Rc<()>>() };
+            for i in 0..self.len {
+                // SAFETY: The pointer is valid by the invariants of this type, and the pointee is
+                // never accessed again.
+                unsafe { drop_in_place(data.add(i)) }
+            }
+        }
+    }
+
+    assert_eq!(size_of::<Gc<'_, Foo>>(), size_of::<usize>());
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc> {
+        foos: Vec<Gc<'gc, Foo>>,
+    }
+
+    let rc = Rc::new(());
+    let max = 5;
+
+    let mut arena = Arena::<Rootable![Root<'_>]>::new(|mc| {
+        let foos = (0..max)
+            .map(|len| {
+                let foo: Gc<'_, MaybeUninit<Foo>> =
+                    Gc::new_dynamic_layout(mc, Foo::layout_for_len(len));
+                // SAFETY: `Gc::new_dynamic_layout` allocates the memory as requested by the layout.
+                unsafe {
+                    // TODO: Oops, UB?
+                    Foo::init(foo.as_ptr() as *mut Foo, len, &rc);
+                }
+                // SAFETY: The Foo is now initialized.
+                unsafe { foo.assume_init() }
+            })
+            .collect::<Vec<_>>();
+
+        Root { foos }
+    });
+
+    assert_eq!(Rc::strong_count(&rc), 1 + ((max - 1) * max) / 2);
+
+    arena.finish_cycle();
+
+    assert_eq!(Rc::strong_count(&rc), 1 + ((max - 1) * max) / 2);
+
+    arena.mutate_root(|_mc, root| root.foos.clear());
+    arena.finish_cycle();
+
+    assert_eq!(Rc::strong_count(&rc), 1);
 }
 
 #[cfg(feature = "std")]

@@ -1,9 +1,10 @@
+use alloc::alloc::Layout;
 use core::{
-    alloc::Layout,
     borrow::Borrow,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem::MaybeUninit,
     ops::Deref,
     ptr::NonNull,
 };
@@ -15,16 +16,16 @@ use crate::{
     context::Mutation,
     gc_weak::GcWeak,
     static_collect::Static,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    types::{GcBox, GcColor, Invariant},
 };
 
 /// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
-/// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
-/// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
+/// pointer to `T`. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena
+/// type, and through "generativity" such `Gc` pointers may not escape the arena they were born in
+/// or be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
 /// pointers will never be dangling and are always safe to access.
 pub struct Gc<'gc, T: ?Sized + 'gc> {
-    pub(crate) ptr: NonNull<GcBoxInner<T>>,
+    pub(crate) ptr: GcBox<T>,
     pub(crate) _invariant: Invariant<'gc>,
 }
 
@@ -67,21 +68,21 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { &self.ptr.get_ptr().as_ref() }
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { &self.ptr.get_ptr().as_ref() }
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
     #[inline]
     fn borrow(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { &self.ptr.get_ptr().as_ref() }
     }
 }
 
@@ -89,9 +90,25 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
         Gc {
-            ptr: mc.allocate(t),
+            ptr: mc.allocate_sized(t),
             _invariant: PhantomData,
         }
+    }
+}
+
+impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
+    #[inline]
+    pub fn new_dynamic_layout(mc: &Mutation<'gc>, layout: Layout) -> Gc<'gc, MaybeUninit<T>> {
+        Gc {
+            ptr: mc.allocate_dynamic_layout(layout),
+            _invariant: PhantomData,
+        }
+    }
+}
+
+impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, MaybeUninit<T>> {
+    pub unsafe fn assume_init(self) -> Gc<'gc, T> {
+        unsafe { Gc::cast(self) }
     }
 }
 
@@ -129,7 +146,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
         Gc {
-            ptr: NonNull::cast(this.ptr),
+            ptr: this.ptr.cast(),
             _invariant: PhantomData,
         }
     }
@@ -152,12 +169,8 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         unsafe {
-            let layout = Layout::new::<GcBoxHeader>();
-            let (_, header_offset) = layout.extend(Layout::for_value(&*ptr)).unwrap();
-            let header_offset = -(header_offset as isize);
-            let ptr = (ptr as *mut T).byte_offset(header_offset) as *mut GcBoxInner<T>;
             Gc {
-                ptr: NonNull::new_unchecked(ptr),
+                ptr: GcBox::from_ptr(NonNull::new(ptr as *mut T).unwrap()),
                 _invariant: PhantomData,
             }
         }
@@ -182,7 +195,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
         // so cannot be stored inside the GC root.
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { self.ptr.get_ptr().as_ref() }
     }
 
     #[inline]
@@ -220,10 +233,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
 
     #[inline]
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe {
-            let inner = gc.ptr.as_ptr();
-            core::ptr::addr_of!((*inner).value) as *const T
-        }
+        gc.ptr.get_ptr().as_ptr()
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to
@@ -233,8 +243,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// pointers reachable only through other weak pointers that can be dead.
     #[inline]
     pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T>) -> bool {
-        let inner = unsafe { gc.ptr.as_ref() };
-        matches!(inner.header.color(), GcColor::White | GcColor::WhiteWeak)
+        matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
@@ -244,9 +253,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// collection cycle.
     #[inline]
     pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T>) {
-        unsafe {
-            fc.resurrect(GcBox::erase(gc.ptr));
-        }
+        fc.resurrect(gc.ptr.erase());
     }
 }
 
