@@ -159,6 +159,7 @@ fn repeated_allocation_deallocation() {
     assert_eq!(Rc::strong_count(&r.0), live_size + 1);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn all_dropped() {
     #[derive(Clone)]
@@ -184,6 +185,7 @@ fn all_dropped() {
     assert_eq!(Rc::strong_count(&r.0), 1);
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn all_garbage_collected() {
     #[derive(Clone)]
@@ -1207,6 +1209,7 @@ fn dyn_collect() {
     }
 }
 
+#[cfg(feature = "std")]
 #[test]
 fn static_collect_with_param() {
     #[allow(unused)]
