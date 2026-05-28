@@ -155,14 +155,14 @@ impl<T, E> Write<Result<T, E>> {
 ///
 /// # Safety
 /// Implementing this trait is a promise that the corresponding [`Deref`] impl
-/// (and [`DerefMut`], if it exists) can be used to project a [`Write`] reference.
+/// can be used to project a [`Write`] reference.
 ///
-/// In particular, both `Deref::deref` and `DerefMut::deref_mut`:
+/// In particular, `Deref::deref`:
 /// - must return a reference into the *same* GC'd object as the input;
 /// - must not adopt new [`Gc`] pointers.
 pub unsafe trait DerefWrite: Deref {}
 
-// SAFETY: All these types have pure & non-GC-traversing Deref(Mut) impls
+// SAFETY: All these types have pure & non-GC-traversing Deref impls
 unsafe impl<T: ?Sized> DerefWrite for &T {}
 unsafe impl<T: ?Sized> DerefWrite for alloc::boxed::Box<T> {}
 unsafe impl<T> DerefWrite for Vec<T> {}
@@ -174,14 +174,14 @@ unsafe impl<T: ?Sized> DerefWrite for alloc::sync::Arc<T> {}
 ///
 /// # Safety
 /// Implementing this trait is a promise that the corresponding [`Index<I>`] impl
-/// (and [`IndexMut<I>`], if it exists) can be used to project a [`Write`] reference.
+/// can be used to project a [`Write`] reference.
 ///
-/// In particular, both `Index::index` and `IndexMut::index_mut`:
+/// In particular, `Index::index`:
 /// - must return a reference into the *same* GC'd object as the input;
 /// - must not adopt new [`Gc`] pointers.
 pub unsafe trait IndexWrite<I: ?Sized>: Index<I> {}
 
-// SAFETY: All these types have pure & non-GC-traversing Index(Mut) impls
+// SAFETY: All these types have pure & non-GC-traversing Index impls
 // Note that we don't write `impl<..., I> IndexWrite<I> for ... where ...: Index<I>`,
 // as this would allow arbitrary implementations through third-party `I` types.
 unsafe impl<T> IndexWrite<usize> for [T] {}
