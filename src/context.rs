@@ -786,7 +786,7 @@ impl<'a> PhaseGuard<'a> {
             parent: &self.span,
             message,
             phase = tracing::field::debug(self.cx.phase),
-            allocated = self.cx.metrics.total_allocation(),
+            allocated = self.cx.metrics.total_gc_allocation(),
         );
     }
 

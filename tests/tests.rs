@@ -1,6 +1,6 @@
 use core::{cell::Cell, mem};
 #[cfg(feature = "std")]
-use rand::distributions::Distribution;
+use rand::distr::Distribution;
 #[cfg(feature = "std")]
 use std::{collections::HashMap, rc::Rc};
 
@@ -128,8 +128,8 @@ fn repeated_allocation_deallocation() {
         TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
-    let key_range = rand::distributions::Uniform::from(0..1000);
-    let mut rng = rand::thread_rng();
+    let key_range = rand::distr::Uniform::try_from(0..1000).unwrap();
+    let mut rng = rand::rng();
 
     for _ in 0..40 {
         arena.mutate(|mc, root| {
@@ -532,7 +532,7 @@ fn test_collection_bounded() {
                 let _ = Gc::new(mc, [0u8; 256]);
             });
         }
-        assert!(arena.metrics().total_allocation() < 4096);
+        assert!(arena.metrics().total_gc_allocation() < 4096);
         assert!(arena.metrics().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
@@ -543,7 +543,7 @@ fn test_collection_bounded() {
                 let _ = mem::replace(&mut root.test, Gc::new(mc, [0u8; 256]));
             });
         }
-        assert!(arena.metrics().total_allocation() < 4096);
+        assert!(arena.metrics().total_gc_allocation() < 4096);
         assert!(arena.metrics().allocation_debt() < 4096.0);
         arena.collect_debt();
     }
@@ -744,57 +744,6 @@ fn gc_sleep_actually_sleeps() {
 
     // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
     assert!(arena.metrics().allocation_debt() > 0.0);
-}
-
-#[test]
-fn gc_external_allocation_affects_timing() {
-    #[derive(Collect)]
-    #[collect(no_drop)]
-    struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 256]>,
-    }
-
-    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
-    });
-
-    arena.metrics().set_pacing(Pacing {
-        sleep_factor: 1.0,
-        min_sleep: 1024,
-        ..Default::default()
-    });
-
-    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
-    // than 1024.
-    arena.finish_cycle();
-
-    // We should be asleep, aka the debt should be zero.
-    assert!(arena.metrics().allocation_debt() == 0.0);
-
-    for _ in 0..8 {
-        arena.metrics().mark_external_allocation(100);
-    }
-
-    // We should still be asleep after allocating 800 bytes.
-    assert!(arena.metrics().allocation_debt() == 0.0);
-
-    for _ in 0..3 {
-        arena.metrics().mark_external_allocation(100);
-    }
-
-    let debt_high_mark = arena.metrics().allocation_debt();
-
-    // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
-    assert!(debt_high_mark > 0.0);
-
-    // Free all of the external data we just pretended to allocate
-    for _ in 0..11 {
-        arena.metrics().mark_external_deallocation(100);
-    }
-
-    // This should have paid off some debt.
-    assert!(arena.metrics().allocation_debt() < debt_high_mark);
 }
 
 #[test]

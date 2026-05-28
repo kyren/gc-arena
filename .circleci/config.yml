@@ -3,7 +3,7 @@ version: 2
 jobs:
   build:
     docker:
-      - image: cimg/rust:1.88.0
+      - image: cimg/rust:1.95.0
     steps:
       - checkout
       - run:
@@ -39,15 +39,8 @@ jobs:
           command: |
               cargo build --no-default-features
       - run:
-          name: Check with combinations of optional features
-          command: |
-              cargo check --all --features tracing
-              cargo check --all --features allocator-api2
-              cargo check --all --features hashbrown
-              cargo check --all --features tracing,allocator-api2,hashbrown
-      - run:
           name: Run all tests
-          command: cargo test --all
+          command: cargo test --all --all-features
       - run:
           name: Run all tests under miri
           command: |

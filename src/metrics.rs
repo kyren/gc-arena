@@ -108,9 +108,6 @@ pub struct Pacing {
     /// At the start of a new GC cycle, the collector will wait until the live size reaches
     /// `<current heap size> + <previous remembered size> * sleep_factor` before starting
     /// collection.
-    ///
-    /// External memory is ***not*** included in the "remembered size" for the purposes of
-    /// calculating a new cycle's sleep period.
     pub sleep_factor: f64,
 
     /// The minimum length of the [`crate::arena::CollectionPhase::Sleeping`] phase.
@@ -183,14 +180,9 @@ struct MetricsInner {
 
     total_gcs: Cell<usize>,
     total_gc_bytes: Cell<usize>,
-    total_external_bytes: Cell<usize>,
 
     wakeup_amount: Cell<f64>,
     artificial_debt: Cell<f64>,
-
-    // The number of external bytes that have been marked as allocated at the beginning of this
-    // cycle.
-    external_bytes_start: Cell<usize>,
 
     // Statistics for `Gc` allocations and deallocations that happen during a GC cycle.
     allocated_gc_bytes: Cell<usize>,
@@ -247,53 +239,7 @@ impl Metrics {
         self.0.total_gc_bytes.get()
     }
 
-    /// Returns the total bytes that have been marked as externally allocated.
-    ///
-    /// A call to [`Metrics::mark_external_allocation`] will increase this count, and a call to
-    /// [`Metrics::mark_external_deallocation`] will decrease it.
-    #[inline]
-    pub fn total_external_allocation(&self) -> usize {
-        self.0.total_external_bytes.get()
-    }
-
-    /// Returns the sum of `Metrics::total_gc_allocation()` and
-    /// `Metrics::total_external_allocation()`.
-    #[inline]
-    pub fn total_allocation(&self) -> usize {
-        self.0
-            .total_gc_bytes
-            .get()
-            .saturating_add(self.0.total_external_bytes.get())
-    }
-
-    /// Call to mark that bytes have been externally allocated that are owned by an arena.
-    ///
-    /// This affects the GC pacing, marking external bytes as allocated will trigger allocation
-    /// debt.
-    #[inline]
-    pub fn mark_external_allocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_add(bytes));
-    }
-
-    /// Call to mark that bytes which have been marked as allocated with
-    /// [`Metrics::mark_external_allocation`] have been since deallocated.
-    ///
-    /// This affects the GC pacing, marking external bytes as deallocated will reduce allocation
-    /// debt.
-    ///
-    /// It is safe, but may result in unspecified behavior (such as very weird GC pacing), if the
-    /// amount of bytes marked for deallocation is greater than the number of bytes marked for
-    /// allocation.
-    #[inline]
-    pub fn mark_external_deallocation(&self, bytes: usize) {
-        cell_update(&self.0.total_external_bytes, |b| b.saturating_sub(bytes));
-    }
-
     /// Add artificial debt equivalent to allocating the given number of bytes.
-    ///
-    /// This is different than marking external allocation because it will not show up in a call to
-    /// [`Metrics::total_external_allocation`] or [`Metrics::total_allocation`] and instead *only*
-    /// speeds up collection.
     #[inline]
     pub fn add_debt(&self, bytes: usize) {
         cell_update(&self.0.artificial_debt, |d| d + bytes as f64);
@@ -312,20 +258,7 @@ impl Metrics {
             return 0.0;
         }
 
-        // Right now, we treat allocating an external byte as 1.0 units of debt and deallocating an
-        // external byte as 1.0 units of work (we also treat freeing more external bytes than were
-        // allocated in the current cycle as performing *no* work). The result is that the *total*
-        // increase of externally allocated bytes (allocated minus freed) incurs debt exactly the
-        // same as GC allocated bytes.
-        let allocated_external_bytes = self
-            .0
-            .total_external_bytes
-            .get()
-            .checked_sub(self.0.external_bytes_start.get())
-            .unwrap_or(0);
-
-        let allocated_bytes =
-            self.0.allocated_gc_bytes.get() as f64 + allocated_external_bytes as f64;
+        let allocated_bytes = self.0.allocated_gc_bytes.get() as f64;
 
         // Every allocation after the `wakeup_amount` in a cycle is a debit.
         let cycle_debits =
@@ -362,9 +295,6 @@ impl Metrics {
         self.0.wakeup_amount.set(wakeup_amount);
         self.0.artificial_debt.set(artificial_debt);
 
-        self.0
-            .external_bytes_start
-            .set(self.0.total_external_bytes.get());
         self.0.allocated_gc_bytes.set(0);
         self.0.dropped_gc_bytes.set(0);
         self.0.freed_gc_bytes.set(0);
