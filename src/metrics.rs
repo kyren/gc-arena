@@ -239,10 +239,10 @@ impl Metrics {
         self.0.total_gc_bytes.get()
     }
 
-    /// Add artificial debt equivalent to allocating the given number of bytes.
+    /// Adjust artificial debt equivalent to allocating or freeing the given number of bytes.
     #[inline]
-    pub fn add_debt(&self, bytes: usize) {
-        cell_update(&self.0.artificial_debt, |d| d + bytes as f64);
+    pub fn adjust_debt(&self, bytes: f64) {
+        cell_update(&self.0.artificial_debt, |d| d + bytes);
     }
 
     /// All arena allocation causes the arena to accumulate "allocation debt". This debt is then
