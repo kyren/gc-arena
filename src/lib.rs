@@ -22,9 +22,6 @@ mod static_collect;
 mod types;
 mod unsize;
 
-#[cfg(feature = "allocator-api2")]
-pub mod allocator_api;
-
 #[cfg(feature = "enum-map")]
 mod enum_map;
 

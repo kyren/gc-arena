@@ -57,15 +57,15 @@ error[E0606]: casting `&f64` as `*const i64` is invalid
    |
    = note: this error originates in the macro `field` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-error: binding modifiers may only be written when the default binding mode is `move`
+error: cannot explicitly borrow within an implicitly-borrowing pattern
   --> tests/ui/bad_write_field_projections.rs:14:5
    |
 14 |     field!(v, Foo, foo)
    |     ^^^^^^^^^^^^^^^^^^^ occurs within macro expansion
    |
-   = note: for more information, see <https://doc.rust-lang.org/nightly/edition-guide/rust-2024/match-ergonomics.html>
+   = note: for more information, see <https://doc.rust-lang.org/reference/patterns.html#binding-modes>
    = note: this error originates in the macro `field` (in Nightly builds, run with -Z macro-backtrace for more info)
-help: make the implied reference pattern explicit
+help: match on the reference with a reference pattern to avoid implicitly borrowing
   --> src/barrier.rs
    |
    |                 __inner: &$type { ref $field, .. },
