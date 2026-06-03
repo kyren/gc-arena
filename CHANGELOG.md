@@ -103,7 +103,7 @@ is enough to implement quite complex garbage collector behavior. It can be used
 to implement "finalizer" methods on objects, "ephemeron tables", Java-style
 "reference queues" and more.
 
-## Release Highlights
+### Release Highlights
 * New `Finalization` API.
 * New API to query the current phase of the collector.
 * Fixup the pacing algorithm for correctness and simplicity. Makes
@@ -126,7 +126,7 @@ This release also adds (feature-gated) `tracing` support, which emits a span
 per GC phase (propagate, sweep, drop), and events when collection resumes and
 yields.
 
-## Release Highlights
+### Release Highlights
 - Tracked external allocations API which participates in GC pacing.
 - Feature-gated support for a `allocator_api2::Allocator` implementation that
   automatically tracks allocation.
