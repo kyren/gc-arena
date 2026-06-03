@@ -1,3 +1,71 @@
+## [0.6.0]
+
+Big release with a huge number of changes.
+
+Much faster `DynamicRootSet` that does not require individual allocations per
+root!
+
+Non-object-safe `Collect` trait enables more optimization for automatic impls.
+
+Explicit forward and backwards GC write barriers to enable more kinds of safe
+container abstractions.
+
+More precise control over GC phase.
+
+Entirely new, much more tunable, much more correct GC pacing system.
+
+Removes the idea of "external allocation" from collection entirely, as it was
+simply too complex to reason about. Instead, users can use custom allocators
+and directly adjust collection debt up and down based on recorded external
+allocation. This direct adjustment of collection debt can also be use to
+directly drive incremental collection independent of GC allocation.
+
+### Release Highlights
+* Implement `Ord`/`PartialOrd` for `CollectionPhase`.
+* Let `Gc::cast`, `Gc::from_ptr` `GcWeak::cast` and `GcWeak::from_ptr` work with
+  unsized types.
+* Redesign `DynamicRootSet` to not require individual allocations per root.
+* Remove `Collect`, `Sized`, and `'static` bounds on `Rootable::Root`.
+* Add convenience `Gc::new_static`, `Gc::erase` and `GcWeak::erase` convenience
+  methods.
+* Make `StaticCollect<T>` work with unsized `T`.
+* Add (unsafe) forward write barriers and explicit (unsafe) backwards write
+  barriers to `Mutation`.
+* Rename `CollectionPhase::Collecting` -> `CollectionPhase::Sweeping` and
+  `StaticCollect` -> `Static`.
+* Get rid of `unsafe_empty_collect!` macro.
+* Slightly re-org crate exports and drop some special case re-exports from the
+  crate root.
+* Rename `MarkedArena::start_collecting` to `MarkedArena::start_sweeping` to
+  match `CollectionPhase::Sweeping`
+* Implement `Borrow<T>` for `Gc<'gc, T>`.
+* Rework the `Collect` trait. Adds a `'gc` lifetime for correctness.
+  `Collect::NEEDS_TRACE` associated constant allows for more optimization
+  of tracing. No longer object safe! Adds a `Trace` trait for the trace
+  implementation passed to `Collect::trace`.
+* Use unsafe interior mutability to reduce internal `RefCell` locking in the
+  collector.
+* Update `hashbrown` to `0.16`.
+* New, much more correct GC pacing system with many more tunable parameters.
+* Add `Arena::cycle_debt` (equivalent of `Arena::collect_debt` which stops at
+  the end of the GC cycle. and some method renames to aid phase tracking.
+* Add the ability to add / subtract artificial debt from the GC pacing.
+* Improvements to correctness around inheriting GC debt across cycles.
+* Implement `Collect` for `BinaryHeap`.
+* Add `OnceLock` (a GC-aware `OnceCell`).
+* Add `{Deref, Index}Write` traits, for deref. and indexing behind write
+  barriers.
+* Migrate to Edition 2024 to fix `field!` macro unsoundness.
+* Add a `DynCollect` trait and a way to safely GC custom dyn traits via a macro
+  (replacement for lost `Collect` object safety).
+* Add `Collect` impl for `enum_map::EnumMap` behind feature gate.
+* Add `Collect` impl for `slotmap::SlotMap` behind feature gate.
+* Add `Collect` impl for `smallvec::SmallVec` behind feature gate.
+* `Collect` impl for `indexmap::IndexMap` and `indexmap::IndexSet` behind
+  feature gate.
+* Remove all notions of externally allocated bytes, `MetricsAlloc`, and
+  `allocator-api2` dependency.
+
 ## [0.5.3]
 * Adds a `Collect` impl for `hashbrown::HashTable`.
 
