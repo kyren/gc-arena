@@ -45,7 +45,7 @@ directly drive incremental collection independent of GC allocation.
   implementation passed to `Collect::trace`.
 * Use unsafe interior mutability to reduce internal `RefCell` locking in the
   collector.
-* Update `hashbrown` to `0.16`.
+* Update `hashbrown` to `0.17`.
 * New, much more correct GC pacing system with many more tunable parameters.
 * Add `Arena::cycle_debt` (equivalent of `Arena::collect_debt` which stops at
   the end of the GC cycle. and some method renames to aid phase tracking.
