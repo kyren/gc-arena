@@ -5,6 +5,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::{Cell, RefCell};
 use core::marker::PhantomData;
+use core::ops::Deref;
+use core::pin::Pin;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
@@ -264,6 +266,18 @@ where
 // SAFETY: `PhantomData` is a ZST, and therefore doesn't store anything
 unsafe impl<'gc, T> Collect<'gc> for PhantomData<T> {
     const NEEDS_TRACE: bool = false;
+}
+
+unsafe impl<'gc, Ptr> Collect<'gc> for Pin<Ptr>
+where
+    Ptr: Deref<Target: Collect<'gc>>,
+{
+    const NEEDS_TRACE: bool = Ptr::Target::NEEDS_TRACE;
+
+    #[inline]
+    fn trace<T: Trace<'gc>>(&self, cc: &mut T) {
+        cc.trace(&**self);
+    }
 }
 
 unsafe impl<'gc, T: Collect<'gc>, const N: usize> Collect<'gc> for [T; N] {
