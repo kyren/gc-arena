@@ -22,6 +22,9 @@ mod static_collect;
 mod types;
 mod unsize;
 
+#[cfg(all(feature = "ahash", feature = "std"))]
+mod ahash;
+
 #[cfg(feature = "enum-map")]
 mod enum_map;
 

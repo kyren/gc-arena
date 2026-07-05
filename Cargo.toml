@@ -25,10 +25,11 @@ repository.workspace = true
 
 [features]
 default = ["std"]
-std = []
+std = ["ahash?/std"]
 tracing = ["dep:tracing"]
 
 [dependencies]
+ahash = { version = "0.8", optional = true, default-features = false }
 enum-map = { version = "2.7", optional = true, default-features = false }
 gc-arena-derive = { path = "./derive", version = "0.6.0"}
 hashbrown = { version = "0.17", optional = true, default-features = false }
