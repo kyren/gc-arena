@@ -157,9 +157,9 @@ unsafe impl<'gc, T: Collect<'gc>> DynCollect<'gc> for T {
 /// This macro may be called in multiple ways:
 ///
 /// ```ignore
-/// dyn_collect!(MyTrait<'gc>);
-/// dyn_collect!(<T> MyTrait<'gc, T> where T: Clone);
-/// dyn_collect!(<T> MyTrait<'gc, Assoc = T>);
+/// dyn_collect!(dyn MyTrait<'gc>);
+/// dyn_collect!(<T> dyn MyTrait<'gc, T> where T: Clone);
+/// dyn_collect!(<T> dyn MyTrait<'gc, Assoc = T>);
 /// ```
 ///
 /// The generated impl always has a single `'gc` lifetime parameter that is used as the `'gc`
