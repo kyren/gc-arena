@@ -169,6 +169,9 @@ pub(crate) struct Context {
     #[cfg(feature = "tracing")]
     phase_span: tracing::Span,
 
+    // A fake `GcBox` which is used to allocate all ZSTs.
+    zst: NonNull<GcBoxInner<()>>,
+
     // A linked list of all allocated `GcBox`es.
     all: Cell<Option<GcBox>>,
 
@@ -199,6 +202,8 @@ pub(crate) struct Context {
 
 impl Drop for Context {
     fn drop(&mut self) {
+        let _ = unsafe { Box::from_raw(self.zst.as_mut()) };
+
         struct DropAll<'a>(&'a Metrics, Option<GcBox>);
 
         impl<'a> Drop for DropAll<'a> {
@@ -230,11 +235,20 @@ impl Drop for Context {
 impl Context {
     pub(crate) unsafe fn new() -> Context {
         let metrics = Metrics::new();
+
+        let zst_header = GcBoxHeader::new::<()>();
+        zst_header.set_color(GcColor::Black);
+
+        let zst = unsafe {
+            NonNull::new_unchecked(Box::into_raw(Box::new(GcBoxInner::new(zst_header, ()))))
+        };
+
         Context {
+            metrics: metrics.clone(),
             phase: Phase::Sleep,
             #[cfg(feature = "tracing")]
             phase_span: PhaseGuard::span_for(&metrics, Phase::Sleep),
-            metrics: metrics.clone(),
+            zst,
             all: Cell::new(None),
             sweep: None,
             sweep_prev: Cell::new(None),
@@ -367,16 +381,7 @@ impl Context {
     #[inline]
     fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
         if mem::size_of::<T>() == 0 {
-            struct ZstGcBox(GcBoxInner<()>);
-
-            // SAFETY: The `GcBoxInner<()>` inside is never modified, so can be placed in shared,
-            // static memory.
-            unsafe impl Send for ZstGcBox {}
-            unsafe impl Sync for ZstGcBox {}
-
-            static ZST_GC_BOX: ZstGcBox = ZstGcBox(GcBoxInner::new(GcBoxHeader::new_zst(), ()));
-
-            NonNull::from_ref(&ZST_GC_BOX.0).cast::<GcBoxInner<T>>()
+            self.zst.cast::<GcBoxInner<T>>()
         } else {
             let header = GcBoxHeader::new::<T>();
             header.set_next(self.all.get());

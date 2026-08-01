@@ -120,33 +120,9 @@ impl GcBoxHeader {
             tagged_vtable: Cell::new(vtable as *const _),
         };
 
-        this.raw_set_color(GcColor::White);
-        this.raw_set_needs_trace(false);
-        this.raw_set_live(true);
-
-        this
-    }
-
-    /// Creates a new *static* `GcBoxHeader` for a ZST.
-    ///
-    /// The pointer will have:
-    ///   - `next` pointer set to `None`
-    ///   - `color` set to `Black`
-    ///   - `needs_trace` set to `false`
-    ///   - `is_live` set to `true`
-    ///
-    /// The `GcBox` with this header will always have its `GcBox::trace_value` and
-    /// `GcBox::drop_in_place` methods panic. Additionally, if `cfg!(debug_assertions)` is true,
-    /// then the pointer will panic if any of its state is changed.
-    #[inline(always)]
-    pub(crate) const fn new_zst<'gc>() -> Self {
-        const VTABLE: CollectVtable = CollectVtable::zst_vtable();
-
-        let vtable: &'static _ = &VTABLE;
-        let this = Self {
-            next: Cell::new(None),
-            tagged_vtable: Cell::new(vtable as *const _),
-        };
+        debug_assert_eq!(this.color(), GcColor::White);
+        debug_assert_eq!(this.needs_trace(), false);
+        debug_assert_eq!(this.is_live(), true);
 
         this
     }
@@ -170,23 +146,21 @@ impl GcBoxHeader {
     /// Sets the next element in the global linked list of allocated objects.
     #[inline(always)]
     pub(crate) fn set_next(&self, next: Option<GcBox>) {
-        debug_assert!(!self.vtable().is_zst);
         self.next.set(next)
     }
 
     #[inline(always)]
     pub(crate) fn color(&self) -> GcColor {
         match tagged_ptr::get::<0x3, CollectVtable>(self.tagged_vtable.get()) {
-            0x1 => GcColor::White,
-            0x2 => GcColor::WhiteWeak,
-            0x3 => GcColor::Gray,
+            0x0 => GcColor::White,
+            0x1 => GcColor::WhiteWeak,
+            0x2 => GcColor::Gray,
             _ => GcColor::Black,
         }
     }
 
     #[inline(always)]
     pub(crate) fn set_color(&self, color: GcColor) {
-        debug_assert!(!self.vtable().is_zst);
         self.raw_set_color(color);
     }
 
@@ -196,10 +170,10 @@ impl GcBoxHeader {
             .set(tagged_ptr::set::<0x3, CollectVtable>(
                 self.tagged_vtable.get(),
                 match color {
-                    GcColor::White => 0x1,
-                    GcColor::WhiteWeak => 0x2,
-                    GcColor::Gray => 0x3,
-                    GcColor::Black => 0x0,
+                    GcColor::White => 0x0,
+                    GcColor::WhiteWeak => 0x1,
+                    GcColor::Gray => 0x2,
+                    GcColor::Black => 0x3,
                 },
             ));
     }
@@ -211,12 +185,6 @@ impl GcBoxHeader {
 
     #[inline(always)]
     pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        debug_assert!(!self.vtable().is_zst);
-        self.raw_set_needs_trace(needs_trace);
-    }
-
-    #[inline(always)]
-    fn raw_set_needs_trace(&self, needs_trace: bool) {
         self.tagged_vtable
             .set(tagged_ptr::set_bool::<0x4, CollectVtable>(
                 self.tagged_vtable.get(),
@@ -237,12 +205,6 @@ impl GcBoxHeader {
 
     #[inline(always)]
     pub(crate) fn set_live(&self, is_live: bool) {
-        debug_assert!(!self.vtable().is_zst);
-        self.raw_set_live(is_live);
-    }
-
-    #[inline(always)]
-    pub(crate) fn raw_set_live(&self, is_live: bool) {
         self.tagged_vtable
             .set(tagged_ptr::set_bool::<0x8, CollectVtable>(
                 self.tagged_vtable.get(),
@@ -263,10 +225,6 @@ struct CollectVtable {
     trace_value: unsafe fn(GcBox, &mut Context),
     /// The layout of the `GcBox` the GC'd value is stored in.
     box_layout: Layout,
-    /// If true, then this is a vtable for a unique ZST pointer which is not meant to have any part
-    /// of the GC algorithm run on it.
-    #[cfg(debug_assertions)]
-    is_zst: bool,
 }
 
 impl CollectVtable {
@@ -288,19 +246,6 @@ impl CollectVtable {
                 let val = &*(erased.unerased_value::<T>());
                 val.trace(cc)
             },
-            #[cfg(debug_assertions)]
-            is_zst: false,
-        }
-    }
-
-    #[inline(always)]
-    const fn zst_vtable<'gc>() -> Self {
-        Self {
-            box_layout: Layout::new::<GcBoxInner<()>>(),
-            drop_value: Some(|_| panic!("drop of fixed Gc")),
-            trace_value: |_, _| panic!("trace of fixed Gc"),
-            #[cfg(debug_assertions)]
-            is_zst: true,
         }
     }
 }
