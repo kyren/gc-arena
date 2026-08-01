@@ -208,15 +208,14 @@ impl Drop for Context {
                     while let Some(mut gc_box) = drop_resume.1.take() {
                         let header = gc_box.header();
                         drop_resume.1 = header.next();
-                        let gc_size = header.size_of_box();
                         // SAFETY: the context owns its GC'd objects
                         unsafe {
                             if header.is_live() {
                                 gc_box.drop_in_place();
-                                self.0.mark_gc_dropped(gc_size);
+                                self.0.mark_gc_dropped(1);
                             }
                             gc_box.dealloc();
-                            self.0.mark_gc_freed(gc_size);
+                            self.0.mark_gc_freed(1);
                         }
                     }
                 }
@@ -371,8 +370,6 @@ impl Context {
         header.set_live(true);
         header.set_needs_trace(T::NEEDS_TRACE);
 
-        let alloc_size = header.size_of_box();
-
         // Make the generated code easier to optimize into `T` being constructed in place or at the
         // very least only memcpy'd once.
         // For more information, see: https://github.com/kyren/gc-arena/pull/14
@@ -388,7 +385,7 @@ impl Context {
             self.sweep_prev.set(self.all.get());
         }
 
-        self.metrics.mark_gc_allocated(alloc_size);
+        self.metrics.mark_gc_allocated(1);
 
         ptr
     }
@@ -494,7 +491,7 @@ impl Context {
 
                 // Only marking the *first* time counts as a mark metric.
                 if color == GcColor::White {
-                    self.metrics.mark_gc_marked(header.size_of_box());
+                    self.metrics.mark_gc_marked(1);
                 }
             }
         }
@@ -505,7 +502,7 @@ impl Context {
         let header = gc_box.header();
         if header.color() == GcColor::White {
             header.set_color(GcColor::WhiteWeak);
-            self.metrics.mark_gc_marked(header.size_of_box());
+            self.metrics.mark_gc_marked(1);
         }
     }
 
@@ -568,7 +565,7 @@ impl Context {
             self.gray.push(gc_box);
             // Only marking the *first* time counts as a mark metric.
             if color == GcColor::White {
-                self.metrics.mark_gc_marked(header.size_of_box());
+                self.metrics.mark_gc_marked(1);
             }
         }
     }
@@ -589,7 +586,7 @@ impl Context {
             // We always mark work for objects processed from both the gray and "gray again" queue.
             // When objects are placed into the "gray again" queue due to a write barrier, the
             // original work is *undone*, so we do it again here.
-            self.metrics.mark_gc_traced(gc_box.header().size_of_box());
+            self.metrics.mark_gc_traced(1);
             gc_box.header().set_color(GcColor::Black);
 
             // If we have an object in the gray queue, take one, trace it, and turn it black.
@@ -639,7 +636,6 @@ impl Context {
         };
 
         let sweep_header = sweep.header();
-        let sweep_size = sweep_header.size_of_box();
 
         let next_box = sweep_header.next();
         self.sweep = next_box;
@@ -665,10 +661,10 @@ impl Context {
                         // If the alive flag is set, that means we haven't dropped the inner value
                         // of this object,
                         sweep.drop_in_place();
-                        self.metrics.mark_gc_dropped(sweep_size);
+                        self.metrics.mark_gc_dropped(1);
                     }
                     sweep.dealloc();
-                    self.metrics.mark_gc_freed(sweep_size);
+                    self.metrics.mark_gc_freed(1);
                 }
             }
             // Keep the `GcBox` as part of the linked list if we traced a weak pointer to it. The
@@ -684,16 +680,16 @@ impl Context {
                     // pointers to this object, only weak pointers, so we can safely drop its
                     // contents.
                     unsafe { sweep.drop_in_place() }
-                    self.metrics.mark_gc_dropped(sweep_size);
+                    self.metrics.mark_gc_dropped(1);
                 }
-                self.metrics.mark_gc_remembered(sweep_size);
+                self.metrics.mark_gc_remembered(1);
             }
             // If the next object in the sweep portion of the main list is black, we
             // need to keep it but turn it back white.
             GcColor::Black => {
                 self.sweep_prev.set(Some(sweep));
                 sweep_header.set_color(GcColor::White);
-                self.metrics.mark_gc_remembered(sweep_size);
+                self.metrics.mark_gc_remembered(1);
             }
             // No gray objects should be in this part of the main list, they should
             // be added to the beginning of the list before the sweep pointer, so it
@@ -712,7 +708,7 @@ impl Context {
         debug_assert_eq!(header.color(), GcColor::Black);
         header.set_color(GcColor::Gray);
         self.gray_again.push(gc_box);
-        self.metrics.mark_gc_untraced(header.size_of_box());
+        self.metrics.mark_gc_untraced(1);
     }
 }
 
@@ -786,7 +782,7 @@ impl<'a> PhaseGuard<'a> {
             parent: &self.span,
             message,
             phase = tracing::field::debug(self.cx.phase),
-            allocated = self.cx.metrics.total_gc_allocation(),
+            allocated_gcs = self.cx.metrics.total_gc_count(),
         );
     }
 

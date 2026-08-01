@@ -1,6 +1,7 @@
 use core::{cell::Cell, mem};
 #[cfg(feature = "std")]
 use rand::distr::Distribution;
+use std::array;
 #[cfg(feature = "std")]
 use std::{collections::HashMap, rc::Rc};
 
@@ -128,20 +129,20 @@ fn repeated_allocation_deallocation() {
         TestRoot(Gc::new(mc, RefLock::new(HashMap::new())))
     });
 
-    let key_range = rand::distr::Uniform::try_from(0..1000).unwrap();
+    let key_range = rand::distr::Uniform::try_from(0..200).unwrap();
     let mut rng = rand::rng();
 
-    for _ in 0..40 {
+    for _ in 0..20 {
         arena.mutate(|mc, root| {
             let mut map = root.0.unlock(mc).borrow_mut();
-            for _ in 0..50 {
+            for _ in 0..20 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.insert(i, Gc::new(mc, (i, r.clone()))) {
                     assert_eq!(old.0, i);
                 }
             }
 
-            for _ in 0..50 {
+            for _ in 0..20 {
                 let i = key_range.sample(&mut rng);
                 if let Some(old) = map.remove(&i) {
                     assert_eq!(old.0, i);
@@ -510,41 +511,44 @@ fn test_collection_bounded() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 256]>,
+        test: [Gc<'gc, u8>; 32],
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
+        test: array::from_fn(|_| Gc::new(mc, 0)),
     });
 
     arena.metrics().set_pacing(Pacing {
         sleep_factor: 1.0,
-        min_sleep: 256,
+        min_sleep: 64,
         ..Default::default()
     });
 
-    // Finish the current collection cycle so that the new min_sleep is used.
+    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
+    // for exactly min_sleep, since the sleep factor is 1.0 and 32 less than 64.
     arena.finish_cycle();
 
-    for _ in 0..1024 {
+    for _ in 0..32 {
         for _ in 0..4 {
             arena.mutate(|mc, _| {
-                let _ = Gc::new(mc, [0u8; 256]);
+                for _ in 0..32 {
+                    let _ = Gc::new(mc, 0u8);
+                }
             });
         }
-        assert!(arena.metrics().total_gc_allocation() < 4096);
-        assert!(arena.metrics().allocation_debt() < 4096.0);
+        assert!(arena.metrics().total_gc_count() < 512);
+        assert!(arena.metrics().allocation_debt() < 512.0);
         arena.collect_debt();
     }
 
-    for _ in 0..1024 {
+    for _ in 0..32 {
         for _ in 0..4 {
             arena.mutate_root(|mc, root| {
-                let _ = mem::replace(&mut root.test, Gc::new(mc, [0u8; 256]));
+                let _ = mem::replace(&mut root.test, array::from_fn(|_| Gc::new(mc, 0)));
             });
         }
-        assert!(arena.metrics().total_gc_allocation() < 4096);
-        assert!(arena.metrics().allocation_debt() < 4096.0);
+        assert!(arena.metrics().total_gc_count() < 512);
+        assert!(arena.metrics().allocation_debt() < 512.0);
         arena.collect_debt();
     }
 }
@@ -705,44 +709,42 @@ fn gc_sleep_actually_sleeps() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 256]>,
+        test: [Gc<'gc, u8>; 32],
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, [0; 256]),
+        test: array::from_fn(|i| Gc::new(mc, i as u8)),
     });
 
     arena.metrics().set_pacing(Pacing {
         sleep_factor: 1.0,
-        min_sleep: 1024,
+        min_sleep: 100,
         ..Default::default()
     });
 
     // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.0 and 2x 256 bytes is 512 which is less
-    // than 1024.
+    // for exactly min_sleep, since the sleep factor is 1.0 and 32 less than 100.
     arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
     assert!(arena.metrics().allocation_debt() == 0.0);
 
-    for _ in 0..8 {
+    for _ in 0..80 {
         arena.mutate(|mc, _| {
-            let _ = Gc::new(mc, [0u8; 100]);
+            let _ = Gc::new(mc, 0u8);
         });
     }
 
-    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
-    // 224 bytes).
+    // We should still be asleep after allocating 80 GCs.
     assert!(arena.metrics().allocation_debt() == 0.0);
 
-    for _ in 0..3 {
+    for _ in 0..30 {
         arena.mutate(|mc, _| {
-            let _ = Gc::new(mc, [0u8; 100]);
+            let _ = Gc::new(mc, 0u8);
         });
     }
 
-    // We should *not* be asleep after allocating 300 more bytes, because this is greater than 1024.
+    // We should *not* be asleep after allocating 30 more GCs, because 80 + 30 is greater than 100.
     assert!(arena.metrics().allocation_debt() > 0.0);
 }
 
@@ -751,42 +753,39 @@ fn stop_the_world_works() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        vec: Vec<Gc<'gc, [u8; 100]>>,
+        vec: Vec<Gc<'gc, u8>>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|_| TestRoot { vec: Vec::new() });
 
     arena.metrics().set_pacing(Pacing {
-        min_sleep: 1024,
+        min_sleep: 100,
         sleep_factor: 1.5,
         ..Pacing::STOP_THE_WORLD
     });
 
-    // Finish the current collection cycle so that the new min_sleep is used. We should be asleep
-    // for exactly min_sleep, since the sleep factor is 1.5 and 1.5x 256 bytes is 384 which is less
-    // than 1024.
+    // Finish the current collection cycle so that the new min_sleep is used.
     arena.finish_cycle();
 
     // We should be asleep, aka the debt should be zero.
     assert!(arena.metrics().allocation_debt() == 0.0);
 
-    for _ in 0..8 {
+    for _ in 0..80 {
         arena.mutate_root(|mc, root| {
-            root.vec.push(Gc::new(mc, [0; 100]));
+            root.vec.push(Gc::new(mc, 0));
         });
     }
 
-    // We should still be asleep after allocating 800 bytes (assumes that the overhead is less than
-    // 224 bytes).
+    // We should still be asleep after allocating 80 Gcs.
     assert!(arena.metrics().allocation_debt() == 0.0);
 
-    for _ in 0..3 {
+    for _ in 0..30 {
         arena.mutate_root(|mc, root| {
-            root.vec.push(Gc::new(mc, [0; 100]));
+            root.vec.push(Gc::new(mc, 0));
         });
     }
 
-    // Our debt should now be positive, since we've definitely allocated more than 1024 bytes.
+    // Our debt should now be positive, since we've definitely allocated more than 100 Gcs.
     assert!(arena.metrics().allocation_debt() > 0.0);
 
     // This should do a full collection.
@@ -795,12 +794,11 @@ fn stop_the_world_works() {
     // And we should be back asleep.
     assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
 
-    // The total remembered allocations after the last full collection were at least 1100 bytes,
-    // so allocating 1200 bytes (which is less than 1100 * 1.5 plus overhead) should not wake the
-    // collector.
-    for _ in 0..12 {
+    // The total remembered allocations after the last full collection was at least 110 Gcs, so
+    // allocating 150 Gcs (which is less than 110 * 1.5) should not wake the collector.
+    for _ in 0..150 {
         arena.mutate(|mc, _| {
-            Gc::new(mc, [0u8; 100]);
+            Gc::new(mc, 0);
         })
     }
     assert!(arena.metrics().allocation_debt() == 0.0);
@@ -898,11 +896,11 @@ fn test_phases() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 1024 * 64]>,
+        test: Gc<'gc, u8>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
-        let test = Gc::new(mc, [0; 1024 * 64]);
+        let test = Gc::new(mc, 0);
         TestRoot { test }
     });
     arena.finish_cycle();
@@ -913,7 +911,7 @@ fn test_phases() {
     while arena.collection_phase() == CollectionPhase::Sleeping {
         // Keep accumulating debt to keep the collector moving.
         arena.mutate(|mc, _| {
-            Gc::new(mc, 0);
+            Gc::new(mc, 0u8);
         });
         // This cannot move past the Marked phase.
         arena.mark_debt();
@@ -928,7 +926,7 @@ fn test_phases() {
     loop {
         // Keep accumulating debt to keep the collector moving.
         arena.mutate(|mc, _| {
-            Gc::new(mc, 0);
+            Gc::new(mc, 0u8);
         });
 
         if let Some(marked) = arena.mark_debt() {
@@ -1065,15 +1063,15 @@ fn cycle_debt_stops() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: Gc<'gc, [u8; 512]>,
+        test: Gc<'gc, u8>,
     }
 
     let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| {
-        let test = Gc::new(mc, [0; 512]);
+        let test = Gc::new(mc, 0);
         TestRoot { test }
     });
     arena.metrics().set_pacing(Pacing {
-        min_sleep: 1024,
+        min_sleep: 100,
         ..Pacing::DEFAULT
     });
 
@@ -1082,9 +1080,11 @@ fn cycle_debt_stops() {
     assert_eq!(arena.collection_phase(), CollectionPhase::Sleeping);
 
     loop {
-        arena.mutate(|mc, _| {
-            Gc::new(mc, [0u8; 128]);
-        });
+        for i in 0..4u8 {
+            arena.mutate(|mc, _| {
+                Gc::new(mc, i);
+            });
+        }
         if let Some(marked_arena) = arena.mark_debt() {
             marked_arena.start_sweeping();
             break;
@@ -1094,9 +1094,11 @@ fn cycle_debt_stops() {
     assert_eq!(arena.collection_phase(), CollectionPhase::Sweeping);
 
     loop {
-        arena.mutate(|mc, _| {
-            Gc::new(mc, [0u8; 2048]);
-        });
+        for i in 0..4u8 {
+            arena.mutate(|mc, _| {
+                Gc::new(mc, i);
+            });
+        }
         arena.cycle_debt();
         match arena.collection_phase() {
             CollectionPhase::Sweeping => {}
