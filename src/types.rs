@@ -129,12 +129,6 @@ impl GcBoxHeader {
         self.next.set(next)
     }
 
-    /// Returns the (shallow) size occupied by this box in memory.
-    #[inline(always)]
-    pub(crate) fn size_of_box(&self) -> usize {
-        self.vtable().box_layout.size()
-    }
-
     #[inline]
     pub(crate) fn color(&self) -> GcColor {
         match tagged_ptr::get::<0x3, _>(self.tagged_vtable.get()) {
