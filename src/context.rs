@@ -364,30 +364,43 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
+    #[inline]
     fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        let header = GcBoxHeader::new::<T>();
-        header.set_next(self.all.get());
-        header.set_live(true);
-        header.set_needs_trace(T::NEEDS_TRACE);
+        if mem::size_of::<T>() == 0 {
+            struct ZstGcBox(GcBoxInner<()>);
 
-        // Make the generated code easier to optimize into `T` being constructed in place or at the
-        // very least only memcpy'd once.
-        // For more information, see: https://github.com/kyren/gc-arena/pull/14
-        let (gc_box, ptr) = unsafe {
-            let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
-            core::ptr::write(uninitialized.as_mut_ptr(), GcBoxInner::new(header, t));
-            let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>);
-            (GcBox::erase(ptr), ptr)
-        };
+            // SAFETY: The `GcBoxInner<()>` inside is never modified, so can be placed in shared,
+            // static memory.
+            unsafe impl Send for ZstGcBox {}
+            unsafe impl Sync for ZstGcBox {}
 
-        self.all.set(Some(gc_box));
-        if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
-            self.sweep_prev.set(self.all.get());
+            static ZST_GC_BOX: ZstGcBox = ZstGcBox(GcBoxInner::new(GcBoxHeader::new_zst(), ()));
+
+            NonNull::from_ref(&ZST_GC_BOX.0).cast::<GcBoxInner<T>>()
+        } else {
+            let header = GcBoxHeader::new::<T>();
+            header.set_next(self.all.get());
+            header.set_needs_trace(T::NEEDS_TRACE);
+
+            // Make the generated code easier to optimize into `T` being constructed in place or at
+            // the very least only memcpy'd once.
+            //
+            // For more information, see: https://github.com/kyren/gc-arena/pull/14
+            let ptr = unsafe {
+                let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
+                core::ptr::write(uninitialized.as_mut_ptr(), GcBoxInner::new(header, t));
+                NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>)
+            };
+
+            self.all.set(Some(unsafe { GcBox::erase(ptr) }));
+            if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
+                self.sweep_prev.set(self.all.get());
+            }
+
+            self.metrics.mark_gc_allocated(1);
+
+            ptr
         }
-
-        self.metrics.mark_gc_allocated(1);
-
-        ptr
     }
 
     #[inline]

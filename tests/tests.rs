@@ -18,16 +18,21 @@ fn simple_allocation() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct TestRoot<'gc> {
-        test: Gc<'gc, i32>,
+        test1: Gc<'gc, i32>,
+        test2: Gc<'gc, ()>,
     }
 
-    let arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
-        test: Gc::new(mc, 42),
+    let mut arena = Arena::<Rootable![TestRoot<'_>]>::new(|mc| TestRoot {
+        test1: Gc::new(mc, 42),
+        test2: Gc::new(mc, ()),
     });
 
     arena.mutate(|_mc, root| {
-        assert_eq!(*((*root).test), 42);
+        assert_eq!(*((*root).test1), 42);
     });
+
+    arena.finish_cycle();
+    arena.finish_cycle();
 }
 
 #[test]
@@ -248,27 +253,21 @@ fn test_layouts() {
         }};
     }
 
-    test_layout!(size = 0, align = 1);
     test_layout!(size = 1, align = 1);
     test_layout!(size = 2, align = 1);
 
-    test_layout!(size = 0, align = 2);
     test_layout!(size = 2, align = 2);
     test_layout!(size = 4, align = 2);
 
-    test_layout!(size = 0, align = 4);
     test_layout!(size = 4, align = 4);
     test_layout!(size = 8, align = 4);
 
-    test_layout!(size = 0, align = 8);
     test_layout!(size = 8, align = 8);
     test_layout!(size = 16, align = 8);
 
-    test_layout!(size = 0, align = 16);
     test_layout!(size = 16, align = 16);
     test_layout!(size = 32, align = 16);
 
-    test_layout!(size = 0, align = 32);
     test_layout!(size = 32, align = 32);
     test_layout!(size = 64, align = 32);
 }
@@ -1119,14 +1118,15 @@ fn dyn_collect() {
     #[derive(Collect)]
     #[collect(no_drop)]
     struct Test<'gc> {
-        field: Box<dyn MyTrait<'gc> + 'gc>,
+        field1: Box<dyn MyTrait<'gc> + 'gc>,
+        field2: Box<dyn MyTrait<'gc> + 'gc>,
     }
 
     #[derive(Collect)]
     #[collect(no_drop)]
-    struct Impl<'gc>(Gc<'gc, ()>);
+    struct Impl<'gc, T>(Gc<'gc, T>);
 
-    impl<'gc> MyTrait<'gc> for Impl<'gc> {}
+    impl<'gc, T: Collect<'gc>> MyTrait<'gc> for Impl<'gc, T> {}
 
     #[allow(unused)]
     fn test_fn<'gc>(p: impl MyTrait<'gc> + Collect<'gc> + 'gc) -> Box<dyn MyTrait<'gc> + 'gc> {
@@ -1137,7 +1137,8 @@ fn dyn_collect() {
         let _test = Gc::new(
             mc,
             Test {
-                field: Box::new(Impl(Gc::new(mc, ()))),
+                field1: Box::new(Impl(Gc::new(mc, ()))),
+                field2: Box::new(Impl(Gc::new(mc, 17u8))),
             },
         );
     });

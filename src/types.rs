@@ -6,9 +6,10 @@ use core::{mem, ptr};
 
 use crate::{collect::Collect, context::Context};
 
-/// A thin-pointer-sized box containing a type-erased GC object.
-/// Stores the metadata required by the GC algorithm inline (see `GcBoxInner`
-/// for its typed counterpart).
+/// A thin-pointer-sized pointer for a type-erased GC object.
+///
+/// Stores the metadata required by the GC algorithm inline (see `GcBoxInner` for its typed
+/// counterpart).
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
@@ -16,8 +17,7 @@ pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
 impl GcBox {
     /// Erases a pointer to a typed GC object.
     ///
-    /// **SAFETY:** The pointer must point to a valid `GcBoxInner` allocated
-    /// in a `Box`.
+    /// **SAFETY:** The pointer must point to a valid `GcBoxInner`.
     #[inline(always)]
     pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
         // This cast is sound because `GcBoxInner` is `repr(C)`.
@@ -25,9 +25,10 @@ impl GcBox {
         unsafe { Self(NonNull::new_unchecked(erased)) }
     }
 
-    /// Gets a pointer to the value stored inside this box.
-    /// `T` must be the same type that was used with `erase`, so that
-    /// we can correctly compute the field offset.
+    /// Gets a pointer to value stored by this `GcBox`.
+    ///
+    /// `T` must be the same type that was used with `erase`, so that we can correctly compute the
+    /// field offset.
     #[inline(always)]
     fn unerased_value<T>(&self) -> *mut T {
         unsafe {
@@ -53,18 +54,24 @@ impl GcBox {
 
     /// Drops the stored value.
     ///
-    /// **SAFETY**: once called, no GC pointers should access the stored value
-    /// (but accessing the `GcBox` itself is still safe).
+    /// **SAFETY**: Once called, no GC pointers should access the stored value (but accessing the
+    /// `GcBox` itself is still safe).
     #[inline(always)]
     pub(crate) unsafe fn drop_in_place(&mut self) {
-        unsafe { (self.header().vtable().drop_value)(*self) }
+        if let Some(drop_value) = self.header().vtable().drop_value {
+            unsafe { (drop_value)(*self) }
+        }
     }
 
-    /// Deallocates the box. Failing to call `Self::drop_in_place` beforehand
-    /// will cause the stored value to be leaked.
+    /// Deallocates the `GcBox`.
     ///
-    /// **SAFETY**: once called, this `GcBox` should never be accessed by any GC
-    /// pointers again.
+    /// Failing to call `Self::drop_in_place` beforehand will cause the stored value to be leaked.
+    ///
+    /// **SAFETY**:
+    ///
+    /// This `GcBox` must come from a pointer which was allocated in a `Box`-compatible way.
+    ///
+    /// Once called, this `GcBox` should never be accessed by any GC pointers again.
     #[inline(always)]
     pub(crate) unsafe fn dealloc(self) {
         unsafe {
@@ -89,8 +96,15 @@ pub(crate) struct GcBoxHeader {
 }
 
 impl GcBoxHeader {
+    /// Creates a new `GcBoxHeader` for type `T`.
+    ///
+    /// The header will default to:
+    ///   - `next` pointer set to `None`
+    ///   - `color` set to `White`
+    ///   - `needs_trace` set to `false`
+    ///   - `is_live` set to `true`
     #[inline(always)]
-    pub fn new<'gc, T: Collect<'gc>>() -> Self {
+    pub(crate) fn new<'gc, T: Collect<'gc>>() -> Self {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
@@ -101,13 +115,43 @@ impl GcBoxHeader {
         }
 
         let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
-        Self {
+        let this = Self {
             next: Cell::new(None),
             tagged_vtable: Cell::new(vtable as *const _),
-        }
+        };
+
+        this.raw_set_color(GcColor::White);
+        this.raw_set_needs_trace(false);
+        this.raw_set_live(true);
+
+        this
     }
 
-    /// Gets a reference to the `CollectVtable` used by this box.
+    /// Creates a new *static* `GcBoxHeader` for a ZST.
+    ///
+    /// The pointer will have:
+    ///   - `next` pointer set to `None`
+    ///   - `color` set to `Black`
+    ///   - `needs_trace` set to `false`
+    ///   - `is_live` set to `true`
+    ///
+    /// The `GcBox` with this header will always have its `GcBox::trace_value` and
+    /// `GcBox::drop_in_place` methods panic. Additionally, if `cfg!(debug_assertions)` is true,
+    /// then the pointer will panic if any of its state is changed.
+    #[inline(always)]
+    pub(crate) const fn new_zst<'gc>() -> Self {
+        const VTABLE: CollectVtable = CollectVtable::zst_vtable();
+
+        let vtable: &'static _ = &VTABLE;
+        let this = Self {
+            next: Cell::new(None),
+            tagged_vtable: Cell::new(vtable as *const _),
+        };
+
+        this
+    }
+
+    /// Gets a reference to the `CollectVtable` used by this `GcBox`.
     #[inline(always)]
     fn vtable(&self) -> &'static CollectVtable {
         let ptr = tagged_ptr::untag(self.tagged_vtable.get());
@@ -126,34 +170,58 @@ impl GcBoxHeader {
     /// Sets the next element in the global linked list of allocated objects.
     #[inline(always)]
     pub(crate) fn set_next(&self, next: Option<GcBox>) {
+        debug_assert!(!self.vtable().is_zst);
         self.next.set(next)
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn color(&self) -> GcColor {
-        match tagged_ptr::get::<0x3, _>(self.tagged_vtable.get()) {
-            0x0 => GcColor::White,
-            0x1 => GcColor::WhiteWeak,
-            0x2 => GcColor::Gray,
+        match tagged_ptr::get::<0x3, CollectVtable>(self.tagged_vtable.get()) {
+            0x1 => GcColor::White,
+            0x2 => GcColor::WhiteWeak,
+            0x3 => GcColor::Gray,
             _ => GcColor::Black,
         }
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn set_color(&self, color: GcColor) {
-        tagged_ptr::set::<0x3, _>(
-            &self.tagged_vtable,
-            match color {
-                GcColor::White => 0x0,
-                GcColor::WhiteWeak => 0x1,
-                GcColor::Gray => 0x2,
-                GcColor::Black => 0x3,
-            },
-        );
+        debug_assert!(!self.vtable().is_zst);
+        self.raw_set_color(color);
     }
-    #[inline]
+
+    #[inline(always)]
+    fn raw_set_color(&self, color: GcColor) {
+        self.tagged_vtable
+            .set(tagged_ptr::set::<0x3, CollectVtable>(
+                self.tagged_vtable.get(),
+                match color {
+                    GcColor::White => 0x1,
+                    GcColor::WhiteWeak => 0x2,
+                    GcColor::Gray => 0x3,
+                    GcColor::Black => 0x0,
+                },
+            ));
+    }
+
+    #[inline(always)]
     pub(crate) fn needs_trace(&self) -> bool {
-        tagged_ptr::get::<0x4, _>(self.tagged_vtable.get()) != 0x0
+        tagged_ptr::get::<0x4, CollectVtable>(self.tagged_vtable.get()) != 0x0
+    }
+
+    #[inline(always)]
+    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
+        debug_assert!(!self.vtable().is_zst);
+        self.raw_set_needs_trace(needs_trace);
+    }
+
+    #[inline(always)]
+    fn raw_set_needs_trace(&self, needs_trace: bool) {
+        self.tagged_vtable
+            .set(tagged_ptr::set_bool::<0x4, CollectVtable>(
+                self.tagged_vtable.get(),
+                needs_trace,
+            ));
     }
 
     /// Determines whether or not we've dropped the `dyn Collect` value
@@ -162,58 +230,85 @@ impl GcBoxHeader {
     /// we set `alive` to false. When there are no more weak pointers remaining,
     /// we will deallocate the `GcBox`, but skip dropping the `dyn Collect` value
     /// (since we've already done it).
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_live(&self) -> bool {
-        tagged_ptr::get::<0x8, _>(self.tagged_vtable.get()) != 0x0
+        !tagged_ptr::get_bool::<0x8, CollectVtable>(self.tagged_vtable.get())
     }
 
-    #[inline]
-    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        tagged_ptr::set_bool::<0x4, _>(&self.tagged_vtable, needs_trace);
+    #[inline(always)]
+    pub(crate) fn set_live(&self, is_live: bool) {
+        debug_assert!(!self.vtable().is_zst);
+        self.raw_set_live(is_live);
     }
 
-    #[inline]
-    pub(crate) fn set_live(&self, alive: bool) {
-        tagged_ptr::set_bool::<0x8, _>(&self.tagged_vtable, alive);
+    #[inline(always)]
+    pub(crate) fn raw_set_live(&self, is_live: bool) {
+        self.tagged_vtable
+            .set(tagged_ptr::set_bool::<0x8, CollectVtable>(
+                self.tagged_vtable.get(),
+                !is_live,
+            ));
     }
 }
 
 /// Type-specific operations for GC'd values.
 ///
-/// We use a custom vtable instead of `dyn Collect` for extra flexibility.
-/// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
+/// We use a custom vtable instead of `dyn Collect` for extra flexibility. The type is over-aligned
+/// so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
 struct CollectVtable {
-    /// The layout of the `GcBox` the GC'd value is stored in.
-    box_layout: Layout,
-    /// Drops the value stored in the given `GcBox` (without deallocating the box).
-    drop_value: unsafe fn(GcBox),
+    /// Drops the value stored in the given `GcBox` (without deallocating).
+    drop_value: Option<unsafe fn(GcBox)>,
     /// Traces the value stored in the given `GcBox`.
     trace_value: unsafe fn(GcBox, &mut Context),
+    /// The layout of the `GcBox` the GC'd value is stored in.
+    box_layout: Layout,
+    /// If true, then this is a vtable for a unique ZST pointer which is not meant to have any part
+    /// of the GC algorithm run on it.
+    #[cfg(debug_assertions)]
+    is_zst: bool,
 }
 
 impl CollectVtable {
     /// Makes a vtable for a known, `Sized` type.
-    /// Because `T: Sized`, we can recover a typed pointer
-    /// directly from the erased `GcBox`.
+    ///
+    /// Because `T: Sized`, we can recover a typed pointer directly from the erased `GcBox`.
     #[inline(always)]
     const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
         Self {
             box_layout: Layout::new::<GcBoxInner<T>>(),
-            drop_value: |erased| unsafe {
-                ptr::drop_in_place(erased.unerased_value::<T>());
+            drop_value: if mem::needs_drop::<T>() {
+                Some(|erased| unsafe {
+                    ptr::drop_in_place(erased.unerased_value::<T>());
+                })
+            } else {
+                None
             },
             trace_value: |erased, cc| unsafe {
                 let val = &*(erased.unerased_value::<T>());
                 val.trace(cc)
             },
+            #[cfg(debug_assertions)]
+            is_zst: false,
+        }
+    }
+
+    #[inline(always)]
+    const fn zst_vtable<'gc>() -> Self {
+        Self {
+            box_layout: Layout::new::<GcBoxInner<()>>(),
+            drop_value: Some(|_| panic!("drop of fixed Gc")),
+            trace_value: |_, _| panic!("trace of fixed Gc"),
+            #[cfg(debug_assertions)]
+            is_zst: true,
         }
     }
 }
 
 /// A typed GC'd value, together with its metadata.
-/// This type is never manipulated directly by the GC algorithm, allowing
-/// user-facing `Gc`s to freely cast their pointer to it.
+///
+/// This type is never manipulated directly by the GC algorithm, allowing user-facing `Gc`s to
+/// freely cast their pointer to it.
 #[repr(C)]
 pub(crate) struct GcBoxInner<T: ?Sized> {
     pub(crate) header: GcBoxHeader,
@@ -223,7 +318,7 @@ pub(crate) struct GcBoxInner<T: ?Sized> {
 
 impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
     #[inline(always)]
-    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self {
+    pub(crate) const fn new(header: GcBoxHeader, t: T) -> Self {
         Self {
             header,
             value: mem::ManuallyDrop::new(t),
@@ -259,21 +354,44 @@ pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
 
 /// Utility functions for tagging and untagging pointers.
 mod tagged_ptr {
-    use core::cell::Cell;
+    /// Checks that `mask` can be used to tag a pointer to `T`.
+    const fn check_mask<T>(mask: usize) -> bool {
+        mask < core::mem::align_of::<T>()
+    }
+
+    /// Checks that `mask` is exactly 1 bit wide.
+    const fn mask_is_bool(mask: usize) -> bool {
+        mask.is_power_of_two()
+    }
 
     trait ValidMask<const MASK: usize> {
         const CHECK: ();
     }
 
     impl<T, const MASK: usize> ValidMask<MASK> for T {
-        const CHECK: () = assert!(MASK < core::mem::align_of::<T>());
+        const CHECK: () = assert!(check_mask::<T>(MASK));
+    }
+
+    trait ValidBoolMask<const MASK: usize> {
+        const CHECK: ();
+    }
+
+    impl<T, const MASK: usize> ValidBoolMask<MASK> for T {
+        const CHECK: () = assert!(check_mask::<T>(MASK) && mask_is_bool(MASK));
     }
 
     /// Checks that `$mask` can be used to tag a pointer to `$type`.
+    ///
     /// If this isn't true, this macro will cause a post-monomorphization error.
     macro_rules! check_mask {
         ($type:ty, $mask:expr) => {
             let _ = <$type as ValidMask<$mask>>::CHECK;
+        };
+    }
+
+    macro_rules! check_bool_mask {
+        ($type:ty, $mask:expr) => {
+            let _ = <$type as ValidBoolMask<$mask>>::CHECK;
         };
     }
 
@@ -290,18 +408,20 @@ mod tagged_ptr {
     }
 
     #[inline(always)]
-    pub(super) fn set<const MASK: usize, T>(pcell: &Cell<*const T>, tag: usize) {
+    pub(super) fn set<const MASK: usize, T>(tagged_ptr: *const T, tag: usize) -> *const T {
         check_mask!(T, MASK);
-        let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !MASK) | (tag & MASK));
-        pcell.set(ptr)
+        tagged_ptr.map_addr(|addr| (addr & !MASK) | (tag & MASK))
     }
 
     #[inline(always)]
-    pub(super) fn set_bool<const MASK: usize, T>(pcell: &Cell<*const T>, value: bool) {
-        check_mask!(T, MASK);
-        let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 });
-        pcell.set(ptr)
+    pub(super) fn get_bool<const MASK: usize, T>(tagged_ptr: *const T) -> bool {
+        check_bool_mask!(T, MASK);
+        tagged_ptr.addr() & MASK != 0x0
+    }
+
+    #[inline(always)]
+    pub(super) fn set_bool<const MASK: usize, T>(tagged_ptr: *const T, value: bool) -> *const T {
+        check_bool_mask!(T, MASK);
+        tagged_ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 })
     }
 }
