@@ -7,6 +7,7 @@ extern crate alloc;
 
 pub mod arena;
 pub mod barrier;
+pub mod zst_cache;
 #[macro_use]
 pub mod collect;
 mod collect_impl;
