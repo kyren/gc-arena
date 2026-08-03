@@ -1,77 +1,148 @@
+use alloc::alloc;
 use core::alloc::Layout;
 use core::cell::Cell;
 use core::marker::PhantomData;
 use core::ptr::NonNull;
-use core::{mem, ptr};
+use core::{fmt, mem, ptr};
 
 use crate::{collect::Collect, context::Context};
 
 /// A thin-pointer-sized box containing a type-erased GC object.
-/// Stores the metadata required by the GC algorithm inline (see `GcBoxInner`
-/// for its typed counterpart).
+///
+/// Stores the metadata required by the GC algorithm in the same allocation *before* the stored
+/// pointer.
+pub(crate) struct GcBox<T: ?Sized = ()>(NonNull<T>);
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GcBox(NonNull<GcBoxInner<()>>);
-
-impl GcBox {
-    /// Erases a pointer to a typed GC object.
-    ///
-    /// **SAFETY:** The pointer must point to a valid `GcBoxInner` allocated
-    /// in a `Box`.
-    #[inline(always)]
-    pub(crate) unsafe fn erase<T: ?Sized>(ptr: NonNull<GcBoxInner<T>>) -> Self {
-        // This cast is sound because `GcBoxInner` is `repr(C)`.
-        let erased = ptr.as_ptr() as *mut GcBoxInner<()>;
-        unsafe { Self(NonNull::new_unchecked(erased)) }
+impl<T: ?Sized> fmt::Debug for GcBox<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.as_ptr(), f)
     }
+}
 
-    /// Gets a pointer to the value stored inside this box.
-    /// `T` must be the same type that was used with `erase`, so that
-    /// we can correctly compute the field offset.
+impl<T: ?Sized> Copy for GcBox<T> {}
+
+impl<T: ?Sized> Clone for GcBox<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<'gc, T: Collect<'gc>> GcBox<T> {
+    /// Allocate a new `GcBox` with a default header and holding the given value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no valid layout we can allocate.
     #[inline(always)]
-    fn unerased_value<T>(&self) -> *mut T {
+    pub(crate) fn alloc(value: T) -> Self {
         unsafe {
-            let ptr = self.0.as_ptr() as *mut GcBoxInner<T>;
-            // Don't create a reference, to keep the full provenance.
-            // Also, this gives us interior mutability "for free".
-            ptr::addr_of_mut!((*ptr).value) as *mut T
+            let gc_layout = GcLayout::new(Layout::new::<T>()).unwrap();
+            let gc_header = GcBoxHeader::new::<T>();
+
+            let bytes = alloc::alloc(gc_layout.alloc_layout);
+            let Some(bytes) = NonNull::new(bytes) else {
+                alloc::handle_alloc_error(gc_layout.alloc_layout);
+            };
+
+            let value_ptr = gc_layout.value_ptr::<T>(bytes);
+            let header_ptr = GcLayout::header_ptr(value_ptr);
+            debug_assert!(header_ptr.is_aligned() && value_ptr.is_aligned());
+
+            ptr::write(header_ptr.as_ptr(), gc_header);
+            ptr::write(value_ptr.as_ptr(), value);
+
+            GcBox(value_ptr)
         }
     }
+}
 
+impl<T: ?Sized> GcBox<T> {
     #[inline(always)]
     pub(crate) fn header(&self) -> &GcBoxHeader {
-        unsafe { &self.0.as_ref().header }
+        unsafe { GcLayout::header_ptr(self.0).as_ref() }
+    }
+
+    #[inline(always)]
+    pub(crate) fn as_ptr(self) -> *const T {
+        self.0.as_ptr()
+    }
+
+    /// # Safety
+    ///
+    /// The provided ptr must have come from `GcBox::as_ptr`.
+    #[inline(always)]
+    pub(crate) unsafe fn from_ptr(p: *const T) -> Self {
+        Self(unsafe { NonNull::new_unchecked(p as *mut T) })
+    }
+
+    #[inline(always)]
+    pub(crate) fn cast<U>(self) -> GcBox<U> {
+        GcBox(self.0.cast())
+    }
+
+    /// A convenience method to cast to `()`.
+    #[inline(always)]
+    pub(crate) fn erase(self) -> GcBox {
+        self.cast()
+    }
+
+    /// Returns true if two `GcBox`s point to the same allocation.
+    ///
+    /// This function ignores the metadata of `dyn` pointers.
+    #[inline(always)]
+    pub(crate) fn addr_eq(self, other: GcBox<T>) -> bool {
+        ptr::addr_eq(self.as_ptr(), other.as_ptr())
+    }
+
+    /// Return a shared reference to the value.
+    ///
+    /// # Safety
+    ///
+    /// You must ensure that this pointer was not cast to a type incompatible with its allocated
+    /// type and has not been dropped or deallocated.
+    ///
+    /// Additionally, the returned reference has an unbound lifetime so the returned reference must
+    /// not be live when the value is dropped or the pointer deallocated.
+    #[inline(always)]
+    pub(crate) unsafe fn as_ref<'a>(self) -> &'a T {
+        unsafe { self.0.as_ref() }
     }
 
     /// Traces the stored value.
     ///
-    /// **SAFETY**: `Self::drop_in_place` must not have been called.
+    /// # Safety
+    ///
+    /// The value must not have been dropped and the pointer must not have been deallocated.
     #[inline(always)]
-    pub(crate) unsafe fn trace_value(&self, cc: &mut Context) {
-        unsafe { (self.header().vtable().trace_value)(*self, cc) }
+    pub(crate) unsafe fn trace_value(self, cc: &mut Context) {
+        unsafe { (self.header().vtable().trace_value)(self.0.cast::<()>().as_ptr(), cc) }
     }
 
     /// Drops the stored value.
     ///
-    /// **SAFETY**: once called, no GC pointers should access the stored value
-    /// (but accessing the `GcBox` itself is still safe).
+    /// # Safety:
+    ///
+    /// The value must not have been previously dropped and the pointer must not have been
+    /// deallocated.
     #[inline(always)]
     pub(crate) unsafe fn drop_in_place(&mut self) {
-        unsafe { (self.header().vtable().drop_value)(*self) }
+        unsafe { (self.header().vtable().drop_value)(self.0.cast::<()>().as_ptr()) }
     }
 
-    /// Deallocates the box. Failing to call `Self::drop_in_place` beforehand
-    /// will cause the stored value to be leaked.
+    /// Deallocates the box.
     ///
-    /// **SAFETY**: once called, this `GcBox` should never be accessed by any GC
-    /// pointers again.
+    /// Failing to call `Self::drop_in_place` beforehand will cause the stored value to be leaked.
+    ///
+    /// # Safety:
+    ///
+    /// The pointer must not already be deallocated.
     #[inline(always)]
     pub(crate) unsafe fn dealloc(self) {
+        let gc_layout = GcLayout::new(self.header().vtable().value_layout).unwrap();
         unsafe {
-            let layout = self.header().vtable().box_layout;
-            let ptr = self.0.as_ptr() as *mut u8;
-            // SAFETY: the pointer was `Box`-allocated with this layout.
-            alloc::alloc::dealloc(ptr, layout);
+            let ptr = gc_layout.alloc_ptr(self.0).as_ptr();
+            // SAFETY: the pointer was allocated with this layout.
+            alloc::dealloc(ptr, gc_layout.alloc_layout);
         }
     }
 }
@@ -89,6 +160,10 @@ pub(crate) struct GcBoxHeader {
 }
 
 impl GcBoxHeader {
+    /// Create a new `GcBoxHeader` with:
+    /// 1) color set to `White`
+    /// 2) `needs_trace` set to `false`
+    /// 3) `is_live` set to `false`
     #[inline(always)]
     pub fn new<'gc, T: Collect<'gc>>() -> Self {
         // Helper trait to materialize vtables in static memory.
@@ -101,6 +176,7 @@ impl GcBoxHeader {
         }
 
         let vtable: &'static _ = &<T as HasCollectVtable>::VTABLE;
+
         Self {
             next: Cell::new(None),
             tagged_vtable: Cell::new(vtable as *const _),
@@ -141,19 +217,28 @@ impl GcBoxHeader {
 
     #[inline]
     pub(crate) fn set_color(&self, color: GcColor) {
-        tagged_ptr::set::<0x3, _>(
-            &self.tagged_vtable,
-            match color {
-                GcColor::White => 0x0,
-                GcColor::WhiteWeak => 0x1,
-                GcColor::Gray => 0x2,
-                GcColor::Black => 0x3,
-            },
-        );
+        self.tagged_vtable.update(|p| {
+            tagged_ptr::set::<0x3, _>(
+                p,
+                match color {
+                    GcColor::White => 0x0,
+                    GcColor::WhiteWeak => 0x1,
+                    GcColor::Gray => 0x2,
+                    GcColor::Black => 0x3,
+                },
+            )
+        });
     }
+
     #[inline]
     pub(crate) fn needs_trace(&self) -> bool {
-        tagged_ptr::get::<0x4, _>(self.tagged_vtable.get()) != 0x0
+        tagged_ptr::get_bool::<0x4, _>(self.tagged_vtable.get())
+    }
+
+    #[inline]
+    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
+        self.tagged_vtable
+            .update(|p| tagged_ptr::set_bool::<0x4, _>(p, needs_trace));
     }
 
     /// Determines whether or not we've dropped the `dyn Collect` value
@@ -164,17 +249,13 @@ impl GcBoxHeader {
     /// (since we've already done it).
     #[inline]
     pub(crate) fn is_live(&self) -> bool {
-        tagged_ptr::get::<0x8, _>(self.tagged_vtable.get()) != 0x0
-    }
-
-    #[inline]
-    pub(crate) fn set_needs_trace(&self, needs_trace: bool) {
-        tagged_ptr::set_bool::<0x4, _>(&self.tagged_vtable, needs_trace);
+        tagged_ptr::get_bool::<0x8, _>(self.tagged_vtable.get())
     }
 
     #[inline]
     pub(crate) fn set_live(&self, alive: bool) {
-        tagged_ptr::set_bool::<0x8, _>(&self.tagged_vtable, alive);
+        self.tagged_vtable
+            .update(|p| tagged_ptr::set_bool::<0x8, _>(p, alive));
     }
 }
 
@@ -184,12 +265,12 @@ impl GcBoxHeader {
 /// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
 struct CollectVtable {
-    /// The layout of the `GcBox` the GC'd value is stored in.
-    box_layout: Layout,
-    /// Drops the value stored in the given `GcBox` (without deallocating the box).
-    drop_value: unsafe fn(GcBox),
-    /// Traces the value stored in the given `GcBox`.
-    trace_value: unsafe fn(GcBox, &mut Context),
+    /// Traces the value at the given pointer.
+    trace_value: unsafe fn(*const (), &mut Context),
+    /// Drops the value at the given pointer.
+    drop_value: unsafe fn(*mut ()),
+    /// The layout of the value stored in this `GcBox`.
+    value_layout: Layout,
 }
 
 impl CollectVtable {
@@ -199,34 +280,13 @@ impl CollectVtable {
     #[inline(always)]
     const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
         Self {
-            box_layout: Layout::new::<GcBoxInner<T>>(),
-            drop_value: |erased| unsafe {
-                ptr::drop_in_place(erased.unerased_value::<T>());
+            trace_value: |ptr, cc| unsafe {
+                ptr.cast::<T>().as_ref_unchecked().trace(cc);
             },
-            trace_value: |erased, cc| unsafe {
-                let val = &*(erased.unerased_value::<T>());
-                val.trace(cc)
+            drop_value: |ptr| unsafe {
+                ptr::drop_in_place(ptr.cast::<T>());
             },
-        }
-    }
-}
-
-/// A typed GC'd value, together with its metadata.
-/// This type is never manipulated directly by the GC algorithm, allowing
-/// user-facing `Gc`s to freely cast their pointer to it.
-#[repr(C)]
-pub(crate) struct GcBoxInner<T: ?Sized> {
-    pub(crate) header: GcBoxHeader,
-    /// The typed value stored in this `GcBox`.
-    pub(crate) value: mem::ManuallyDrop<T>,
-}
-
-impl<'gc, T: Collect<'gc>> GcBoxInner<T> {
-    #[inline(always)]
-    pub(crate) fn new(header: GcBoxHeader, t: T) -> Self {
-        Self {
-            header,
-            value: mem::ManuallyDrop::new(t),
+            value_layout: Layout::new::<T>(),
         }
     }
 }
@@ -257,23 +317,145 @@ pub(crate) enum GcColor {
 // Phantom type that holds a lifetime and ensures that it is invariant.
 pub(crate) type Invariant<'a> = PhantomData<Cell<&'a ()>>;
 
+/// The layout of an allocated buffer backing a `Gc` pointer.
+#[derive(Debug, Copy, Clone)]
+struct GcLayout {
+    alloc_layout: Layout,
+    value_offset: usize,
+}
+
+impl GcLayout {
+    #[inline(always)]
+    const fn new(value_layout: Layout) -> Option<Self> {
+        #[inline(always)]
+        const fn max(a: usize, b: usize) -> usize {
+            if a > b { a } else { b }
+        }
+
+        let header_size = mem::size_of::<GcBoxHeader>();
+        let header_align = mem::align_of::<GcBoxHeader>();
+
+        let value_size = value_layout.size();
+        let value_align = value_layout.align();
+
+        // We want to allocate a buffer that is large enough to hold both the value and the header
+        // at the proper alignment.
+        //
+        // We operate on pointers to the value itself, not the entire allocated buffer, so we need
+        // to be careful how we offset objects in this buffer so that the location of the header is
+        // predictable. We want the location of the header to be at a fixed position relative to the
+        // value pointer that does *not* depend on the pointer type, so that we can freely cast the
+        // value pointer.
+
+        // The allocation must be aligned to both header and value alignment so that when we offset
+        // from this pointer, if the offset is properly aligned then we know the resulting pointer
+        // is still aligned.
+        let alloc_align = max(header_align, value_align);
+
+        // We need to make sure the value offset is enough to store the header before it while also
+        // making sure that the value is aligned to *both* the header and value alignment. This way,
+        // when we subtract the header size from the value pointer, we know the resulting location
+        // is properly aligned for the header.
+        let value_offset = max(header_size, value_align);
+
+        let Some(alloc_size) = value_offset.checked_add(value_size) else {
+            return None;
+        };
+
+        let Ok(alloc_layout) = Layout::from_size_align(alloc_size, alloc_align) else {
+            return None;
+        };
+
+        // Ensure that the value and header offsets are both properly aligned.
+        debug_assert!(value_offset.is_multiple_of(value_align));
+        debug_assert!((value_offset - header_size).is_multiple_of(header_align));
+
+        Some(Self {
+            alloc_layout,
+            value_offset,
+        })
+    }
+
+    /// Compute the pointer to the GC value from the pointer to the GC allocation.
+    ///
+    /// # Safety
+    ///
+    /// Allocation must have been allocated according to `alloc_layout`.
+    #[inline(always)]
+    unsafe fn value_ptr<T>(&self, alloc_ptr: NonNull<u8>) -> NonNull<T> {
+        let value = unsafe { alloc_ptr.add(self.value_offset).cast() };
+        debug_assert!(value.is_aligned());
+        value
+    }
+
+    /// Compute the pointer to the GC header from a GC value pointer.
+    ///
+    /// # Safety
+    ///
+    /// Must be a valid GC value pointer.
+    #[inline(always)]
+    unsafe fn header_ptr<T: ?Sized>(value_ptr: NonNull<T>) -> NonNull<GcBoxHeader> {
+        let header = unsafe {
+            value_ptr
+                .cast::<GcBoxHeader>()
+                .byte_sub(mem::size_of::<GcBoxHeader>())
+        };
+        debug_assert!(header.is_aligned());
+        header
+    }
+
+    /// Compute the pointer to the beginning of the GC allocation from a GC value pointer.
+    ///
+    /// # Safety
+    ///
+    /// Must be a valid GC value pointer.
+    #[inline(always)]
+    unsafe fn alloc_ptr<T: ?Sized>(&self, value_ptr: NonNull<T>) -> NonNull<u8> {
+        unsafe { value_ptr.cast::<u8>().byte_sub(self.value_offset) }
+    }
+}
+
 /// Utility functions for tagging and untagging pointers.
 mod tagged_ptr {
-    use core::cell::Cell;
+    /// Checks that `mask` can be used to tag a pointer to `T`.
+    const fn is_valid_mask<T>(mask: usize) -> bool {
+        mask < core::mem::align_of::<T>()
+    }
+
+    /// Checks that `mask` is exactly 1 bit wide.
+    const fn is_boolean_mask(mask: usize) -> bool {
+        mask.is_power_of_two()
+    }
 
     trait ValidMask<const MASK: usize> {
         const CHECK: ();
     }
 
     impl<T, const MASK: usize> ValidMask<MASK> for T {
-        const CHECK: () = assert!(MASK < core::mem::align_of::<T>());
+        const CHECK: () = assert!(is_valid_mask::<T>(MASK));
+    }
+
+    trait BooleanMask<const MASK: usize> {
+        const CHECK: ();
+    }
+
+    impl<T, const MASK: usize> BooleanMask<MASK> for T {
+        const CHECK: () = assert!(is_boolean_mask(MASK));
     }
 
     /// Checks that `$mask` can be used to tag a pointer to `$type`.
+    ///
     /// If this isn't true, this macro will cause a post-monomorphization error.
     macro_rules! check_mask {
         ($type:ty, $mask:expr) => {
             let _ = <$type as ValidMask<$mask>>::CHECK;
+        };
+    }
+
+    macro_rules! check_bool_mask {
+        ($type:ty, $mask:expr) => {
+            let _ = <$type as ValidMask<$mask>>::CHECK;
+            let _ = <$type as BooleanMask<$mask>>::CHECK;
         };
     }
 
@@ -289,19 +471,20 @@ mod tagged_ptr {
         tagged_ptr.addr() & MASK
     }
 
-    #[inline(always)]
-    pub(super) fn set<const MASK: usize, T>(pcell: &Cell<*const T>, tag: usize) {
+    pub(super) fn set<const MASK: usize, T>(tagged_ptr: *const T, tag: usize) -> *const T {
         check_mask!(T, MASK);
-        let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !MASK) | (tag & MASK));
-        pcell.set(ptr)
+        tagged_ptr.map_addr(|addr| (addr & !MASK) | (tag & MASK))
     }
 
     #[inline(always)]
-    pub(super) fn set_bool<const MASK: usize, T>(pcell: &Cell<*const T>, value: bool) {
-        check_mask!(T, MASK);
-        let ptr = pcell.get();
-        let ptr = ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 });
-        pcell.set(ptr)
+    pub(super) fn get_bool<const MASK: usize, T>(tagged_ptr: *const T) -> bool {
+        check_bool_mask!(T, MASK);
+        tagged_ptr.addr() & MASK != 0x0
+    }
+
+    #[inline(always)]
+    pub(super) fn set_bool<const MASK: usize, T>(tagged_ptr: *const T, value: bool) -> *const T {
+        check_bool_mask!(T, MASK);
+        tagged_ptr.map_addr(|addr| (addr & !MASK) | if value { MASK } else { 0 })
     }
 }

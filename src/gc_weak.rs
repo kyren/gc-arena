@@ -2,7 +2,6 @@ use crate::Mutation;
 use crate::collect::{Collect, Trace};
 use crate::context::Finalization;
 use crate::gc::Gc;
-use crate::types::GcBox;
 
 use core::fmt::{self, Debug};
 
@@ -39,8 +38,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// [`crate::arena::CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
     pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T>> {
-        let ptr = unsafe { GcBox::erase(self.inner.ptr) };
-        mc.upgrade(ptr).then(|| self.inner)
+        mc.upgrade(self.inner.ptr.erase()).then(|| self.inner)
     }
 
     /// Returns whether the value referenced by this `GcWeak` has already been dropped.
@@ -54,7 +52,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// It is not safe to use this to use this and casting as a substitute for [`GcWeak::upgrade`].
     #[inline]
     pub fn is_dropped(self) -> bool {
-        !unsafe { self.inner.ptr.as_ref() }.header.is_live()
+        !self.inner.ptr.header().is_live()
     }
 
     /// Returns true when a pointer is *dead* during finalization.
@@ -90,7 +88,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T>> {
         // SAFETY: We know that we are currently marking, so any non-dropped pointer is safe to
         // resurrect.
-        if unsafe { self.inner.ptr.as_ref() }.header.is_live() {
+        if self.inner.ptr.header().is_live() {
             Gc::resurrect(fc, self.inner);
             Some(self.inner)
         } else {
@@ -104,9 +102,7 @@ impl<'gc, T: ?Sized + 'gc> GcWeak<'gc, T> {
     /// pointers.
     #[inline]
     pub fn ptr_eq(this: GcWeak<'gc, T>, other: GcWeak<'gc, T>) -> bool {
-        // TODO: Equivalent to `core::ptr::addr_eq`:
-        // https://github.com/rust-lang/rust/issues/116324
-        this.as_ptr() as *const () == other.as_ptr() as *const ()
+        this.inner.ptr.addr_eq(other.inner.ptr)
     }
 
     #[inline]
