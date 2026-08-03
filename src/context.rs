@@ -1,16 +1,15 @@
-use alloc::{boxed::Box, vec::Vec};
+use alloc::vec::Vec;
 use core::{
     cell::{Cell, UnsafeCell},
     mem,
     ops::{ControlFlow, Deref, DerefMut},
-    ptr::NonNull,
 };
 
 use crate::{
     Gc, GcWeak,
     collect::{Collect, Trace},
     metrics::Metrics,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    types::{GcBox, GcColor, Invariant},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -40,19 +39,15 @@ impl<'gc> Mutation<'gc> {
     /// pointer(s) before collection is next triggered.
     #[inline]
     pub fn backward_barrier(&self, parent: Gc<'gc, ()>, child: Option<Gc<'gc, ()>>) {
-        self.context.backward_barrier(
-            unsafe { GcBox::erase(parent.ptr) },
-            child.map(|p| unsafe { GcBox::erase(p.ptr) }),
-        )
+        self.context
+            .backward_barrier(parent.ptr.erase(), child.map(|p| p.ptr.erase()))
     }
 
     /// A version of [`Mutation::backward_barrier`] that allows adopting a [`GcWeak`] child.
     #[inline]
     pub fn backward_barrier_weak(&self, parent: Gc<'gc, ()>, child: GcWeak<'gc, ()>) {
         self.context
-            .backward_barrier_weak(unsafe { GcBox::erase(parent.ptr) }, unsafe {
-                GcBox::erase(child.inner.ptr)
-            })
+            .backward_barrier_weak(parent.ptr.erase(), child.inner.ptr.erase())
     }
 
     /// IF we are in the marking phase AND the `parent` pointer (if given) is colored black, AND
@@ -70,22 +65,18 @@ impl<'gc> Mutation<'gc> {
     #[inline]
     pub fn forward_barrier(&self, parent: Option<Gc<'gc, ()>>, child: Gc<'gc, ()>) {
         self.context
-            .forward_barrier(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
-                GcBox::erase(child.ptr)
-            })
+            .forward_barrier(parent.map(|p| p.ptr.erase()), child.ptr.erase())
     }
 
     /// A version of [`Mutation::forward_barrier`] that allows adopting a [`GcWeak`] child.
     #[inline]
     pub fn forward_barrier_weak(&self, parent: Option<Gc<'gc, ()>>, child: GcWeak<'gc, ()>) {
         self.context
-            .forward_barrier_weak(parent.map(|p| unsafe { GcBox::erase(p.ptr) }), unsafe {
-                GcBox::erase(child.inner.ptr)
-            })
+            .forward_barrier_weak(parent.map(|p| p.ptr.erase()), child.inner.ptr.erase())
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> NonNull<GcBoxInner<T>> {
+    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcBox<T> {
         self.context.allocate(t)
     }
 
@@ -123,13 +114,11 @@ impl<'gc> Finalization<'gc> {
 
 impl<'gc> Trace<'gc> for Context {
     fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
-        let gc_box = unsafe { GcBox::erase(gc.ptr) };
-        Context::trace(self, gc_box)
+        Context::trace(self, gc.ptr)
     }
 
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
-        let gc_box = unsafe { GcBox::erase(gc.inner.ptr) };
-        Context::trace_weak(self, gc_box)
+        Context::trace_weak(self, gc.inner.ptr)
     }
 }
 
@@ -364,30 +353,23 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> NonNull<GcBoxInner<T>> {
-        let header = GcBoxHeader::new::<T>();
+    #[inline]
+    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> GcBox<T> {
+        let gc_box = GcBox::alloc(t);
+
+        let header = gc_box.header();
         header.set_next(self.all.get());
         header.set_live(true);
         header.set_needs_trace(T::NEEDS_TRACE);
 
-        // Make the generated code easier to optimize into `T` being constructed in place or at the
-        // very least only memcpy'd once.
-        // For more information, see: https://github.com/kyren/gc-arena/pull/14
-        let (gc_box, ptr) = unsafe {
-            let mut uninitialized = Box::new(mem::MaybeUninit::<GcBoxInner<T>>::uninit());
-            core::ptr::write(uninitialized.as_mut_ptr(), GcBoxInner::new(header, t));
-            let ptr = NonNull::new_unchecked(Box::into_raw(uninitialized) as *mut GcBoxInner<T>);
-            (GcBox::erase(ptr), ptr)
-        };
-
-        self.all.set(Some(gc_box));
+        self.all.set(Some(gc_box.erase()));
         if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
             self.sweep_prev.set(self.all.get());
         }
 
         self.metrics.mark_gc_allocated(1);
 
-        ptr
+        gc_box
     }
 
     #[inline]
@@ -649,7 +631,7 @@ impl Context {
                 } else {
                     // If `sweep_prev` is None, then the sweep pointer is also the
                     // beginning of the main object list, so we need to adjust it.
-                    debug_assert_eq!(self.all.get(), Some(sweep));
+                    debug_assert!(self.all.get().is_some_and(|f| f.addr_eq(sweep)));
                     self.all.set(next_box);
                 }
 
