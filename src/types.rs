@@ -7,28 +7,28 @@ use core::{fmt, mem, ptr};
 
 use crate::{collect::Collect, context::Context};
 
-/// A thin-pointer-sized box containing a type-erased GC object.
+/// A thin-pointer-sized pointer to a type-erased GC object.
 ///
-/// Stores the metadata required by the GC algorithm in the same allocation *before* the stored
-/// pointer.
-pub(crate) struct GcBox<T: ?Sized = ()>(NonNull<T>);
+/// Pointers to GC objects have the metadata required by the GC algorithm in the same allocation
+/// *before* the stored pointer.
+pub(crate) struct GcPtr<T: ?Sized = ()>(NonNull<T>);
 
-impl<T: ?Sized> fmt::Debug for GcBox<T> {
+impl<T: ?Sized> fmt::Debug for GcPtr<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Pointer::fmt(&self.as_ptr(), f)
     }
 }
 
-impl<T: ?Sized> Copy for GcBox<T> {}
+impl<T: ?Sized> Copy for GcPtr<T> {}
 
-impl<T: ?Sized> Clone for GcBox<T> {
+impl<T: ?Sized> Clone for GcPtr<T> {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<'gc, T: Collect<'gc>> GcBox<T> {
-    /// Allocate a new `GcBox` with a default header and holding the given value.
+impl<'gc, T: Collect<'gc>> GcPtr<T> {
+    /// Allocate a new GC value with a default header.
     ///
     /// # Panics
     ///
@@ -37,7 +37,7 @@ impl<'gc, T: Collect<'gc>> GcBox<T> {
     pub(crate) fn alloc(value: T) -> Self {
         unsafe {
             let gc_layout = GcLayout::new(Layout::new::<T>()).unwrap();
-            let gc_header = GcBoxHeader::new::<T>();
+            let gc_header = GcHeader::new::<T>();
 
             let bytes = alloc::alloc(gc_layout.alloc_layout);
             let Some(bytes) = NonNull::new(bytes) else {
@@ -51,14 +51,14 @@ impl<'gc, T: Collect<'gc>> GcBox<T> {
             ptr::write(header_ptr.as_ptr(), gc_header);
             ptr::write(value_ptr.as_ptr(), value);
 
-            GcBox(value_ptr)
+            GcPtr(value_ptr)
         }
     }
 }
 
-impl<T: ?Sized> GcBox<T> {
+impl<T: ?Sized> GcPtr<T> {
     #[inline(always)]
-    pub(crate) fn header(&self) -> &GcBoxHeader {
+    pub(crate) fn header(&self) -> &GcHeader {
         unsafe { GcLayout::header_ptr(self.0).as_ref() }
     }
 
@@ -69,28 +69,28 @@ impl<T: ?Sized> GcBox<T> {
 
     /// # Safety
     ///
-    /// The provided ptr must have come from `GcBox::as_ptr`.
+    /// The provided ptr must have come from `GcPtr::as_ptr`.
     #[inline(always)]
     pub(crate) unsafe fn from_ptr(p: *const T) -> Self {
         Self(unsafe { NonNull::new_unchecked(p as *mut T) })
     }
 
     #[inline(always)]
-    pub(crate) fn cast<U>(self) -> GcBox<U> {
-        GcBox(self.0.cast())
+    pub(crate) fn cast<U>(self) -> GcPtr<U> {
+        GcPtr(self.0.cast())
     }
 
     /// A convenience method to cast to `()`.
     #[inline(always)]
-    pub(crate) fn erase(self) -> GcBox {
+    pub(crate) fn erase(self) -> GcPtr {
         self.cast()
     }
 
-    /// Returns true if two `GcBox`s point to the same allocation.
+    /// Returns true if two `GcPtr`s point to the same allocation.
     ///
     /// This function ignores the metadata of `dyn` pointers.
     #[inline(always)]
-    pub(crate) fn addr_eq(self, other: GcBox<T>) -> bool {
+    pub(crate) fn addr_eq(self, other: GcPtr<T>) -> bool {
         ptr::addr_eq(self.as_ptr(), other.as_ptr())
     }
 
@@ -129,7 +129,7 @@ impl<T: ?Sized> GcBox<T> {
         unsafe { (self.header().vtable().drop_value)(self.0.cast::<()>().as_ptr()) }
     }
 
-    /// Deallocates the box.
+    /// Deallocates the allocation this pointer points to.
     ///
     /// Failing to call `Self::drop_in_place` beforehand will cause the stored value to be leaked.
     ///
@@ -147,9 +147,9 @@ impl<T: ?Sized> GcBox<T> {
     }
 }
 
-pub(crate) struct GcBoxHeader {
+pub(crate) struct GcHeader {
     /// The next element in the global linked list of allocated objects.
-    next: Cell<Option<GcBox>>,
+    next: Cell<Option<GcPtr>>,
     /// A custom virtual function table for handling type-specific operations.
     ///
     /// The lower bits of the pointer are used to store GC flags:
@@ -159,13 +159,13 @@ pub(crate) struct GcBoxHeader {
     tagged_vtable: Cell<*const CollectVtable>,
 }
 
-impl GcBoxHeader {
-    /// Create a new `GcBoxHeader` with:
+impl GcHeader {
+    /// Create a new `GcHeader` with:
     /// 1) color set to `White`
     /// 2) `needs_trace` set to `false`
     /// 3) `is_live` set to `false`
     #[inline(always)]
-    pub fn new<'gc, T: Collect<'gc>>() -> Self {
+    fn new<'gc, T: Collect<'gc>>() -> Self {
         // Helper trait to materialize vtables in static memory.
         trait HasCollectVtable {
             const VTABLE: CollectVtable;
@@ -183,7 +183,6 @@ impl GcBoxHeader {
         }
     }
 
-    /// Gets a reference to the `CollectVtable` used by this box.
     #[inline(always)]
     fn vtable(&self) -> &'static CollectVtable {
         let ptr = tagged_ptr::untag(self.tagged_vtable.get());
@@ -195,13 +194,13 @@ impl GcBoxHeader {
 
     /// Gets the next element in the global linked list of allocated objects.
     #[inline(always)]
-    pub(crate) fn next(&self) -> Option<GcBox> {
+    pub(crate) fn next(&self) -> Option<GcPtr> {
         self.next.get()
     }
 
     /// Sets the next element in the global linked list of allocated objects.
     #[inline(always)]
-    pub(crate) fn set_next(&self, next: Option<GcBox>) {
+    pub(crate) fn set_next(&self, next: Option<GcPtr>) {
         self.next.set(next)
     }
 
@@ -241,12 +240,11 @@ impl GcBoxHeader {
             .update(|p| tagged_ptr::set_bool::<0x4, _>(p, needs_trace));
     }
 
-    /// Determines whether or not we've dropped the `dyn Collect` value
-    /// stored in `GcBox.value`
-    /// When we garbage-collect a `GcBox` that still has outstanding weak pointers,
-    /// we set `alive` to false. When there are no more weak pointers remaining,
-    /// we will deallocate the `GcBox`, but skip dropping the `dyn Collect` value
-    /// (since we've already done it).
+    /// Determines whether or not we've dropped the `dyn Collect` value stored in `GcPtr.value`
+    ///
+    /// When we garbage-collect a `GcPtr` that still has outstanding weak pointers, we set `alive`
+    /// to false. When there are no more weak pointers remaining, we will deallocate the `GcPtr`,
+    /// but skip dropping the `dyn Collect` value (since we've already done it).
     #[inline]
     pub(crate) fn is_live(&self) -> bool {
         tagged_ptr::get_bool::<0x8, _>(self.tagged_vtable.get())
@@ -261,22 +259,22 @@ impl GcBoxHeader {
 
 /// Type-specific operations for GC'd values.
 ///
-/// We use a custom vtable instead of `dyn Collect` for extra flexibility.
-/// The type is over-aligned so that `GcBoxHeader` can store flags into the LSBs of the vtable pointer.
+/// We use a custom vtable instead of `dyn Collect` for extra flexibility. The type is over-aligned
+/// so that `GcHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
 struct CollectVtable {
     /// Traces the value at the given pointer.
     trace_value: unsafe fn(*const (), &mut Context),
     /// Drops the value at the given pointer.
     drop_value: unsafe fn(*mut ()),
-    /// The layout of the value stored in this `GcBox`.
+    /// The layout of the value stored in this `GcPtr`.
     value_layout: Layout,
 }
 
 impl CollectVtable {
     /// Makes a vtable for a known, `Sized` type.
     /// Because `T: Sized`, we can recover a typed pointer
-    /// directly from the erased `GcBox`.
+    /// directly from the erased `GcPtr`.
     #[inline(always)]
     const fn vtable_for<'gc, T: Collect<'gc>>() -> Self {
         Self {
@@ -332,8 +330,8 @@ impl GcLayout {
             if a > b { a } else { b }
         }
 
-        let header_size = mem::size_of::<GcBoxHeader>();
-        let header_align = mem::align_of::<GcBoxHeader>();
+        let header_size = mem::size_of::<GcHeader>();
+        let header_align = mem::align_of::<GcHeader>();
 
         let value_size = value_layout.size();
         let value_align = value_layout.align();
@@ -394,11 +392,11 @@ impl GcLayout {
     ///
     /// Must be a valid GC value pointer.
     #[inline(always)]
-    unsafe fn header_ptr<T: ?Sized>(value_ptr: NonNull<T>) -> NonNull<GcBoxHeader> {
+    unsafe fn header_ptr<T: ?Sized>(value_ptr: NonNull<T>) -> NonNull<GcHeader> {
         let header = unsafe {
             value_ptr
-                .cast::<GcBoxHeader>()
-                .byte_sub(mem::size_of::<GcBoxHeader>())
+                .cast::<GcHeader>()
+                .byte_sub(mem::size_of::<GcHeader>())
         };
         debug_assert!(header.is_aligned());
         header

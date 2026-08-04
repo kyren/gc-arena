@@ -13,7 +13,7 @@ use crate::{
     context::Mutation,
     gc_weak::GcWeak,
     static_collect::Static,
-    types::{GcBox, GcColor, Invariant},
+    types::{GcColor, GcPtr, Invariant},
 };
 
 /// A garbage collected pointer to a type T.
@@ -25,7 +25,7 @@ use crate::{
 /// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
 /// be dangling and are always safe to access.
 pub struct Gc<'gc, T: ?Sized + 'gc> {
-    pub(crate) ptr: GcBox<T>,
+    pub(crate) ptr: GcPtr<T>,
     pub(crate) _invariant: Invariant<'gc>,
 }
 
@@ -154,7 +154,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         unsafe {
             Gc {
-                ptr: GcBox::from_ptr(ptr),
+                ptr: GcPtr::from_ptr(ptr),
                 _invariant: PhantomData,
             }
         }
