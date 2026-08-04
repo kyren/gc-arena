@@ -3,16 +3,20 @@ use core::{
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem::{self, MaybeUninit},
     ops::Deref,
+    ptr,
 };
 
 use crate::{
     barrier::{Unlock, Write},
     collect::{Collect, Trace},
     context::{Finalization, Mutation},
+    gc_ptr::GcPtr,
     gc_weak::GcWeak,
+    header_slice::HeaderSlice,
     static_wrapper::Static,
-    types::{GcColor, GcPtr, Invariant},
+    types::{GcColor, Invariant},
 };
 
 /// A garbage collected pointer to a type T.
@@ -88,10 +92,195 @@ impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
 impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
+        let gc_ptr = mc.allocate::<T>();
+        unsafe { gc_ptr.as_ptr().write(t) };
+        gc_ptr.header().set_live(true);
         Gc {
-            ptr: mc.allocate(t),
+            ptr: gc_ptr,
             _invariant: PhantomData,
         }
+    }
+}
+
+impl<'gc, H: Collect<'gc> + 'gc, E: Collect<'gc> + 'gc> Gc<'gc, HeaderSlice<H, E>> {
+    /// Allocate a new [`HeaderSlice`] with the given `header` and elements created from
+    /// `create_element`.
+    #[inline]
+    pub fn new_header_slice_with(
+        mc: &Mutation<'gc>,
+        header: H,
+        len: usize,
+        mut create_element: impl FnMut(usize) -> E,
+    ) -> Self {
+        let gc_ptr = mc.allocate_slice::<H, E>(len);
+
+        unsafe {
+            ptr::write(&raw mut (*gc_ptr.as_ptr()).header, header);
+
+            struct DropGuard<H, E> {
+                gc_ptr: GcPtr<HeaderSlice<H, E>>,
+                init_length: usize,
+            }
+
+            impl<H, E> Drop for DropGuard<H, E> {
+                fn drop(&mut self) {
+                    unsafe {
+                        let ptr = HeaderSlice::to_thin_ptr(self.gc_ptr.as_ptr());
+                        let ptr = HeaderSlice::<H, E>::from_thin_ptr(ptr, self.init_length);
+                        core::ptr::drop_in_place(ptr.cast_mut());
+                    }
+                }
+            }
+
+            let mut guard = DropGuard {
+                gc_ptr,
+                init_length: 0,
+            };
+
+            let slice_ptr = &raw mut (*gc_ptr.as_ptr()).slice;
+            for (i, element) in (slice_ptr as *mut [MaybeUninit<E>])
+                .as_mut_unchecked()
+                .iter_mut()
+                .enumerate()
+            {
+                element.write(create_element(i));
+                guard.init_length = i + 1;
+            }
+
+            mem::forget(guard);
+        }
+
+        gc_ptr.header().set_live(true);
+
+        Gc {
+            ptr: gc_ptr,
+            _invariant: PhantomData,
+        }
+    }
+}
+
+impl<'gc, H: Collect<'gc> + 'gc, E: Collect<'gc> + Copy + 'gc> Gc<'gc, HeaderSlice<H, E>> {
+    #[inline]
+    pub fn new_header_slice_copy(mc: &Mutation<'gc>, header: H, elements: &[E]) -> Self {
+        let gc_ptr = mc.allocate_slice::<H, E>(elements.len());
+
+        unsafe {
+            ptr::write(&raw mut (*gc_ptr.as_ptr()).header, header);
+            ptr::copy_nonoverlapping(
+                elements.as_ptr(),
+                (&raw mut (*gc_ptr.as_ptr()).slice) as *mut E,
+                elements.len(),
+            );
+        }
+
+        gc_ptr.header().set_live(true);
+
+        Gc {
+            ptr: gc_ptr,
+            _invariant: PhantomData,
+        }
+    }
+}
+
+impl<'gc, H: Collect<'gc> + 'gc, E: 'static> Gc<'gc, HeaderSlice<H, E>> {
+    /// Allocate a new [`HeaderSlice`] with the given `header` and elements created from
+    /// `create_element`.
+    #[inline]
+    pub fn new_static_header_slice_with(
+        mc: &Mutation<'gc>,
+        header: H,
+        len: usize,
+        mut create_element: impl FnMut(usize) -> E,
+    ) -> Self {
+        let header_slice: Gc<HeaderSlice<H, Static<E>>> =
+            Gc::new_header_slice_with(mc, header, len, move |i| Static(create_element(i)));
+
+        // SAFETY: `Static` is `#[repr(transparent)]`
+        unsafe { Gc::from_ptr(Gc::as_ptr(header_slice) as *const HeaderSlice<H, E>) }
+    }
+}
+
+impl<'gc, H: Collect<'gc> + 'gc, E: Copy + 'static> Gc<'gc, HeaderSlice<H, E>> {
+    #[inline]
+    pub fn new_static_header_slice_copy(mc: &Mutation<'gc>, header: H, elements: &[E]) -> Self {
+        unsafe {
+            // SAFETY: `Static` is `#[repr(transparent)]`
+
+            let header_slice: Gc<HeaderSlice<H, Static<E>>> =
+                Gc::new_header_slice_copy(mc, header, mem::transmute::<_, &[Static<E>]>(elements));
+            Gc::from_ptr(Gc::as_ptr(header_slice) as *const HeaderSlice<H, E>)
+        }
+    }
+}
+
+impl<'gc, E: Collect<'gc> + 'gc> Gc<'gc, [E]> {
+    /// Allocate a new bare slice with elements created from `create_element`.
+    #[inline]
+    pub fn new_slice_with(
+        mc: &Mutation<'gc>,
+        len: usize,
+        create_element: impl FnMut(usize) -> E,
+    ) -> Self {
+        let header_slice: Gc<HeaderSlice<(), E>> =
+            Gc::new_header_slice_with(mc, (), len, create_element);
+
+        // SAFETY: `HeaderSlice` is `#[repr(C)]` and the header is a ZST.
+        unsafe { Gc::from_ptr(Gc::as_ptr(header_slice) as *const [E]) }
+    }
+}
+
+impl<'gc, E: Collect<'gc> + Copy + 'gc> Gc<'gc, [E]> {
+    /// Allocate a slice with elements copied from the given slice.
+    #[inline]
+    pub fn new_slice_copy(mc: &Mutation<'gc>, elements: &[E]) -> Self {
+        let header_slice: Gc<HeaderSlice<(), E>> = Gc::new_header_slice_copy(mc, (), elements);
+
+        // SAFETY: `HeaderSlice` is `#[repr(C)]` and the header is a ZST.
+        unsafe { Gc::from_ptr(Gc::as_ptr(header_slice) as *const [E]) }
+    }
+}
+
+impl<'gc, E: Collect<'gc> + Clone + 'gc> Gc<'gc, [E]> {
+    /// Allocate a slice with elements cloned from the given slice.
+    #[inline]
+    pub fn new_slice_clone(mc: &Mutation<'gc>, elements: &[E]) -> Self {
+        Self::new_slice_with(mc, elements.len(), |i| elements[i].clone())
+    }
+}
+
+impl<'gc, E: 'static> Gc<'gc, [E]> {
+    /// Allocate a new bare slice with elements created from `create_element`.
+    #[inline]
+    pub fn new_static_slice_with(
+        mc: &Mutation<'gc>,
+        len: usize,
+        create_element: impl FnMut(usize) -> E,
+    ) -> Self {
+        let header_slice: Gc<HeaderSlice<(), E>> =
+            Gc::new_static_header_slice_with(mc, (), len, create_element);
+
+        // SAFETY: `HeaderSlice` is `#[repr(C)]` and the header is a ZST.
+        unsafe { Gc::from_ptr(Gc::as_ptr(header_slice) as *const [E]) }
+    }
+}
+
+impl<'gc, E: Copy + 'static> Gc<'gc, [E]> {
+    /// Allocate a slice with elements copied from the given slice.
+    #[inline]
+    pub fn new_static_slice_copy(mc: &Mutation<'gc>, elements: &[E]) -> Self {
+        let header_slice: Gc<HeaderSlice<(), E>> =
+            Gc::new_static_header_slice_copy(mc, (), elements);
+
+        // SAFETY: `HeaderSlice` is `#[repr(C)]` and the header is a ZST.
+        unsafe { Gc::from_ptr(Gc::as_ptr(header_slice) as *const [E]) }
+    }
+}
+
+impl<'gc, E: Clone + 'static> Gc<'gc, [E]> {
+    /// Allocate a slice with elements cloned from the given slice.
+    #[inline]
+    pub fn new_static_slice_clone(mc: &Mutation<'gc>, elements: &[E]) -> Self {
+        Self::new_static_slice_with(mc, elements.len(), |i| elements[i].clone())
     }
 }
 
@@ -153,7 +342,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         unsafe {
             Gc {
-                ptr: GcPtr::from_ptr(ptr),
+                ptr: GcPtr::from_ptr(ptr.cast_mut()),
                 _invariant: PhantomData,
             }
         }
