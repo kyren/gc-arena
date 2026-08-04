@@ -96,7 +96,7 @@ impl<'gc, T: Collect<'gc> + 'gc> Gc<'gc, T> {
 }
 
 impl<'gc, T: 'static> Gc<'gc, T> {
-    /// Create a new `Gc` pointer from a static value.
+    /// Create a new `Gc` pointer from a `'static` value.
     ///
     /// This method does not require that the type `T` implement `Collect`. This uses [`Static`]
     /// internally to automatically provide a trivial `Collect` impl and is equivalent to the
