@@ -1246,6 +1246,235 @@ fn lesser_aligned_prefix_has_same_ptr() {
 }
 
 #[test]
+fn test_alloc_header_slice() {
+    use std::array;
+
+    macro_rules! test_slice {
+        (
+            header_size = $header_size:literal,
+            header_align = $header_align:literal,
+            element_size = $element_size:literal,
+            element_align = $element_align:literal,
+            len = $len:literal $(,)?
+        ) => {{
+            #[repr(align($header_align))]
+            struct Header([u8; $header_size]);
+            static_collect!(Header);
+
+            #[repr(align($element_align))]
+            struct Element([u8; $element_size]);
+            static_collect!(Element);
+
+            fn expected_array<const LEN: usize>(offset: usize) -> [u8; LEN] {
+                array::from_fn(|i| (i + offset) as u8)
+            }
+
+            gc_arena::arena::rootless_mutate(|mc| {
+                let gc_ptr = Gc::new_header_slice_with(mc, Header(expected_array(0)), $len, |i| {
+                    Element(expected_array(i + 1))
+                });
+
+                assert!(gc_ptr.header.0 == expected_array(0));
+
+                for i in 0..$len {
+                    assert!(gc_ptr.slice[i].0 == expected_array(1 + i));
+                }
+            });
+        }};
+    }
+
+    test_slice!(
+        header_size = 0,
+        header_align = 1,
+        element_size = 0,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 1,
+        header_align = 1,
+        element_size = 1,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 8,
+        header_align = 1,
+        element_size = 8,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 32,
+        header_align = 1,
+        element_size = 32,
+        element_align = 1,
+        len = 5
+    );
+
+    test_slice!(
+        header_size = 0,
+        header_align = 8,
+        element_size = 0,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 1,
+        header_align = 8,
+        element_size = 1,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 8,
+        header_align = 8,
+        element_size = 8,
+        element_align = 1,
+        len = 5
+    );
+    test_slice!(
+        header_size = 32,
+        header_align = 8,
+        element_size = 32,
+        element_align = 1,
+        len = 5
+    );
+
+    test_slice!(
+        header_size = 0,
+        header_align = 1,
+        element_size = 0,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 1,
+        header_align = 1,
+        element_size = 1,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 8,
+        header_align = 1,
+        element_size = 8,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 32,
+        header_align = 1,
+        element_size = 32,
+        element_align = 8,
+        len = 5
+    );
+
+    test_slice!(
+        header_size = 0,
+        header_align = 8,
+        element_size = 0,
+        element_align = 32,
+        len = 5
+    );
+    test_slice!(
+        header_size = 1,
+        header_align = 8,
+        element_size = 1,
+        element_align = 32,
+        len = 5
+    );
+    test_slice!(
+        header_size = 8,
+        header_align = 8,
+        element_size = 8,
+        element_align = 32,
+        len = 5
+    );
+    test_slice!(
+        header_size = 32,
+        header_align = 8,
+        element_size = 32,
+        element_align = 32,
+        len = 5
+    );
+
+    test_slice!(
+        header_size = 0,
+        header_align = 32,
+        element_size = 0,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 1,
+        header_align = 32,
+        element_size = 1,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 8,
+        header_align = 32,
+        element_size = 8,
+        element_align = 8,
+        len = 5
+    );
+    test_slice!(
+        header_size = 32,
+        header_align = 32,
+        element_size = 32,
+        element_align = 8,
+        len = 5
+    );
+}
+
+#[test]
+fn test_slice_drop() {
+    let rc = Rc::new(());
+
+    gc_arena::arena::rootless_mutate(|mc| {
+        Gc::new_header_slice_with(mc, rc.clone(), 10, |_| rc.clone());
+    });
+
+    assert_eq!(Rc::strong_count(&rc), 1);
+}
+
+#[test]
+fn test_panicking_slice_drop() {
+    use std::panic::catch_unwind;
+
+    let rc = Rc::new(());
+
+    let Err(err) = catch_unwind(|| {
+        gc_arena::arena::rootless_mutate(|mc| {
+            Gc::new_header_slice_with(mc, rc.clone(), 10, |i| {
+                if i < 5 {
+                    rc.clone()
+                } else {
+                    panic!("test panic")
+                }
+            });
+        });
+    }) else {
+        unreachable!()
+    };
+    assert_eq!(*err.downcast::<&'static str>().unwrap(), "test panic");
+
+    assert_eq!(Rc::strong_count(&rc), 1);
+}
+
+#[test]
+fn test_slice_copy() {
+    gc_arena::arena::rootless_mutate(|mc| {
+        let ptr = Gc::new_header_slice_copy(mc, 47, &[5, 6, 7, 8, 9]);
+
+        assert_eq!(ptr.header, 47);
+        assert_eq!(ptr.slice, [5, 6, 7, 8, 9]);
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");

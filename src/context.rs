@@ -8,9 +8,11 @@ use core::{
 use crate::{
     collect::{Collect, Trace},
     gc::Gc,
+    gc_ptr::GcPtr,
     gc_weak::GcWeak,
+    header_slice::HeaderSlice,
     metrics::Metrics,
-    types::{GcColor, GcPtr, Invariant},
+    types::{GcColor, Invariant},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -77,8 +79,16 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcPtr<T> {
-        self.context.allocate(t)
+    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self) -> GcPtr<T> {
+        self.context.allocate()
+    }
+
+    #[inline]
+    pub(crate) fn allocate_slice<H: Collect<'gc>, E: Collect<'gc>>(
+        &self,
+        len: usize,
+    ) -> GcPtr<HeaderSlice<H, E>> {
+        self.context.allocate_slice(len)
     }
 
     #[inline]
@@ -100,6 +110,7 @@ pub struct Finalization<'gc> {
 impl<'gc> Deref for Finalization<'gc> {
     type Target = Mutation<'gc>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         // SAFETY: Finalization and Mutation are #[repr(transparent)]
         unsafe { mem::transmute::<&Self, &Mutation>(&self) }
@@ -114,10 +125,12 @@ impl<'gc> Finalization<'gc> {
 }
 
 impl<'gc> Trace<'gc> for Context {
+    #[inline]
     fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
         Context::trace(self, gc.ptr)
     }
 
+    #[inline]
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
         Context::trace_weak(self, gc.inner.ptr)
     }
@@ -354,22 +367,32 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
+    /// Allocate a `GcPtr<T>` with uninitialized values.
+    ///
+    /// The returned ptr's header will have `is_live` as false and this should be set to true when
+    /// it is correctly initialized.
     #[inline]
-    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> GcPtr<T> {
-        let gc_ptr = GcPtr::alloc(t);
+    fn allocate<'gc, T: Collect<'gc>>(&self) -> GcPtr<T> {
+        let gc_ptr = GcPtr::<T>::alloc();
+        gc_ptr.header().set_needs_trace(T::NEEDS_TRACE);
+        self.link_ptr(gc_ptr);
+        gc_ptr
+    }
 
-        let header = gc_ptr.header();
-        header.set_next(self.all.get());
-        header.set_live(true);
-        header.set_needs_trace(T::NEEDS_TRACE);
-
-        self.all.set(Some(gc_ptr.erase()));
-        if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
-            self.sweep_prev.set(self.all.get());
-        }
-
-        self.metrics.mark_gc_allocated(1);
-
+    /// Allocate a `GcPtr<HeaderSlice<H, E>>` with uninitialized values.
+    ///
+    /// The returned ptr's header will have `is_live` as false and this should be set to true when
+    /// it is correctly initialized.
+    #[inline]
+    fn allocate_slice<'gc, H: Collect<'gc>, E: Collect<'gc>>(
+        &self,
+        len: usize,
+    ) -> GcPtr<HeaderSlice<H, E>> {
+        let gc_ptr = GcPtr::<HeaderSlice<H, E>>::alloc_slice(len);
+        gc_ptr
+            .header()
+            .set_needs_trace(HeaderSlice::<H, E>::NEEDS_TRACE);
+        self.link_ptr(gc_ptr);
         gc_ptr
     }
 
@@ -686,12 +709,28 @@ impl Context {
     }
 
     // Take a black pointer and turn it gray and put it in the `gray_again` queue.
+    #[inline]
     fn make_gray_again(&self, gc_ptr: GcPtr) {
         let header = gc_ptr.header();
         debug_assert_eq!(header.color(), GcColor::Black);
         header.set_color(GcColor::Gray);
         self.gray_again.push(gc_ptr);
         self.metrics.mark_gc_untraced(1);
+    }
+
+    // Call after allocation to link a GcPtr into the `all` linked list.
+    //
+    // Must be called with the `T` used during allocation.
+    #[inline]
+    fn link_ptr<'gc, T: Collect<'gc> + ?Sized>(&self, gc_ptr: GcPtr<T>) {
+        gc_ptr.header().set_next(self.all.get());
+
+        self.all.set(Some(gc_ptr.erase()));
+        if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
+            self.sweep_prev.set(self.all.get());
+        }
+
+        self.metrics.mark_gc_allocated(1);
     }
 }
 
