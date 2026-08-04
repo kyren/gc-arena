@@ -16,11 +16,14 @@ use crate::{
     types::{GcBox, GcColor, Invariant},
 };
 
-/// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
-/// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
-/// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
-/// pointers will never be dangling and are always safe to access.
+/// A garbage collected pointer to a type T.
+///
+/// This type is `Copy` and is implemented as a plain machine pointer to `T`.
+///
+/// You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type, and through
+/// "generativity" such `Gc` pointers may not escape the arena they were born in or be stored inside
+/// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
+/// be dangling and are always safe to access.
 pub struct Gc<'gc, T: ?Sized + 'gc> {
     pub(crate) ptr: GcBox<T>,
     pub(crate) _invariant: Invariant<'gc>,

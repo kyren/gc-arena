@@ -5,6 +5,13 @@ use crate::gc::Gc;
 
 use core::fmt::{self, Debug};
 
+/// A weak pointer to a garbage collected.
+///
+/// A `GcWeak<T>` can be obtained from a `Gc<T>` through [`Gc::downgrade`].
+///
+/// A reachable "weak" GC pointer does not prevent having the stored value collected. Instead, the
+/// owner of a `GcWeak<T>` may check at any time if a value has been collected and if it has not,
+/// turn it back into a `Gc<T>` through [`GcWeak::upgrade`].
 pub struct GcWeak<'gc, T: ?Sized + 'gc> {
     pub(crate) inner: Gc<'gc, T>,
 }
