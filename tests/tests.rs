@@ -1167,6 +1167,42 @@ fn static_collect_with_param() {
 }
 
 #[test]
+fn zst_cache() {
+    use gc_arena::zst_cache::ZstCache;
+
+    #[repr(align(8))]
+    struct Aligned8;
+
+    #[repr(align(16))]
+    struct Aligned16;
+
+    #[repr(align(32))]
+    struct Aligned32;
+
+    gc_arena::arena::rootless_mutate(|mc| {
+        let zst_cache = ZstCache::<16>::new(mc);
+
+        let aligned8_ptr1 = zst_cache.alloc_static(mc, Aligned8);
+        let _ = *aligned8_ptr1;
+
+        let aligned8_ptr2 = zst_cache.alloc_static(mc, Aligned8);
+        let _ = *aligned8_ptr2;
+
+        let aligned16_ptr = zst_cache.alloc_static(mc, Aligned16);
+        let _ = *aligned16_ptr;
+
+        assert!(zst_cache.is_cached(aligned8_ptr1));
+        assert!(zst_cache.is_cached(aligned8_ptr2));
+        assert!(zst_cache.is_cached(aligned16_ptr));
+
+        let aligned32_ptr = zst_cache.alloc_static(mc, Aligned32);
+        let _ = *aligned32_ptr;
+
+        assert!(!zst_cache.is_cached(aligned32_ptr));
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
