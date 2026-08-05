@@ -1,6 +1,6 @@
 use alloc::alloc;
 use core::{
-    alloc::Layout,
+    alloc::{Layout, LayoutError},
     cell::Cell,
     fmt,
     marker::PhantomData,
@@ -39,7 +39,7 @@ impl<'gc, T: Collect<'gc>> GcPtr<T> {
     #[inline(always)]
     pub(crate) fn alloc(value: T) -> Self {
         unsafe {
-            let gc_layout = GcLayout::new(Layout::new::<T>()).unwrap();
+            let gc_layout = GcLayout::new(Layout::new::<T>()).expect("no layout for GC allocation");
             let gc_header = GcHeader::new::<T>();
 
             let bytes = alloc::alloc(gc_layout.alloc_layout);
@@ -327,54 +327,38 @@ struct GcLayout {
 
 impl GcLayout {
     #[inline(always)]
-    const fn new(value_layout: Layout) -> Option<Self> {
-        #[inline(always)]
-        const fn max(a: usize, b: usize) -> usize {
-            if a > b { a } else { b }
+    const fn new(value_layout: Layout) -> Result<Self, LayoutError> {
+        let header_layout = Layout::new::<GcHeader>();
+        match header_layout.extend(value_layout) {
+            Ok((alloc_layout, value_offset)) => {
+                // The header and value positions should be properly aligned.
+                //
+                // Value is obviuosly aligned to itself because the implementation of
+                // `Layout::extend` ensures that it is.
+                //
+                // The position of the header (value_ptr - header_size) is also aligned to the
+                // header because:
+                // 1) If the header alignment is greater than the value alignment, then the value
+                //    will fit right next to the header since the header's size is a multiple of its
+                //    alignment and thus also the value alignment. Thus (value_ptr - header_size) is
+                //    the beginning of the allocation which is already aligned to the header.
+                // 2) If the value alignment is greater than the header alignment, then the value is
+                //    also aligned to the header so (value_ptr - header_size) must be aligned to the
+                //    header since the header size is a multiple of its alignment.
+
+                // Assert that the above logic is true.
+                debug_assert!(value_offset.is_multiple_of(value_layout.align()));
+                debug_assert!(
+                    (value_offset - header_layout.size()).is_multiple_of(header_layout.align())
+                );
+
+                Ok(Self {
+                    alloc_layout,
+                    value_offset,
+                })
+            }
+            Err(err) => Err(err),
         }
-
-        let header_size = mem::size_of::<GcHeader>();
-        let header_align = mem::align_of::<GcHeader>();
-
-        let value_size = value_layout.size();
-        let value_align = value_layout.align();
-
-        // We want to allocate a buffer that is large enough to hold both the value and the header
-        // at the proper alignment.
-        //
-        // We operate on pointers to the value itself, not the entire allocated buffer, so we need
-        // to be careful how we offset objects in this buffer so that the location of the header is
-        // predictable. We want the location of the header to be at a fixed position relative to the
-        // value pointer that does *not* depend on the pointer type, so that we can freely cast the
-        // value pointer.
-
-        // The allocation must be aligned to both header and value alignment so that when we offset
-        // from this pointer, if the offset is properly aligned then we know the resulting pointer
-        // is still aligned.
-        let alloc_align = max(header_align, value_align);
-
-        // We need to make sure the value offset is enough to store the header before it while also
-        // making sure that the value is aligned to *both* the header and value alignment. This way,
-        // when we subtract the header size from the value pointer, we know the resulting location
-        // is properly aligned for the header.
-        let value_offset = max(header_size, value_align);
-
-        let Some(alloc_size) = value_offset.checked_add(value_size) else {
-            return None;
-        };
-
-        let Ok(alloc_layout) = Layout::from_size_align(alloc_size, alloc_align) else {
-            return None;
-        };
-
-        // Ensure that the value and header offsets are both properly aligned.
-        debug_assert!(value_offset.is_multiple_of(value_align));
-        debug_assert!((value_offset - header_size).is_multiple_of(header_align));
-
-        Some(Self {
-            alloc_layout,
-            value_offset,
-        })
     }
 
     /// Compute the pointer to the GC value from the pointer to the GC allocation.
