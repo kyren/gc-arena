@@ -10,8 +10,8 @@ use crate::{
     gc::Gc,
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    header_slice::HeaderSlice,
     metrics::Metrics,
+    repr::{AllocMeta, TypeMeta},
     types::{GcColor, Invariant},
 };
 
@@ -79,16 +79,11 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self) -> GcPtr<T> {
-        self.context.allocate()
-    }
-
-    #[inline]
-    pub(crate) fn allocate_slice<H: Collect<'gc>, E: Collect<'gc>>(
+    pub(crate) fn allocate<T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
         &self,
-        len: usize,
-    ) -> GcPtr<HeaderSlice<H, E>> {
-        self.context.allocate_slice(len)
+        ptr_meta: P::Metadata,
+    ) -> GcPtr<T> {
+        self.context.allocate::<T, P, M>(ptr_meta)
     }
 
     #[inline]
@@ -282,7 +277,7 @@ impl Context {
     // Do some collection work until either we have achieved our `target` (paying off debt or
     // finishing a full collection) or we have reached the `stop` condition.
     //
-    // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
+    // In order for this to be safe, at the time of call no Gc pointers can be live that are not
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep` and have positive debt, this will immediately
@@ -372,27 +367,22 @@ impl Context {
     /// The returned ptr's header will have `is_live` as false and this should be set to true when
     /// it is correctly initialized.
     #[inline]
-    fn allocate<'gc, T: Collect<'gc>>(&self) -> GcPtr<T> {
-        let gc_ptr = GcPtr::<T>::alloc();
-        gc_ptr.header().set_needs_trace(T::NEEDS_TRACE);
-        self.link_ptr(gc_ptr);
-        gc_ptr
-    }
-
-    /// Allocate a `GcPtr<HeaderSlice<H, E>>` with uninitialized values.
-    ///
-    /// The returned ptr's header will have `is_live` as false and this should be set to true when
-    /// it is correctly initialized.
-    #[inline]
-    fn allocate_slice<'gc, H: Collect<'gc>, E: Collect<'gc>>(
+    fn allocate<'gc, T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
         &self,
-        len: usize,
-    ) -> GcPtr<HeaderSlice<H, E>> {
-        let gc_ptr = GcPtr::<HeaderSlice<H, E>>::alloc_slice(len);
-        gc_ptr
-            .header()
-            .set_needs_trace(HeaderSlice::<H, E>::NEEDS_TRACE);
-        self.link_ptr(gc_ptr);
+        ptr_meta: P::Metadata,
+    ) -> GcPtr<T> {
+        let gc_ptr = GcPtr::<T>::alloc::<P, M>(ptr_meta);
+
+        let header = gc_ptr.header();
+        header.set_needs_trace(T::NEEDS_TRACE);
+        header.set_next(self.all.get());
+
+        self.all.set(Some(gc_ptr.erase()));
+        if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
+            self.sweep_prev.set(self.all.get());
+        }
+
+        self.metrics.mark_gc_allocated(1);
         gc_ptr
     }
 
@@ -513,6 +503,7 @@ impl Context {
     }
 
     /// Determines whether or not a Gc pointer is safe to be upgraded.
+    ///
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     #[inline]
     fn upgrade(&self, gc_ptr: GcPtr) -> bool {
@@ -664,7 +655,7 @@ impl Context {
                 // object.
                 unsafe {
                     if sweep_header.is_live() {
-                        // If the alive flag is set, that means we haven't dropped the inner value
+                        // If the is_live flag is set, that means we haven't dropped the inner value
                         // of this object,
                         sweep.drop_in_place();
                         self.metrics.mark_gc_dropped(1);
@@ -674,9 +665,8 @@ impl Context {
                 }
             }
             // Keep the `GcPtr` as part of the linked list if we traced a weak pointer to it. The
-            // weak pointer still needs access to the `GcPtr` to be able to check if the object
-            // is still alive. We can only deallocate the `GcPtr`, once there are no weak pointers
-            // left.
+            // weak pointer still needs access to the `GcPtr` to be able to check if the object is
+            // still live. We can only deallocate the `GcPtr`, once there are no weak pointers left.
             GcColor::WhiteWeak => {
                 self.sweep_prev.set(Some(sweep));
                 sweep_header.set_color(GcColor::White);
@@ -716,21 +706,6 @@ impl Context {
         header.set_color(GcColor::Gray);
         self.gray_again.push(gc_ptr);
         self.metrics.mark_gc_untraced(1);
-    }
-
-    // Call after allocation to link a GcPtr into the `all` linked list.
-    //
-    // Must be called with the `T` used during allocation.
-    #[inline]
-    fn link_ptr<'gc, T: Collect<'gc> + ?Sized>(&self, gc_ptr: GcPtr<T>) {
-        gc_ptr.header().set_next(self.all.get());
-
-        self.all.set(Some(gc_ptr.erase()));
-        if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
-            self.sweep_prev.set(self.all.get());
-        }
-
-        self.metrics.mark_gc_allocated(1);
     }
 }
 

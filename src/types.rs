@@ -11,7 +11,7 @@ pub(crate) enum GcColor {
     /// Like White, but for objects weakly reachable from a Black object.
     ///
     /// These objects may drop their contents during `Phase::Sweep`, but must stay allocated so that
-    /// weak references can check the alive status.
+    /// weak references can check whether the object is alive.
     WhiteWeak,
     /// An object reachable from a Black object, but that has not yet been traced using
     /// `Collect::trace`. We also mark black objects as gray during `Phase::Mark` in response to

@@ -34,14 +34,14 @@ pub struct Write<T: ?Sized> {
 impl<T: ?Sized> Deref for Write<T> {
     type Target = T;
 
-    #[inline(always)]
+    #[inline]
     fn deref(&self) -> &Self::Target {
         &self.__inner
     }
 }
 
 impl<T: ?Sized> DerefMut for Write<T> {
-    #[inline(always)]
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.__inner
     }
@@ -65,7 +65,7 @@ impl<T: ?Sized> Write<T> {
     /// may be adopted by the referenced value as a result of the interior mutability enabled
     /// by this wrapper, unless [`Gc::write`] is invoked manually on the parent [`Gc`]
     /// pointer during the current arena callback.
-    #[inline(always)]
+    #[inline]
     pub unsafe fn assume(v: &T) -> &Self {
         // SAFETY: `Self` is `repr(transparent)`.
         unsafe { mem::transmute(v) }
@@ -93,7 +93,7 @@ impl<T: ?Sized> Write<T> {
     }
 
     /// Implementation detail of `write_field!`; same safety requirements as `assume`.
-    #[inline(always)]
+    #[inline]
     #[doc(hidden)]
     pub unsafe fn __from_ref_and_ptr(v: &T, _: *const T) -> &Self {
         unsafe {
@@ -113,7 +113,7 @@ impl<T: ?Sized> Write<T> {
     }
 
     /// Propagates a write barrier through a smart pointer dereference.
-    #[inline(always)]
+    #[inline]
     pub fn as_deref(&self) -> &Write<T::Target>
     where
         T: DerefWrite,
@@ -125,7 +125,7 @@ impl<T: ?Sized> Write<T> {
 
 impl<T> Write<Option<T>> {
     /// Converts from `&Write<Option<T>>` to `Option<&Write<T>>`.
-    #[inline(always)]
+    #[inline]
     pub fn as_write(&self) -> Option<&Write<T>> {
         // SAFETY: this is simple destructuring
         unsafe {
@@ -139,7 +139,7 @@ impl<T> Write<Option<T>> {
 
 impl<T, E> Write<Result<T, E>> {
     /// Converts from `&Write<Result<T, E>>` to `Result<&Write<T>, &Write<E>>`.
-    #[inline(always)]
+    #[inline]
     pub fn as_write(&self) -> Result<&Write<T>, &Write<E>> {
         // SAFETY: this is simple destructuring
         unsafe {

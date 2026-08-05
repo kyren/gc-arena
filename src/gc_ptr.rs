@@ -4,15 +4,20 @@ use core::{
     cell::Cell,
     fmt,
     marker::PhantomData,
+    mem,
     ptr::{self, NonNull},
 };
 
-use crate::{collect::Collect, context::Context, header_slice::HeaderSlice, types::GcColor};
+use crate::{
+    collect::Collect,
+    context::Context,
+    repr::{AllocMeta, PtrMeta, TypeMeta},
+    types::GcColor,
+};
 
-/// A thin-pointer-sized pointer to a type-erased GC object.
+/// A pointer to a GC object.
 ///
-/// Pointers to GC objects have the metadata required by the GC algorithm in the same allocation
-/// *before* the stored pointer.
+/// Pointers to GC objects store metadata in the same allocation before* the stored pointer.
 pub(crate) struct GcPtr<T: ?Sized = ()>(NonNull<T>);
 
 impl<T: ?Sized> fmt::Debug for GcPtr<T> {
@@ -29,7 +34,7 @@ impl<T: ?Sized> Clone for GcPtr<T> {
     }
 }
 
-impl<'gc, T: Collect<'gc>> GcPtr<T> {
+impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
     /// Allocate a new GC value with a default header.
     ///
     /// The `GcPtr` is returned with its held value uninitialized.
@@ -37,45 +42,12 @@ impl<'gc, T: Collect<'gc>> GcPtr<T> {
     /// # Panics
     ///
     /// Panics if there is no valid layout we can allocate.
-    #[inline(always)]
-    pub(crate) fn alloc() -> Self {
-        unsafe {
-            let (alloc_layout, value_offset) =
-                prefix_header_layout(GC_HEADER_LAYOUT, Layout::new::<T>())
-                    .expect("no layout for GC allocation");
-
-            let block = alloc::alloc(alloc_layout).cast::<()>();
-            let Some(block) = NonNull::new(block) else {
-                alloc::handle_alloc_error(alloc_layout);
-            };
-
-            let value_ptr = block.byte_add(value_offset).cast::<T>();
-            let header_ptr = value_ptr
-                .byte_sub(GC_HEADER_LAYOUT.size())
-                .cast::<GcHeader>();
-            debug_assert!(header_ptr.is_aligned() && value_ptr.is_aligned());
-
-            header_ptr.write(GcHeader::new(&FixedGcVtable::<T>::VTABLE));
-
-            GcPtr(value_ptr)
-        }
-    }
-}
-
-impl<'gc, H: Collect<'gc>, E: Collect<'gc>> GcPtr<HeaderSlice<H, E>> {
-    /// Allocate a new GC `HeaderSlice<H, E>` with a default header.
-    ///
-    /// The `GcPtr` is returned with its held slice uninitialized.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a `HeaderSlice<H, E>` of length `len` does not have a valid layout.
     #[inline]
-    pub(crate) fn alloc_slice(len: usize) -> Self {
-        let slice_layout = HeaderSlice::<H, E>::layout(len).expect("no layout for slice");
-        let (alloc_layout, value_offset) =
-            prefix_header_layout(GC_LEN_THEN_HEADER_LAYOUT, slice_layout)
-                .expect("no layout for GC allocation");
+    pub(crate) fn alloc<P: AllocMeta<T>, M: TypeMeta>(ptr_meta: P::Metadata) -> Self {
+        let meta_header_layout = PtrProps::<T, P>::META_HEADER_LAYOUT;
+        let value_layout = P::layout(ptr_meta).expect("no layout for value");
+        let (alloc_layout, value_offset) = prefix_header_layout(meta_header_layout, value_layout)
+            .expect("no layout for GC allocation");
 
         unsafe {
             let block = alloc::alloc(alloc_layout).cast::<()>();
@@ -85,27 +57,27 @@ impl<'gc, H: Collect<'gc>, E: Collect<'gc>> GcPtr<HeaderSlice<H, E>> {
 
             let value_ptr = block.byte_add(value_offset);
 
-            let len_ptr = value_ptr
-                .byte_sub(GC_LEN_THEN_HEADER_LAYOUT.size())
-                .cast::<usize>();
+            let meta_ptr = value_ptr
+                .byte_sub(meta_header_layout.size())
+                .cast::<P::Metadata>();
 
             let header_ptr = value_ptr
-                .byte_sub(GC_HEADER_LAYOUT.size())
+                .byte_sub(mem::size_of::<GcHeader>())
                 .cast::<GcHeader>();
 
-            let slice_ptr =
-                HeaderSlice::<H, E>::from_thin_ptr(value_ptr.cast::<H>().as_ptr(), len).cast_mut();
+            let fat_ptr =
+                P::from_raw_parts(value_ptr.cast::<P::Thin>().as_ptr(), ptr_meta).cast_mut();
 
             debug_assert!(
-                len_ptr.is_aligned()
+                meta_ptr.is_aligned()
                     && header_ptr.is_aligned()
-                    && slice_ptr.addr().is_multiple_of(slice_layout.align())
+                    && fat_ptr.addr().is_multiple_of(value_layout.align())
             );
 
-            len_ptr.write(len);
-            header_ptr.write(GcHeader::new(&SliceGcVtable::<H, E>::VTABLE));
+            meta_ptr.write(ptr_meta);
+            header_ptr.write(GcHeader::new(&Vtable::<T, P, M>::VTABLE));
 
-            GcPtr(NonNull::new_unchecked(slice_ptr))
+            GcPtr(NonNull::new_unchecked(fat_ptr))
         }
     }
 }
@@ -115,14 +87,22 @@ impl<T: ?Sized> GcPtr<T> {
     pub(crate) fn header(&self) -> &GcHeader {
         unsafe {
             self.0
-                .byte_sub(GC_HEADER_LAYOUT.size())
+                .byte_sub(mem::size_of::<GcHeader>())
                 .cast::<GcHeader>()
                 .as_ref()
         }
     }
 
+    pub(crate) unsafe fn fat_ptr<F: ?Sized, M: PtrMeta<F>>(self) -> GcPtr<F> {
+        unsafe { GcPtr(PtrProps::<F, M>::fat_ptr(self.0)) }
+    }
+
+    pub(crate) unsafe fn type_metadata<M>(self) -> &'static M {
+        unsafe { self.header().vtable().metadata.cast::<M>().as_ref() }
+    }
+
     #[inline(always)]
-    pub(crate) fn as_ptr(self) -> *mut T {
+    pub(crate) fn as_ptr(self) -> *const T {
         self.0.as_ptr()
     }
 
@@ -130,19 +110,14 @@ impl<T: ?Sized> GcPtr<T> {
     ///
     /// The provided ptr must have come from `GcPtr::as_ptr`.
     #[inline(always)]
-    pub(crate) unsafe fn from_ptr(p: *mut T) -> Self {
-        Self(unsafe { NonNull::new_unchecked(p) })
-    }
-
-    #[inline(always)]
-    pub(crate) fn cast<U>(self) -> GcPtr<U> {
-        GcPtr(self.0.cast())
+    pub(crate) unsafe fn from_ptr(p: *const T) -> Self {
+        Self(unsafe { NonNull::new_unchecked(p.cast_mut()) })
     }
 
     /// A convenience method to cast to `()`.
     #[inline(always)]
     pub(crate) fn erase(self) -> GcPtr {
-        self.cast()
+        GcPtr(self.0.cast::<()>())
     }
 
     /// Returns true if two `GcPtr`s point to the same allocation.
@@ -285,7 +260,7 @@ impl GcHeader {
 
     /// Determines whether or not we've dropped the `dyn Collect` value stored in `GcPtr.value`
     ///
-    /// When we garbage-collect a `GcPtr` that still has outstanding weak pointers, we set `alive`
+    /// When we garbage-collect a `GcPtr` that still has outstanding weak pointers, we set `is_live`
     /// to false. When there are no more weak pointers remaining, we will deallocate the `GcPtr`,
     /// but skip dropping the `dyn Collect` value (since we've already done it).
     #[inline]
@@ -294,25 +269,11 @@ impl GcHeader {
     }
 
     #[inline]
-    pub(crate) fn set_live(&self, alive: bool) {
+    pub(crate) fn set_live(&self, is_live: bool) {
         self.tagged_vtable
-            .update(|p| tagged_ptr::set_bool::<0x8, _>(p, alive));
+            .update(|p| tagged_ptr::set_bool::<0x8, _>(p, is_live));
     }
 }
-
-/// Layout of a `GcHeader`.
-const GC_HEADER_LAYOUT: Layout = Layout::new::<GcHeader>();
-
-/// Layout of a block of memory containing a length and `GcHeader`.
-///
-/// The length will be stored at the *beginning* of this block and the header at the *end* (which
-/// would only matter in the odd case where `GcHeader`'s alignment is less than that of `usize`).
-const GC_LEN_THEN_HEADER_LAYOUT: Layout =
-    if let Ok((layout, _)) = Layout::new::<usize>().extend(GC_HEADER_LAYOUT) {
-        layout.pad_to_align()
-    } else {
-        unreachable!();
-    };
 
 /// Type-specific operations for GC'd values.
 ///
@@ -326,95 +287,67 @@ struct GcVtable {
     drop_value: unsafe fn(NonNull<()>),
     /// Frees the allocation for given value pointer.
     dealloc: unsafe fn(NonNull<()>),
+    metadata: NonNull<()>,
 }
 
-impl GcVtable {
-    /// Makes a vtable for a `Sized` type.
+struct PtrProps<T: ?Sized, P>(PhantomData<(*const T, P)>);
+
+impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
+    const META_HEADER_LAYOUT: Layout = {
+        if let Ok((layout, _)) = Layout::new::<P::Metadata>().extend(Layout::new::<GcHeader>()) {
+            layout.pad_to_align()
+        } else {
+            unreachable!();
+        }
+    };
+
     #[inline(always)]
-    const fn for_fixed<'gc, T: Collect<'gc>>() -> Self {
-        Self {
-            trace_value: |value_ptr, cc| unsafe {
-                value_ptr.cast::<T>().as_ref().trace(cc);
-            },
-            drop_value: |value_ptr| unsafe {
-                ptr::drop_in_place(value_ptr.cast::<T>().as_ptr());
-            },
-            dealloc: |value_ptr| {
-                let (alloc_layout, value_offset) =
-                    prefix_header_layout(GC_HEADER_LAYOUT, Layout::new::<T>()).unwrap();
-                unsafe {
-                    let alloc_ptr = value_ptr.byte_sub(value_offset).as_ptr();
-                    // SAFETY: the pointer was allocated with this layout.
-                    alloc::dealloc(alloc_ptr as *mut u8, alloc_layout);
-                }
-            },
+    unsafe fn read_ptr_meta<U: ?Sized>(value_ptr: NonNull<U>) -> P::Metadata {
+        unsafe {
+            value_ptr
+                .byte_sub(Self::META_HEADER_LAYOUT.size())
+                .cast::<P::Metadata>()
+                .read()
         }
     }
 
-    /// Makes a vtable for a `HeaderSlice`.
     #[inline(always)]
-    const fn for_slice<'gc, H: Collect<'gc>, E: Collect<'gc>>() -> Self {
-        #[inline(always)]
-        const unsafe fn read_len(value_ptr: NonNull<()>) -> usize {
-            unsafe {
-                value_ptr
-                    .byte_sub(GC_LEN_THEN_HEADER_LAYOUT.size())
-                    .cast::<usize>()
-                    .read()
-            }
+    unsafe fn fat_ptr<U: ?Sized>(value_ptr: NonNull<U>) -> NonNull<T> {
+        unsafe {
+            let ptr_meta = Self::read_ptr_meta(value_ptr);
+            NonNull::new_unchecked(
+                P::from_raw_parts(value_ptr.as_ptr() as *const P::Thin, ptr_meta).cast_mut(),
+            )
         }
+    }
+}
 
-        #[inline(always)]
-        const unsafe fn slice_ptr<H, E>(value_ptr: NonNull<()>) -> NonNull<HeaderSlice<H, E>> {
+struct Vtable<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
+
+impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> Vtable<T, P, M> {
+    const VTABLE: GcVtable = GcVtable {
+        trace_value: |value_ptr, cc| unsafe {
+            PtrProps::<T, P>::fat_ptr(value_ptr).as_ref().trace(cc);
+        },
+        drop_value: |value_ptr| unsafe {
+            ptr::drop_in_place(PtrProps::<T, P>::fat_ptr(value_ptr).as_ptr());
+        },
+        dealloc: |value_ptr| {
             unsafe {
-                let len = read_len(value_ptr);
-                NonNull::new_unchecked(
-                    HeaderSlice::<H, E>::from_thin_ptr(value_ptr.cast::<H>().as_ptr(), len)
-                        .cast_mut(),
+                let ptr_meta = PtrProps::<T, P>::read_ptr_meta(value_ptr);
+                let (alloc_layout, value_offset) = prefix_header_layout(
+                    PtrProps::<T, P>::META_HEADER_LAYOUT,
+                    P::layout(ptr_meta).unwrap(),
                 )
+                .unwrap();
+
+                let alloc_ptr = value_ptr.byte_sub(value_offset).as_ptr();
+                // SAFETY: the pointer was allocated with this layout.
+                alloc::dealloc(alloc_ptr as *mut u8, alloc_layout);
             }
-        }
-
-        Self {
-            trace_value: |value_ptr, cc| unsafe {
-                slice_ptr::<H, E>(value_ptr).as_ref().trace(cc);
-            },
-            drop_value: |value_ptr| unsafe {
-                ptr::drop_in_place(slice_ptr::<H, E>(value_ptr).as_ptr());
-            },
-            dealloc: |value_ptr| {
-                unsafe {
-                    let len = read_len(value_ptr);
-                    let (alloc_layout, value_offset) = prefix_header_layout(
-                        GC_LEN_THEN_HEADER_LAYOUT,
-                        HeaderSlice::<H, E>::layout(len).unwrap(),
-                    )
-                    .unwrap();
-
-                    let alloc_ptr = value_ptr.byte_sub(value_offset).as_ptr();
-                    // SAFETY: the pointer was allocated with this layout.
-                    alloc::dealloc(alloc_ptr as *mut u8, alloc_layout);
-                }
-            },
-        }
-    }
-}
-
-// Helper trait to materialize vtables in static memory.
-trait HasGcVtable {
-    const VTABLE: GcVtable;
-}
-
-struct FixedGcVtable<T>(PhantomData<T>);
-
-impl<'gc, T: Collect<'gc>> HasGcVtable for FixedGcVtable<T> {
-    const VTABLE: GcVtable = GcVtable::for_fixed::<T>();
-}
-
-struct SliceGcVtable<H, E>(PhantomData<(H, E)>);
-
-impl<'gc, H: Collect<'gc>, E: Collect<'gc>> HasGcVtable for SliceGcVtable<H, E> {
-    const VTABLE: GcVtable = GcVtable::for_slice::<H, E>();
+        },
+        metadata: NonNull::from_ref(M::METADATA).cast(),
+    };
 }
 
 /// Compute the layout of a block of memory composed of a header and a value. Returns the layout and
