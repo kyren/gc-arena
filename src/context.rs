@@ -6,8 +6,9 @@ use core::{
 };
 
 use crate::{
-    Gc, GcWeak,
     collect::{Collect, Trace},
+    gc::Gc,
+    gc_weak::GcWeak,
     metrics::Metrics,
     types::{GcColor, GcPtr, Invariant},
 };

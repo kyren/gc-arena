@@ -7,12 +7,11 @@ use core::{
 };
 
 use crate::{
-    Finalization,
     barrier::{Unlock, Write},
     collect::{Collect, Trace},
-    context::Mutation,
+    context::{Finalization, Mutation},
     gc_weak::GcWeak,
-    static_collect::Static,
+    static_wrapper::Static,
     types::{GcColor, GcPtr, Invariant},
 };
 

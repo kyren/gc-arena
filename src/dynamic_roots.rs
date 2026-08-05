@@ -1,14 +1,14 @@
-use core::{cell::RefCell, fmt, mem};
-
 use alloc::{
     rc::{Rc, Weak},
     vec::Vec,
 };
+use core::{cell::RefCell, fmt, mem};
 
 use crate::{
-    Gc, Mutation, Rootable,
-    arena::Root,
+    arena::{Root, Rootable},
     collect::{Collect, Trace},
+    context::Mutation,
+    gc::Gc,
 };
 
 /// A way of registering GC roots dynamically.

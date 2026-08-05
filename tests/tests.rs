@@ -1,9 +1,9 @@
 use core::{cell::Cell, mem};
 #[cfg(feature = "std")]
-use rand::distr::Distribution;
-use std::array;
+use std::{array, collections::HashMap, rc::Rc};
+
 #[cfg(feature = "std")]
-use std::{collections::HashMap, rc::Rc};
+use rand::distr::Distribution;
 
 use gc_arena::{
     Arena, Collect, DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
