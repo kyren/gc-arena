@@ -1,11 +1,9 @@
 use core::{
-    alloc::Layout,
     borrow::Borrow,
     fmt::{self, Debug, Display, Pointer},
     hash::{Hash, Hasher},
     marker::PhantomData,
     ops::Deref,
-    ptr::NonNull,
 };
 
 use crate::{
@@ -15,16 +13,19 @@ use crate::{
     context::Mutation,
     gc_weak::GcWeak,
     static_collect::Static,
-    types::{GcBox, GcBoxHeader, GcBoxInner, GcColor, Invariant},
+    types::{GcColor, GcPtr, Invariant},
 };
 
-/// A garbage collected pointer to a type T. Implements Copy, and is implemented as a plain machine
-/// pointer. You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type,
-/// and through "generativity" such `Gc` pointers may not escape the arena they were born in or
-/// be stored inside TLS. This, combined with correct `Collect` implementations, means that `Gc`
-/// pointers will never be dangling and are always safe to access.
+/// A garbage collected pointer to a type T.
+///
+/// This type is `Copy` and is implemented as a plain machine pointer to `T`.
+///
+/// You can only allocate `Gc` pointers through a `&Mutation<'gc>` inside an arena type, and through
+/// "generativity" such `Gc` pointers may not escape the arena they were born in or be stored inside
+/// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
+/// be dangling and are always safe to access.
 pub struct Gc<'gc, T: ?Sized + 'gc> {
-    pub(crate) ptr: NonNull<GcBoxInner<T>>,
+    pub(crate) ptr: GcPtr<T>,
     pub(crate) _invariant: Invariant<'gc>,
 }
 
@@ -67,21 +68,21 @@ impl<'gc, T: ?Sized + 'gc> Deref for Gc<'gc, T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> AsRef<T> for Gc<'gc, T> {
     #[inline]
     fn as_ref(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl<'gc, T: ?Sized + 'gc> Borrow<T> for Gc<'gc, T> {
     #[inline]
     fn borrow(&self) -> &T {
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -126,17 +127,20 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     ///
     /// # Safety
     ///
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`, and `U`
-    /// and `T` must have *identical alignment*.
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
         Gc {
-            ptr: NonNull::cast(this.ptr),
+            ptr: this.ptr.cast(),
             _invariant: PhantomData,
         }
     }
 
     /// Cast a `Gc` to the unit type.
+    ///
+    /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
+    /// method safely because it is always safe to dereference a `*mut ()` that has come from
+    /// casting a `*mut T`.
     #[inline]
     pub fn erase(this: Gc<'gc, T>) -> Gc<'gc, ()> {
         unsafe { Gc::cast(this) }
@@ -146,19 +150,13 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     ///
     /// # Safety
     ///
-    /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
-    /// have been collected yet.
-    ///
-    /// If the pointer has changed type, this also shares the safety requirements of [`Gc::cast`].
+    /// The provided pointer must have been obtained from `Gc::as_ptr`, must not have been collected
+    /// yet, and must be dereferencable as its current type.
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         unsafe {
-            let layout = Layout::new::<GcBoxHeader>();
-            let (_, header_offset) = layout.extend(Layout::for_value(&*ptr)).unwrap();
-            let header_offset = -(header_offset as isize);
-            let ptr = (ptr as *mut T).byte_offset(header_offset) as *mut GcBoxInner<T>;
             Gc {
-                ptr: NonNull::new_unchecked(ptr),
+                ptr: GcPtr::from_ptr(ptr),
                 _invariant: PhantomData,
             }
         }
@@ -183,7 +181,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and
         // so cannot be stored inside the GC root.
-        unsafe { &self.ptr.as_ref().value }
+        unsafe { self.ptr.as_ref() }
     }
 
     #[inline]
@@ -214,17 +212,12 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// pointers.
     #[inline]
     pub fn ptr_eq(this: Gc<'gc, T>, other: Gc<'gc, T>) -> bool {
-        // TODO: Equivalent to `core::ptr::addr_eq`:
-        // https://github.com/rust-lang/rust/issues/116324
-        Gc::as_ptr(this) as *const () == Gc::as_ptr(other) as *const ()
+        this.ptr.addr_eq(other.ptr)
     }
 
     #[inline]
     pub fn as_ptr(gc: Gc<'gc, T>) -> *const T {
-        unsafe {
-            let inner = gc.ptr.as_ptr();
-            core::ptr::addr_of!((*inner).value) as *const T
-        }
+        gc.ptr.as_ptr()
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to
@@ -234,8 +227,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// pointers reachable only through other weak pointers that can be dead.
     #[inline]
     pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T>) -> bool {
-        let inner = unsafe { gc.ptr.as_ref() };
-        matches!(inner.header.color(), GcColor::White | GcColor::WhiteWeak)
+        matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
@@ -245,9 +237,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// collection cycle.
     #[inline]
     pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T>) {
-        unsafe {
-            fc.resurrect(GcBox::erase(gc.ptr));
-        }
+        fc.resurrect(gc.ptr.erase());
     }
 }
 
