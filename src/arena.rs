@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 use crate::{
-    Collect,
+    collect::Collect,
     context::{Context, Finalization, Mutation, Phase, RunUntil, Stop},
     metrics::Metrics,
 };

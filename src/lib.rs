@@ -18,7 +18,7 @@ mod gc_weak;
 pub mod lock;
 pub mod metrics;
 mod no_drop;
-mod static_collect;
+mod static_wrapper;
 mod types;
 mod unsize;
 
@@ -51,5 +51,5 @@ pub use self::{
     gc::Gc,
     gc_weak::GcWeak,
     lock::{GcLock, GcRefLock, Lock, RefLock},
-    static_collect::Static,
+    static_wrapper::Static,
 };

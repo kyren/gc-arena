@@ -1,10 +1,14 @@
-use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque};
-use alloc::rc::Rc;
-use alloc::string::String;
-use alloc::vec::Vec;
-use core::cell::{Cell, RefCell};
-use core::marker::PhantomData;
+use alloc::{
+    boxed::Box,
+    collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
+    rc::Rc,
+    string::String,
+    vec::Vec,
+};
+use core::{
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, HashSet};
 
