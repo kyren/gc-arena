@@ -1,10 +1,4 @@
-use core::marker::PhantomData;
-use core::ptr::NonNull;
-
-use crate::{
-    types::GcBoxInner,
-    {Gc, GcWeak},
-};
+use crate::{Gc, GcWeak};
 
 /// Unsizes a [`Gc`] or [`GcWeak`] pointer.
 ///
@@ -54,14 +48,14 @@ macro_rules! unsize {
         // coercion, if it compiles. Additionally, the `__CoercePtrInternal` trait
         // ensures that the resulting GC pointer has the correct `'gc` lifetime.
         unsafe {
-            $crate::__CoercePtrInternal::__coerce_unchecked(gc, |p: *mut _| -> *mut $ty { p })
+            $crate::__CoercePtrInternal::__coerce_unchecked(gc, |p: *const _| -> *const $ty { p })
         }
     }};
 }
 
 // Not public API; implementation detail of the `unsize` macro.
 //
-// Maps a raw pointer coercion (`*mut FromPtr -> *mut ToPtr`) to
+// Maps a raw pointer coercion (`*const FromPtr -> *const ToPtr`) to
 // a smart pointer coercion (`Self -> Dst`).
 #[doc(hidden)]
 pub unsafe trait __CoercePtrInternal<Dst> {
@@ -71,7 +65,7 @@ pub unsafe trait __CoercePtrInternal<Dst> {
     // pointer must have the same address and provenance as the original.
     unsafe fn __coerce_unchecked<F>(self, coerce: F) -> Dst
     where
-        F: FnOnce(*mut Self::FromPtr) -> *mut Self::ToPtr;
+        F: FnOnce(*const Self::FromPtr) -> *const Self::ToPtr;
 }
 
 unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
@@ -81,15 +75,9 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
     #[inline(always)]
     unsafe fn __coerce_unchecked<F>(self, coerce: F) -> Gc<'gc, U>
     where
-        F: FnOnce(*mut T) -> *mut U,
+        F: FnOnce(*const T) -> *const U,
     {
-        let ptr = self.ptr.as_ptr() as *mut T;
-        unsafe {
-            Gc {
-                ptr: NonNull::new_unchecked(coerce(ptr) as *mut GcBoxInner<U>),
-                _invariant: PhantomData,
-            }
-        }
+        unsafe { Gc::from_ptr(coerce(Gc::as_ptr(self))) }
     }
 }
 
@@ -100,7 +88,7 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'g
     #[inline(always)]
     unsafe fn __coerce_unchecked<F>(self, coerce: F) -> GcWeak<'gc, U>
     where
-        F: FnOnce(*mut T) -> *mut U,
+        F: FnOnce(*const T) -> *const U,
     {
         unsafe {
             let inner = self.inner.__coerce_unchecked(coerce);
