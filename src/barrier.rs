@@ -1,21 +1,21 @@
 //! Write barrier management.
 
-use core::borrow::Borrow;
-use core::mem;
-use core::ops::{
-    Deref, DerefMut, Index, Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive,
+use alloc::{
+    collections::{BTreeMap, VecDeque},
+    vec::Vec,
 };
-
-use alloc::collections::{BTreeMap, VecDeque};
-use alloc::vec::Vec;
-
+#[cfg(doc)]
+use core::ops::IndexMut;
+use core::{
+    borrow::Borrow,
+    mem,
+    ops::{Deref, DerefMut, Index, Range, RangeFrom, RangeInclusive, RangeTo, RangeToInclusive},
+};
 #[cfg(feature = "std")]
 use std::{collections::HashMap, hash::BuildHasher, hash::Hash};
 
 #[cfg(doc)]
 use crate::Gc;
-#[cfg(doc)]
-use core::ops::IndexMut;
 
 /// An (interiorly-)mutable reference inside a GC'd object graph.
 ///

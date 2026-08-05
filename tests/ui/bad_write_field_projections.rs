@@ -1,7 +1,7 @@
-
-
-use gc_arena::Gc;
-use gc_arena::barrier::{Write, field};
+use gc_arena::{
+    Gc,
+    barrier::{Write, field},
+};
 
 struct Foo<'gc> {
     foo: i32,

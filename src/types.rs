@@ -1,9 +1,12 @@
 use alloc::alloc;
-use core::alloc::Layout;
-use core::cell::Cell;
-use core::marker::PhantomData;
-use core::ptr::NonNull;
-use core::{fmt, mem, ptr};
+use core::{
+    alloc::Layout,
+    cell::Cell,
+    fmt,
+    marker::PhantomData,
+    mem,
+    ptr::{self, NonNull},
+};
 
 use crate::{collect::Collect, context::Context};
 
