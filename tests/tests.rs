@@ -1203,6 +1203,49 @@ fn zst_cache() {
 }
 
 #[test]
+fn lesser_aligned_prefix_has_same_ptr() {
+    #[derive(Collect)]
+    #[collect(require_static)]
+    #[repr(align(1))]
+    struct UnderAligned(u8);
+
+    #[derive(Collect)]
+    #[collect(require_static)]
+    #[repr(C, align(1024))]
+    struct OverAligned {
+        header: UnderAligned,
+        value: u8,
+    }
+
+    #[derive(Collect)]
+    #[collect(no_drop)]
+    struct Root<'gc> {
+        header_gc: Gc<'gc, UnderAligned>,
+    }
+
+    let mut arena = Arena::<Rootable![Root<'_>]>::new(|mc| {
+        let gc = Gc::new(
+            mc,
+            OverAligned {
+                header: UnderAligned(7),
+                value: 13,
+            },
+        );
+
+        // SAFETY: This is allowed because `OverAligned` is `#[repr(C)]`
+        let header_gc = unsafe { Gc::from_ptr(Gc::as_ptr(gc) as *const UnderAligned) };
+
+        Root { header_gc }
+    });
+
+    arena.finish_cycle();
+
+    arena.mutate(|_, root| {
+        assert_eq!(root.header_gc.0, 7);
+    });
+}
+
+#[test]
 fn ui() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/*.rs");
