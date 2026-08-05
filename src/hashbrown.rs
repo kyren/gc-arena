@@ -1,7 +1,9 @@
 use core::hash::{BuildHasher, Hash};
 
-use crate::barrier::IndexWrite;
-use crate::collect::{Collect, Trace};
+use crate::{
+    barrier::IndexWrite,
+    collect::{Collect, Trace},
+};
 
 unsafe impl<'gc, K, V, S> Collect<'gc> for hashbrown::HashMap<K, V, S>
 where

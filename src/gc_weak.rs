@@ -1,9 +1,10 @@
-use crate::Mutation;
-use crate::collect::{Collect, Trace};
-use crate::context::Finalization;
-use crate::gc::Gc;
-
 use core::fmt::{self, Debug};
+
+use crate::{
+    collect::{Collect, Trace},
+    context::{Finalization, Mutation},
+    gc::Gc,
+};
 
 /// A weak pointer to a garbage collected.
 ///
