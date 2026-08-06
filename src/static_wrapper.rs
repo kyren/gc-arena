@@ -5,11 +5,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::{
-    arena::Rootable,
-    collect::Collect,
-    meta::{AllocMeta, PtrMeta},
-};
+use crate::{arena::Rootable, collect::Collect, meta::PtrMeta};
 
 /// A wrapper type that implements Collect whenever the contained T is 'static, which is useful in
 /// generic contexts
@@ -79,24 +75,23 @@ impl<T: ?Sized> BorrowMut<T> for Static<T> {
 pub struct StaticPtrMeta<P>(PhantomData<P>);
 
 unsafe impl<T: ?Sized, P: PtrMeta<T>> PtrMeta<Static<T>> for StaticPtrMeta<P> {
-    type Metadata = P::Metadata;
+    type TypeMetadata = P::TypeMetadata;
+    type PtrMetadata = P::PtrMetadata;
     type Thin = Static<P::Thin>;
 
     #[inline]
-    fn to_raw_parts(fat: *const Static<T>) -> (*const Static<P::Thin>, P::Metadata) {
+    fn layout(metadata: Self::PtrMetadata) -> Option<core::alloc::Layout> {
+        P::layout(metadata)
+    }
+
+    #[inline]
+    fn to_raw_parts(fat: *const Static<T>) -> (*const Static<P::Thin>, P::PtrMetadata) {
         let (p, m) = P::to_raw_parts(fat as *const T);
         (p as *const Static<P::Thin>, m)
     }
 
     #[inline]
-    fn from_raw_parts(thin: *const Static<P::Thin>, metadata: P::Metadata) -> *const Static<T> {
+    fn from_raw_parts(thin: *const Static<P::Thin>, metadata: P::PtrMetadata) -> *const Static<T> {
         P::from_raw_parts(thin as *const P::Thin, metadata) as *const Static<T>
-    }
-}
-
-unsafe impl<T: ?Sized, P: AllocMeta<T>> AllocMeta<Static<T>> for StaticPtrMeta<P> {
-    #[inline]
-    fn layout(metadata: Self::Metadata) -> Option<core::alloc::Layout> {
-        P::layout(metadata)
     }
 }

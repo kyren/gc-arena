@@ -15,38 +15,35 @@ impl TypeMeta for UnitTypeMeta {
 }
 
 pub unsafe trait PtrMeta<T: ?Sized> {
-    type Metadata: Copy;
+    type TypeMetadata: 'static;
+    type PtrMetadata: Copy;
     type Thin;
 
-    fn to_raw_parts(fat: *const T) -> (*const Self::Thin, Self::Metadata);
-    fn from_raw_parts(thin: *const Self::Thin, metadata: Self::Metadata) -> *const T;
+    fn layout(metadata: Self::PtrMetadata) -> Option<Layout>;
+    fn to_raw_parts(fat: *const T) -> (*const Self::Thin, Self::PtrMetadata);
+    fn from_raw_parts(thin: *const Self::Thin, metadata: Self::PtrMetadata) -> *const T;
 }
 
-pub unsafe trait AllocMeta<T: ?Sized>: PtrMeta<T> {
-    fn layout(metadata: Self::Metadata) -> Option<Layout>;
-}
+pub struct SizedPtrMeta<M = ()>(PhantomData<M>);
 
-pub struct SizedPtrMeta;
-
-unsafe impl<T> PtrMeta<T> for SizedPtrMeta {
-    type Metadata = ();
+unsafe impl<T, M: 'static> PtrMeta<T> for SizedPtrMeta<M> {
+    type TypeMetadata = M;
+    type PtrMetadata = ();
     type Thin = T;
 
     #[inline]
-    fn to_raw_parts(fat: *const T) -> (*const T, Self::Metadata) {
+    fn layout(_metadata: ()) -> Option<Layout> {
+        Some(Layout::new::<T>())
+    }
+
+    #[inline]
+    fn to_raw_parts(fat: *const T) -> (*const T, Self::PtrMetadata) {
         (fat, ())
     }
 
     #[inline]
-    fn from_raw_parts(thin: *const T, _metadata: Self::Metadata) -> *const T {
+    fn from_raw_parts(thin: *const T, _metadata: Self::PtrMetadata) -> *const T {
         thin
-    }
-}
-
-unsafe impl<T> AllocMeta<T> for SizedPtrMeta {
-    #[inline]
-    fn layout(_metadata: ()) -> Option<Layout> {
-        Some(Layout::new::<T>())
     }
 }
 
@@ -54,4 +51,4 @@ pub struct Fat<M>(PhantomData<M>);
 
 pub struct Thin<M>(PhantomData<M>);
 
-pub type DefaultPtrKind = Fat<SizedPtrMeta>;
+pub type DefaultPtrKind<M = ()> = Fat<SizedPtrMeta<M>>;

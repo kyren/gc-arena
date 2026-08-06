@@ -12,7 +12,7 @@ use crate::{
     context::{Finalization, Mutation},
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    meta::{AllocMeta, DefaultPtrKind, Fat, PtrMeta, SizedPtrMeta, Thin, TypeMeta, UnitTypeMeta},
+    meta::{DefaultPtrKind, Fat, PtrMeta, SizedPtrMeta, Thin, TypeMeta, UnitTypeMeta},
     static_wrapper::{Static, StaticPtrMeta},
     types::{GcColor, Invariant},
 };
@@ -25,17 +25,18 @@ use crate::{
 /// "generativity" such `Gc` pointers may not escape the arena they were born in or be stored inside
 /// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
 /// be dangling and are always safe to access.
-pub struct Gc<'gc, T: ?Sized + 'gc, K = DefaultPtrKind, M = ()>
+pub struct Gc<'gc, T: ?Sized + 'gc, K = DefaultPtrKind>
 where
     K: GcStore<'gc, T>,
 {
     pub(crate) ptr: GcPtr<K::Store>,
-    _marker: PhantomData<(Invariant<'gc>, K, M)>,
+    _marker: PhantomData<(Invariant<'gc>, K)>,
 }
 
 #[allow(private_interfaces)]
 pub unsafe trait GcStore<'gc, T: ?Sized> {
     type Store: ?Sized + 'gc;
+    type PtrMeta;
 
     fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T>;
     fn to_store(ptr: GcPtr<T>) -> GcPtr<Self::Store>;
@@ -44,6 +45,7 @@ pub unsafe trait GcStore<'gc, T: ?Sized> {
 #[allow(private_interfaces)]
 unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Fat<P> {
     type Store = T;
+    type PtrMeta = P;
 
     #[inline(always)]
     fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T> {
@@ -63,6 +65,7 @@ where
     P::Thin: 'gc,
 {
     type Store = P::Thin;
+    type PtrMeta = P;
 
     #[inline(always)]
     fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T> {
@@ -75,7 +78,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Pointer for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Pointer for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -84,7 +87,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Debug for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Debug for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: fmt::Debug,
@@ -94,7 +97,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Display for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Display for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: fmt::Display,
@@ -104,19 +107,19 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Copy for Gc<'gc, T, K, M> where K: GcStore<'gc, T> {}
+impl<'gc, T: ?Sized, K> Copy for Gc<'gc, T, K> where K: GcStore<'gc, T> {}
 
-impl<'gc, T: ?Sized, K, M> Clone for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Clone for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
     #[inline]
-    fn clone(&self) -> Gc<'gc, T, K, M> {
+    fn clone(&self) -> Gc<'gc, T, K> {
         *self
     }
 }
 
-unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for Gc<'gc, T, K, M>
+unsafe impl<'gc, T: ?Sized, K> Collect<'gc> for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -126,7 +129,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> AsRef<T> for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> AsRef<T> for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -136,7 +139,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Deref for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Deref for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -148,7 +151,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Borrow<T> for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Borrow<T> for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -158,15 +161,15 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> Gc<'gc, T, Fat<P>, M>
+impl<'gc, T: ?Sized, P> Gc<'gc, T, Fat<P>>
 where
     T: Collect<'gc>,
-    P: AllocMeta<T>,
+    P: PtrMeta<T>,
 {
     #[inline]
-    unsafe fn allocate<TM: TypeMeta<Metadata = M>>(
+    unsafe fn allocate<TM: TypeMeta<Metadata = P::TypeMetadata>>(
         mc: &Mutation<'gc>,
-        ptr_meta: P::Metadata,
+        ptr_meta: P::PtrMetadata,
     ) -> Self {
         Gc {
             ptr: mc.allocate::<T, P, TM>(ptr_meta),
@@ -206,12 +209,12 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
     #[inline]
-    pub fn downgrade(this: Gc<'gc, T, K, M>) -> GcWeak<'gc, T, K, M> {
+    pub fn downgrade(this: Gc<'gc, T, K>) -> GcWeak<'gc, T, K> {
         GcWeak { inner: this }
     }
 
@@ -221,7 +224,7 @@ where
     /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
     /// pointers reachable only through other weak pointers that can be dead.
     #[inline]
-    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T, K, M>) -> bool {
+    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T, K>) -> bool {
         matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
@@ -231,17 +234,17 @@ where
     /// all transitively held pointers as reachable, thus keeping them from being dropped this
     /// collection cycle.
     #[inline]
-    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T, K, M>) {
+    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T, K>) {
         fc.resurrect(gc.ptr.erase());
     }
 
     #[inline]
-    pub fn as_ptr(gc: Gc<'gc, T, K, M>) -> *const T {
+    pub fn as_ptr(gc: Gc<'gc, T, K>) -> *const T {
         K::from_store(gc.ptr).as_ptr()
     }
 
     #[inline]
-    pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> Gc<'gc, T, K, M> {
+    pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> Gc<'gc, T, K> {
         unsafe {
             Gc {
                 ptr: K::to_store(GcPtr::from_ptr(ptr)),
@@ -255,7 +258,7 @@ where
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: Gc<'gc, T, K, M>, other: Gc<'gc, T, K, M>) -> bool {
+    pub fn ptr_eq(this: Gc<'gc, T, K>, other: Gc<'gc, T, K>) -> bool {
         this.ptr.addr_eq(other.ptr)
     }
 
@@ -265,7 +268,7 @@ where
     /// method safely because it is always safe to dereference a `*mut ()` that has come from
     /// casting a `*mut T`.
     #[inline]
-    pub fn erase(this: Gc<'gc, T, K, M>) -> Gc<'gc, ()> {
+    pub fn erase(this: Gc<'gc, T, K>) -> Gc<'gc, ()> {
         Gc::<'gc, ()> {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const ()) },
             _marker: PhantomData,
@@ -273,16 +276,14 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, M> Gc<'gc, T, DefaultPtrKind, M> {
+impl<'gc, T: ?Sized, M: 'static> Gc<'gc, T, DefaultPtrKind<M>> {
     /// Cast a `Gc` pointer to a different type.
     ///
     /// # Safety
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
-    pub unsafe fn cast<U: 'gc>(
-        this: Gc<'gc, T, DefaultPtrKind, M>,
-    ) -> Gc<'gc, U, DefaultPtrKind, M> {
-        Gc::<'gc, U, DefaultPtrKind, M> {
+    pub unsafe fn cast<U: 'gc>(this: Self) -> Gc<'gc, U, DefaultPtrKind<M>> {
+        Gc::<'gc, U, _> {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const U) },
             _marker: PhantomData,
         }
@@ -306,7 +307,7 @@ impl<'gc, T: ?Sized> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: Unlock,
@@ -318,7 +319,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -327,7 +328,7 @@ where
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
     #[inline]
-    pub fn as_ref(self: Gc<'gc, T, K, M>) -> &'gc T {
+    pub fn as_ref(self: Gc<'gc, T, K>) -> &'gc T {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
         // cannot be stored inside the GC root.
@@ -352,26 +353,27 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> Gc<'gc, T, Fat<P>, M>
+impl<'gc, T: ?Sized, P> Gc<'gc, T, Fat<P>>
 where
     P: PtrMeta<T>,
     P::Thin: 'static,
 {
-    pub fn as_thin(gc: Self) -> Gc<'gc, T, Thin<P>, M> {
+    pub fn as_thin(gc: Self) -> Gc<'gc, T, Thin<P>> {
         unsafe { Gc::from_ptr_cast_meta(gc.ptr.as_ptr()) }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
+    K::PtrMeta: PtrMeta<T>,
 {
-    pub fn type_metadata(gc: Gc<'gc, T, K, M>) -> &'static M {
-        unsafe { gc.ptr.type_metadata::<M>() }
+    pub fn type_metadata(gc: Gc<'gc, T, K>) -> &'static <K::PtrMeta as PtrMeta<T>>::TypeMetadata {
+        unsafe { gc.ptr.type_metadata() }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> PartialEq for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> PartialEq for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: PartialEq,
@@ -385,14 +387,14 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Eq for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Eq for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: Eq,
 {
 }
 
-impl<'gc, T: ?Sized, K, M> PartialOrd for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> PartialOrd for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: PartialOrd,
@@ -423,7 +425,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Ord for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Ord for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: Ord,
@@ -433,7 +435,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Hash for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Hash for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
     T: Hash,
@@ -443,8 +445,11 @@ where
     }
 }
 
-pub struct GcBuilder<'gc, T: ?Sized, P = SizedPtrMeta, M = ()> {
-    gc: Gc<'gc, T, Fat<P>, M>,
+pub struct GcBuilder<'gc, T: ?Sized, P = SizedPtrMeta<()>>
+where
+    P: PtrMeta<T>,
+{
+    gc: Gc<'gc, T, Fat<P>>,
 }
 
 impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
@@ -454,8 +459,9 @@ impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
     }
 }
 
-impl<'gc, T, M> GcBuilder<'gc, T, SizedPtrMeta, M>
+impl<'gc, T, M> GcBuilder<'gc, T, SizedPtrMeta<M>>
 where
+    M: 'static,
     T: Collect<'gc>,
 {
     #[inline]
@@ -464,15 +470,15 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M>
+impl<'gc, T: ?Sized, P> GcBuilder<'gc, T, P>
 where
     T: Collect<'gc>,
-    P: AllocMeta<T>,
+    P: PtrMeta<T>,
 {
     #[inline]
-    pub fn allocate_with_all_meta<TM: TypeMeta<Metadata = M>>(
+    pub fn allocate_with_all_meta<TM: TypeMeta<Metadata = P::TypeMetadata>>(
         mc: &Mutation<'gc>,
-        ptr_meta: P::Metadata,
+        ptr_meta: P::PtrMetadata,
     ) -> Self {
         GcBuilder {
             gc: unsafe { Gc::allocate::<TM>(mc, ptr_meta) },
@@ -480,21 +486,27 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, M> GcBuilder<'gc, Static<T>, SizedPtrMeta, M> {
+impl<'gc, T, M: 'static> GcBuilder<'gc, Static<T>, SizedPtrMeta<M>> {
     #[inline]
-    pub fn unwrap_static(self) -> GcBuilder<'gc, T, SizedPtrMeta, M> {
+    pub fn unwrap_static(self) -> GcBuilder<'gc, T, SizedPtrMeta<M>> {
         unsafe { GcBuilder::from_raw(self.into_raw() as *mut T) }
     }
 }
 
-impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, Static<T>, StaticPtrMeta<P>, M> {
+impl<'gc, T: ?Sized, P> GcBuilder<'gc, Static<T>, StaticPtrMeta<P>>
+where
+    P: PtrMeta<T>,
+{
     #[inline]
-    pub fn unwrap_static(self) -> GcBuilder<'gc, T, P, M> {
+    pub fn unwrap_static(self) -> GcBuilder<'gc, T, P> {
         unsafe { GcBuilder::from_raw(self.into_raw() as *mut T) }
     }
 }
 
-impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
+impl<'gc, T: ?Sized, P> GcBuilder<'gc, T, P>
+where
+    P: PtrMeta<T>,
+{
     pub fn as_ptr(&self) -> *const T {
         Gc::as_ptr(self.gc)
     }
@@ -507,7 +519,7 @@ impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
         Gc::as_ptr(self.gc).cast_mut()
     }
 
-    pub unsafe fn from_raw(ptr: *mut T) -> GcBuilder<'gc, T, P, M> {
+    pub unsafe fn from_raw(ptr: *mut T) -> GcBuilder<'gc, T, P> {
         unsafe {
             Self {
                 gc: Gc::from_ptr_cast_meta(ptr),
@@ -515,15 +527,18 @@ impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
         }
     }
 
-    pub unsafe fn assume_init(self) -> Gc<'gc, T, Fat<P>, M> {
+    pub unsafe fn assume_init(self) -> Gc<'gc, T, Fat<P>> {
         self.gc.ptr.header().set_live(true);
         self.gc
     }
 }
 
-impl<'gc, T, P, M> GcBuilder<'gc, T, P, M> {
+impl<'gc, T, P> GcBuilder<'gc, T, P>
+where
+    P: PtrMeta<T>,
+{
     #[inline]
-    pub fn write(mut self, val: T) -> Gc<'gc, T, Fat<P>, M> {
+    pub fn write(mut self, val: T) -> Gc<'gc, T, Fat<P>> {
         unsafe {
             self.as_mut_ptr().write(val);
             self.assume_init()

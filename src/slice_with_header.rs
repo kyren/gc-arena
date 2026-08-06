@@ -9,7 +9,7 @@ use crate::{
     collect::Collect,
     context::Mutation,
     gc::{Gc, GcBuilder},
-    meta::{AllocMeta, Fat, PtrMeta, Thin, TypeMeta, UnitTypeMeta},
+    meta::{Fat, PtrMeta, Thin, TypeMeta, UnitTypeMeta},
     static_wrapper::Static,
 };
 
@@ -33,16 +33,26 @@ unsafe impl<'gc, H: Collect<'gc>, E: Collect<'gc>> Collect<'gc> for SliceWithHea
 }
 
 pub type GcSliceWithHeader<'gc, H, E, M = ()> =
-    Gc<'gc, SliceWithHeader<H, E>, Fat<SliceWithHeaderPtrMeta<H, E>>, M>;
+    Gc<'gc, SliceWithHeader<H, E>, Fat<SliceWithHeaderPtrMeta<H, E, M>>>;
 
 pub type GcThinSliceWithHeader<'gc, H, E, M = ()> =
-    Gc<'gc, SliceWithHeader<H, E>, Thin<SliceWithHeaderPtrMeta<H, E>>, M>;
+    Gc<'gc, SliceWithHeader<H, E>, Thin<SliceWithHeaderPtrMeta<H, E, M>>>;
 
-pub struct SliceWithHeaderPtrMeta<H, E>(PhantomData<(H, E)>);
+pub struct SliceWithHeaderPtrMeta<H, E, M>(PhantomData<(H, E, M)>);
 
-unsafe impl<H, E> PtrMeta<SliceWithHeader<H, E>> for SliceWithHeaderPtrMeta<H, E> {
-    type Metadata = usize;
+unsafe impl<H, E, M: 'static> PtrMeta<SliceWithHeader<H, E>> for SliceWithHeaderPtrMeta<H, E, M> {
+    type TypeMetadata = M;
+    type PtrMetadata = usize;
     type Thin = H;
+
+    #[inline]
+    fn layout(len: usize) -> Option<Layout> {
+        // We manually construct the proper layout for `HeaderSlice`, which we can do because it
+        // is `#[repr(C)]`.
+        let header_layout = Layout::new::<H>();
+        let array_layout = Layout::array::<E>(len).ok()?;
+        Some(header_layout.extend(array_layout).ok()?.0.pad_to_align())
+    }
 
     #[inline]
     fn to_raw_parts(slice: *const SliceWithHeader<H, E>) -> (*const H, usize) {
@@ -55,19 +65,8 @@ unsafe impl<H, E> PtrMeta<SliceWithHeader<H, E>> for SliceWithHeaderPtrMeta<H, E
     }
 }
 
-unsafe impl<H, E> AllocMeta<SliceWithHeader<H, E>> for SliceWithHeaderPtrMeta<H, E> {
-    #[inline]
-    fn layout(len: usize) -> Option<Layout> {
-        // We manually construct the proper layout for `HeaderSlice`, which we can do because it
-        // is `#[repr(C)]`.
-        let header_layout = Layout::new::<H>();
-        let array_layout = Layout::array::<E>(len).ok()?;
-        Some(header_layout.extend(array_layout).ok()?.0.pad_to_align())
-    }
-}
-
-pub struct GcSliceWithHeaderBuilder<'gc, H, E, M = ()> {
-    inner: ManuallyDrop<GcBuilder<'gc, SliceWithHeader<H, E>, SliceWithHeaderPtrMeta<H, E>, M>>,
+pub struct GcSliceWithHeaderBuilder<'gc, H, E, M: 'static = ()> {
+    inner: ManuallyDrop<GcBuilder<'gc, SliceWithHeader<H, E>, SliceWithHeaderPtrMeta<H, E, M>>>,
     init_length: usize,
 }
 
@@ -75,8 +74,8 @@ impl<'gc, H, E, M> Drop for GcSliceWithHeaderBuilder<'gc, H, E, M> {
     fn drop(&mut self) {
         unsafe {
             let slice_ptr = self.inner.as_ptr();
-            let (ptr, _) = SliceWithHeaderPtrMeta::to_raw_parts(slice_ptr);
-            let ptr = SliceWithHeaderPtrMeta::<H, E>::from_raw_parts(ptr, self.init_length);
+            let (ptr, _) = SliceWithHeaderPtrMeta::<H, E, M>::to_raw_parts(slice_ptr);
+            let ptr = SliceWithHeaderPtrMeta::<H, E, M>::from_raw_parts(ptr, self.init_length);
             core::ptr::drop_in_place(ptr.cast_mut());
 
             ManuallyDrop::drop(&mut self.inner);

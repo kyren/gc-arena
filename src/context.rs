@@ -10,8 +10,8 @@ use crate::{
     gc::Gc,
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
+    meta::{PtrMeta, TypeMeta},
     metrics::Metrics,
-    meta::{AllocMeta, TypeMeta},
     types::{GcColor, Invariant},
 };
 
@@ -79,10 +79,14 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
+    pub(crate) fn allocate<T: Collect<'gc> + ?Sized, P, M: TypeMeta>(
         &self,
-        ptr_meta: P::Metadata,
-    ) -> GcPtr<T> {
+        ptr_meta: P::PtrMetadata,
+    ) -> GcPtr<T>
+    where
+        P: PtrMeta<T, TypeMetadata = M::Metadata>,
+        M: TypeMeta,
+    {
         self.context.allocate::<T, P, M>(ptr_meta)
     }
 
@@ -367,10 +371,11 @@ impl Context {
     /// The returned ptr's header will have `is_live` as false and this should be set to true when
     /// it is correctly initialized.
     #[inline]
-    fn allocate<'gc, T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
-        &self,
-        ptr_meta: P::Metadata,
-    ) -> GcPtr<T> {
+    fn allocate<'gc, T: Collect<'gc> + ?Sized, P, M>(&self, ptr_meta: P::PtrMetadata) -> GcPtr<T>
+    where
+        P: PtrMeta<T, TypeMetadata = M::Metadata>,
+        M: TypeMeta,
+    {
         let gc_ptr = GcPtr::<T>::alloc::<P, M>(ptr_meta);
 
         let header = gc_ptr.header();

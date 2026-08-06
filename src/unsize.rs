@@ -68,7 +68,7 @@ pub unsafe trait __CoercePtrInternal<Dst> {
         F: FnOnce(*const Self::FromPtr) -> *const Self::ToPtr;
 }
 
-unsafe impl<'gc, T, U: ?Sized, K, M> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T, K, M>
+unsafe impl<'gc, T, U: ?Sized, K> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -84,7 +84,7 @@ where
     }
 }
 
-unsafe impl<'gc, T, U: ?Sized, K, M> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'gc, T, K, M>
+unsafe impl<'gc, T, U: ?Sized, K> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {

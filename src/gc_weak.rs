@@ -14,16 +14,16 @@ use crate::{
 /// A reachable "weak" GC pointer does not prevent having the stored value collected. Instead, the
 /// owner of a `GcWeak<T>` may check at any time if a value has been collected and if it has not,
 /// turn it back into a `Gc<T>` through [`GcWeak::upgrade`].
-pub struct GcWeak<'gc, T: ?Sized + 'gc, K = DefaultPtrKind, M = ()>
+pub struct GcWeak<'gc, T: ?Sized + 'gc, K = DefaultPtrKind>
 where
     K: GcStore<'gc, T>,
 {
-    pub(crate) inner: Gc<'gc, T, K, M>,
+    pub(crate) inner: Gc<'gc, T, K>,
 }
 
-impl<'gc, T: ?Sized, K, M> Copy for GcWeak<'gc, T, K, M> where K: GcStore<'gc, T> {}
+impl<'gc, T: ?Sized, K> Copy for GcWeak<'gc, T, K> where K: GcStore<'gc, T> {}
 
-impl<'gc, T: ?Sized, K, M> fmt::Pointer for GcWeak<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Pointer for GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -32,17 +32,17 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Clone for GcWeak<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Clone for GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
     #[inline]
-    fn clone(&self) -> GcWeak<'gc, T, K, M> {
+    fn clone(&self) -> GcWeak<'gc, T, K> {
         *self
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Debug for GcWeak<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Debug for GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -51,7 +51,7 @@ where
     }
 }
 
-unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for GcWeak<'gc, T, K, M>
+unsafe impl<'gc, T: ?Sized, K> Collect<'gc> for GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -61,7 +61,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> GcWeak<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> GcWeak<'gc, T, K>
 where
     K: GcStore<'gc, T>,
 {
@@ -70,7 +70,7 @@ where
     /// This will fail if the value the `GcWeak` points to is dropped, or if we are in the
     /// [`crate::arena::CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
-    pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T, K, M>> {
+    pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T, K>> {
         mc.upgrade(self.inner.ptr.erase()).then(|| self.inner)
     }
 
@@ -118,7 +118,7 @@ where
     /// stored anywhere, the value and all transitively reachable values are still guaranteed to not
     /// be dropped this collection cycle.
     #[inline]
-    pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T, K, M>> {
+    pub fn resurrect(self, fc: &Finalization<'gc>) -> Option<Gc<'gc, T, K>> {
         // SAFETY: We know that we are currently marking, so any non-dropped pointer is safe to
         // resurrect.
         if self.inner.ptr.header().is_live() {
@@ -134,7 +134,7 @@ where
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: GcWeak<'gc, T, K, M>, other: GcWeak<'gc, T, K, M>) -> bool {
+    pub fn ptr_eq(this: GcWeak<'gc, T, K>, other: GcWeak<'gc, T, K>) -> bool {
         this.inner.ptr.addr_eq(other.inner.ptr)
     }
 
@@ -144,7 +144,7 @@ where
     }
 
     #[inline]
-    pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> GcWeak<'gc, T, K, M> {
+    pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> GcWeak<'gc, T, K> {
         let inner = unsafe { Gc::from_ptr_cast_meta(ptr) };
         GcWeak { inner }
     }
@@ -155,22 +155,22 @@ where
     /// method safely because it is always safe to dereference a `*mut ()` that has come from
     /// casting a `*mut T`.
     #[inline]
-    pub fn erase(this: GcWeak<'gc, T, K, M>) -> GcWeak<'gc, ()> {
+    pub fn erase(this: GcWeak<'gc, T, K>) -> GcWeak<'gc, ()> {
         GcWeak {
             inner: Gc::erase(this.inner),
         }
     }
 }
 
-impl<'gc, T: ?Sized, M> GcWeak<'gc, T, DefaultPtrKind, M> {
+impl<'gc, T: ?Sized> GcWeak<'gc, T, DefaultPtrKind> {
     /// Cast the internal pointer to a different type.
     ///
     /// # Safety
     /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
     #[inline]
     pub unsafe fn cast<U: 'gc>(
-        this: GcWeak<'gc, T, DefaultPtrKind, M>,
-    ) -> GcWeak<'gc, U, DefaultPtrKind, M> {
+        this: GcWeak<'gc, T, DefaultPtrKind>,
+    ) -> GcWeak<'gc, U, DefaultPtrKind> {
         let inner = unsafe { Gc::cast::<U>(this.inner) };
         GcWeak { inner }
     }

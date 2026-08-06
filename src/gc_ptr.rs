@@ -11,7 +11,7 @@ use core::{
 use crate::{
     collect::Collect,
     context::Context,
-    meta::{AllocMeta, PtrMeta, TypeMeta},
+    meta::{PtrMeta, TypeMeta},
     types::GcColor,
 };
 
@@ -43,7 +43,11 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
     ///
     /// Panics if there is no valid layout we can allocate.
     #[inline]
-    pub(crate) fn alloc<P: AllocMeta<T>, M: TypeMeta>(ptr_meta: P::Metadata) -> Self {
+    pub(crate) fn alloc<P, M>(ptr_meta: P::PtrMetadata) -> Self
+    where
+        P: PtrMeta<T>,
+        M: TypeMeta<Metadata = P::TypeMetadata>,
+    {
         let meta_header_layout = PtrProps::<T, P>::META_HEADER_LAYOUT;
         let value_layout = P::layout(ptr_meta).expect("no layout for value");
         let (alloc_layout, value_offset) = prefix_header_layout(meta_header_layout, value_layout)
@@ -59,7 +63,7 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
 
             let meta_ptr = value_ptr
                 .byte_sub(meta_header_layout.size())
-                .cast::<P::Metadata>();
+                .cast::<P::PtrMetadata>();
 
             let header_ptr = value_ptr
                 .byte_sub(mem::size_of::<GcHeader>())
@@ -299,7 +303,7 @@ struct PtrProps<T: ?Sized, P>(PhantomData<(*const T, P)>);
 
 impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
     const META_HEADER_LAYOUT: Layout = {
-        if let Ok((layout, _)) = Layout::new::<P::Metadata>().extend(Layout::new::<GcHeader>()) {
+        if let Ok((layout, _)) = Layout::new::<P::PtrMetadata>().extend(Layout::new::<GcHeader>()) {
             layout.pad_to_align()
         } else {
             unreachable!();
@@ -307,11 +311,11 @@ impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
     };
 
     #[inline(always)]
-    unsafe fn read_ptr_meta<U: ?Sized>(value_ptr: NonNull<U>) -> P::Metadata {
+    unsafe fn read_ptr_meta<U: ?Sized>(value_ptr: NonNull<U>) -> P::PtrMetadata {
         unsafe {
             value_ptr
                 .byte_sub(Self::META_HEADER_LAYOUT.size())
-                .cast::<P::Metadata>()
+                .cast::<P::PtrMetadata>()
                 .read()
         }
     }
@@ -329,7 +333,11 @@ impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
 
 struct Vtable<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
 
-impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> Vtable<T, P, M> {
+impl<'gc, T: ?Sized + Collect<'gc>, P, M> Vtable<T, P, M>
+where
+    P: PtrMeta<T>,
+    M: TypeMeta<Metadata = P::TypeMetadata>,
+{
     const VTABLE: GcVtable = GcVtable {
         trace_value: |value_ptr, cc| unsafe {
             PtrProps::<T, P>::fat_ptr(value_ptr).as_ref().trace(cc);
