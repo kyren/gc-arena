@@ -1514,12 +1514,12 @@ fn test_type_metadata() {
         #[repr(C)]
         struct TypeB(u32);
 
-        impl gc_arena::repr::TypeMeta for TypeA {
+        impl gc_arena::meta::TypeMeta for TypeA {
             type Metadata = u32;
             const METADATA: &'static u32 = &7;
         }
 
-        impl gc_arena::repr::TypeMeta for TypeB {
+        impl gc_arena::meta::TypeMeta for TypeB {
             type Metadata = u32;
             const METADATA: &'static u32 = &8;
         }

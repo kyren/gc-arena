@@ -11,7 +11,7 @@ use core::{
 use crate::{
     collect::Collect,
     context::Context,
-    repr::{AllocMeta, PtrMeta, TypeMeta},
+    meta::{AllocMeta, PtrMeta, TypeMeta},
     types::GcColor,
 };
 
@@ -95,6 +95,11 @@ impl<T: ?Sized> GcPtr<T> {
 
     pub(crate) unsafe fn fat_ptr<F: ?Sized, M: PtrMeta<F>>(self) -> GcPtr<F> {
         unsafe { GcPtr(PtrProps::<F, M>::fat_ptr(self.0)) }
+    }
+
+    pub(crate) unsafe fn thin_ptr<M: PtrMeta<T>>(self) -> GcPtr<M::Thin> {
+        let (p, _) = M::to_raw_parts(self.0.as_ptr());
+        unsafe { GcPtr(NonNull::new_unchecked(p.cast_mut())) }
     }
 
     pub(crate) unsafe fn type_metadata<M>(self) -> &'static M {

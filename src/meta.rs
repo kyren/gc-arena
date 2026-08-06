@@ -52,6 +52,6 @@ unsafe impl<T> AllocMeta<T> for SizedPtrMeta {
 
 pub struct Fat<M>(PhantomData<M>);
 
-pub struct Thin<Fat: ?Sized, M>(PhantomData<(*const Fat, M)>);
+pub struct Thin<M>(PhantomData<M>);
 
-pub type SizedPtrKind = Fat<SizedPtrMeta>;
+pub type DefaultPtrKind = Fat<SizedPtrMeta>;

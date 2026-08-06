@@ -12,7 +12,7 @@ use crate::{
     context::{Finalization, Mutation},
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    repr::{AllocMeta, Fat, PtrMeta, SizedPtrKind, SizedPtrMeta, Thin, TypeMeta, UnitTypeMeta},
+    meta::{AllocMeta, DefaultPtrKind, Fat, PtrMeta, SizedPtrMeta, Thin, TypeMeta, UnitTypeMeta},
     static_wrapper::{Static, StaticPtrMeta},
     types::{GcColor, Invariant},
 };
@@ -25,45 +25,60 @@ use crate::{
 /// "generativity" such `Gc` pointers may not escape the arena they were born in or be stored inside
 /// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
 /// be dangling and are always safe to access.
-pub struct Gc<'gc, T: ?Sized + 'gc, K = SizedPtrKind, M = ()> {
-    pub(crate) ptr: GcPtr<T>,
+pub struct Gc<'gc, T: ?Sized + 'gc, K = DefaultPtrKind, M = ()>
+where
+    K: GcStore<'gc, T>,
+{
+    pub(crate) ptr: GcPtr<K::Store>,
     _marker: PhantomData<(Invariant<'gc>, K, M)>,
 }
 
-pub trait GcDeref<'gc> {
-    type Target: ?Sized + 'gc;
+#[allow(private_interfaces)]
+pub unsafe trait GcStore<'gc, T: ?Sized> {
+    type Store: ?Sized + 'gc;
 
-    fn deref_gc(self) -> &'gc Self::Target;
+    fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T>;
+    fn to_store(ptr: GcPtr<T>) -> GcPtr<Self::Store>;
 }
 
-impl<'gc, T: ?Sized, P, M> GcDeref<'gc> for Gc<'gc, T, Fat<P>, M> {
-    type Target = T;
+#[allow(private_interfaces)]
+unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Fat<P> {
+    type Store = T;
 
     #[inline(always)]
-    fn deref_gc(self) -> &'gc Self::Target {
-        // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
-        // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
-        // cannot be stored inside the GC root.
-        unsafe { self.ptr.as_ref() }
+    fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T> {
+        store_ptr
+    }
+
+    #[inline(always)]
+    fn to_store(ptr: GcPtr<T>) -> GcPtr<Self::Store> {
+        ptr
     }
 }
 
-impl<'gc, T, F: ?Sized + 'gc, P, M> GcDeref<'gc> for Gc<'gc, T, Thin<F, P>, M>
+#[allow(private_interfaces)]
+unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Thin<P>
 where
-    P: PtrMeta<F>,
+    P: PtrMeta<T>,
+    P::Thin: 'gc,
 {
-    type Target = F;
+    type Store = P::Thin;
 
     #[inline(always)]
-    fn deref_gc(self) -> &'gc Self::Target {
-        // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
-        // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
-        // cannot be stored inside the GC root.
-        unsafe { self.ptr.fat_ptr::<F, P>().as_ref() }
+    fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T> {
+        unsafe { store_ptr.fat_ptr::<T, P>() }
+    }
+
+    #[inline(always)]
+    fn to_store(ptr: GcPtr<T>) -> GcPtr<Self::Store> {
+        unsafe { ptr.thin_ptr::<P>() }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Pointer for Gc<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> fmt::Pointer for Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&Gc::as_ptr(*self), fmt)
     }
@@ -71,79 +86,75 @@ impl<'gc, T: ?Sized, K, M> fmt::Pointer for Gc<'gc, T, K, M> {
 
 impl<'gc, T: ?Sized, K, M> fmt::Debug for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: fmt::Debug,
+    K: GcStore<'gc, T>,
+    T: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(self.deref_gc(), fmt)
+        fmt::Debug::fmt(self.as_ref(), fmt)
     }
 }
 
 impl<'gc, T: ?Sized, K, M> fmt::Display for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: fmt::Display,
+    K: GcStore<'gc, T>,
+    T: fmt::Display,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(self.deref_gc(), fmt)
+        fmt::Display::fmt(self.as_ref(), fmt)
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Copy for Gc<'gc, T, K, M> {}
+impl<'gc, T: ?Sized, K, M> Copy for Gc<'gc, T, K, M> where K: GcStore<'gc, T> {}
 
-impl<'gc, T: ?Sized, K, M> Clone for Gc<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> Clone for Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     #[inline]
     fn clone(&self) -> Gc<'gc, T, K, M> {
         *self
     }
 }
 
-unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for Gc<'gc, T, K, M> {
+unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_gc(Self::erase(*self))
     }
 }
 
-impl<'gc, T: ?Sized, K, M> AsRef<<Self as GcDeref<'gc>>::Target> for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K, M> AsRef<T> for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
+    K: GcStore<'gc, T>,
 {
     #[inline]
-    fn as_ref(&self) -> &<Self as GcDeref<'gc>>::Target {
-        self.deref_gc()
+    fn as_ref(&self) -> &T {
+        unsafe { K::from_store(self.ptr).as_ref() }
     }
 }
 
 impl<'gc, T: ?Sized, K, M> Deref for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
+    K: GcStore<'gc, T>,
 {
-    type Target = <Self as GcDeref<'gc>>::Target;
+    type Target = T;
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        self.deref_gc()
+        self.as_ref()
     }
 }
 
-impl<'gc, T: ?Sized, P, M> Borrow<<Self as GcDeref<'gc>>::Target> for Gc<'gc, T, Fat<P>, M>
+impl<'gc, T: ?Sized, K, M> Borrow<T> for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
+    K: GcStore<'gc, T>,
 {
     #[inline]
-    fn borrow(&self) -> &<Self as GcDeref<'gc>>::Target {
-        self.deref_gc()
-    }
-}
-
-impl<'gc, T, F: ?Sized, P, M> Borrow<<Self as GcDeref<'gc>>::Target> for Gc<'gc, T, Thin<F, P>, M>
-where
-    Self: GcDeref<'gc>,
-{
-    #[inline]
-    fn borrow(&self) -> &<Self as GcDeref<'gc>>::Target {
-        self.deref_gc()
+    fn borrow(&self) -> &T {
+        self.as_ref()
     }
 }
 
@@ -195,7 +206,10 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     #[inline]
     pub fn downgrade(this: Gc<'gc, T, K, M>) -> GcWeak<'gc, T, K, M> {
         GcWeak { inner: this }
@@ -223,14 +237,14 @@ impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
 
     #[inline]
     pub fn as_ptr(gc: Gc<'gc, T, K, M>) -> *const T {
-        gc.ptr.as_ptr()
+        K::from_store(gc.ptr).as_ptr()
     }
 
     #[inline]
     pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> Gc<'gc, T, K, M> {
         unsafe {
             Gc {
-                ptr: GcPtr::from_ptr(ptr),
+                ptr: K::to_store(GcPtr::from_ptr(ptr)),
                 _marker: PhantomData,
             }
         }
@@ -245,18 +259,6 @@ impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
         this.ptr.addr_eq(other.ptr)
     }
 
-    /// Cast a `Gc` pointer to a different type.
-    ///
-    /// # Safety
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
-    #[inline]
-    pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T, K, M>) -> Gc<'gc, U, K, M> {
-        Gc {
-            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const U) },
-            _marker: PhantomData,
-        }
-    }
-
     /// Cast a `Gc` to the unit type.
     ///
     /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
@@ -264,8 +266,24 @@ impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
     /// casting a `*mut T`.
     #[inline]
     pub fn erase(this: Gc<'gc, T, K, M>) -> Gc<'gc, ()> {
-        Gc {
+        Gc::<'gc, ()> {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const ()) },
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'gc, T: ?Sized, M> Gc<'gc, T, DefaultPtrKind, M> {
+    /// Cast a `Gc` pointer to a different type.
+    ///
+    /// # Safety
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    #[inline]
+    pub unsafe fn cast<U: 'gc>(
+        this: Gc<'gc, T, DefaultPtrKind, M>,
+    ) -> Gc<'gc, U, DefaultPtrKind, M> {
+        Gc::<'gc, U, DefaultPtrKind, M> {
+            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const U) },
             _marker: PhantomData,
         }
     }
@@ -290,30 +308,30 @@ impl<'gc, T: ?Sized> Gc<'gc, T> {
 
 impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: Unlock,
+    K: GcStore<'gc, T>,
+    T: Unlock,
 {
     /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
     #[inline]
-    pub fn unlock(
-        self,
-        mc: &Mutation<'gc>,
-    ) -> &'gc <<Self as GcDeref<'gc>>::Target as Unlock>::Unlocked {
+    pub fn unlock(self, mc: &Mutation<'gc>) -> &'gc <T as Unlock>::Unlocked {
         Gc::write(mc, self).unlock()
     }
 }
 
 impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
+    K: GcStore<'gc, T>,
 {
     /// Obtains a long-lived reference to the contents of this `Gc`.
     ///
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
     #[inline]
-    pub fn as_ref(self: Gc<'gc, T, K, M>) -> &'gc <Self as GcDeref<'gc>>::Target {
-        self.deref_gc()
+    pub fn as_ref(self: Gc<'gc, T, K, M>) -> &'gc T {
+        // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
+        // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
+        // cannot be stored inside the GC root.
+        unsafe { K::from_store(self.ptr).as_ref() }
     }
 
     /// Triggers a write barrier on this `Gc`, allowing for safe mutation.
@@ -325,11 +343,11 @@ where
     /// It returns a reference to the inner `T` wrapped in a `Write` marker to allow for
     /// unrestricted mutation on the held type or any of its directly held fields.
     #[inline]
-    pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<<Self as GcDeref<'gc>>::Target> {
+    pub fn write(mc: &Mutation<'gc>, gc: Self) -> &'gc Write<T> {
         unsafe {
             mc.backward_barrier(Gc::erase(gc), None);
             // SAFETY: the write barrier stays valid until the end of the current callback.
-            Write::assume(gc.deref_gc())
+            Write::assume(gc.as_ref())
         }
     }
 }
@@ -337,15 +355,17 @@ where
 impl<'gc, T: ?Sized, P, M> Gc<'gc, T, Fat<P>, M>
 where
     P: PtrMeta<T>,
+    P::Thin: 'static,
 {
-    pub fn as_thin(gc: Gc<'gc, T, Fat<P>, M>) -> Gc<'gc, P::Thin, Thin<T, P>, M> {
-        let fat = Gc::as_ptr(gc);
-        let (thin, _) = P::to_raw_parts(fat);
-        unsafe { Gc::from_ptr_cast_meta(thin) }
+    pub fn as_thin(gc: Self) -> Gc<'gc, T, Thin<P>, M> {
+        unsafe { Gc::from_ptr_cast_meta(gc.ptr.as_ptr()) }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     pub fn type_metadata(gc: Gc<'gc, T, K, M>) -> &'static M {
         unsafe { gc.ptr.type_metadata::<M>() }
     }
@@ -353,73 +373,73 @@ impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M> {
 
 impl<'gc, T: ?Sized, K, M> PartialEq for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: PartialEq,
+    K: GcStore<'gc, T>,
+    T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.deref_gc().eq(other.deref_gc())
+        self.as_ref().eq(other.as_ref())
     }
 
     fn ne(&self, other: &Self) -> bool {
-        self.deref_gc().ne(other.deref_gc())
+        self.as_ref().ne(other.as_ref())
     }
 }
 
 impl<'gc, T: ?Sized, K, M> Eq for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: Eq,
+    K: GcStore<'gc, T>,
+    T: Eq,
 {
 }
 
 impl<'gc, T: ?Sized, K, M> PartialOrd for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: PartialOrd,
+    K: GcStore<'gc, T>,
+    T: PartialOrd,
 {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.deref_gc().partial_cmp(other.deref_gc())
+        self.as_ref().partial_cmp(other.as_ref())
     }
 
     #[inline]
     fn le(&self, other: &Self) -> bool {
-        self.deref_gc().le(other.deref_gc())
+        self.as_ref().le(other.as_ref())
     }
 
     #[inline]
     fn lt(&self, other: &Self) -> bool {
-        self.deref_gc().lt(other.deref_gc())
+        self.as_ref().lt(other.as_ref())
     }
 
     #[inline]
     fn ge(&self, other: &Self) -> bool {
-        self.deref_gc().ge(other.deref_gc())
+        self.as_ref().ge(other.as_ref())
     }
 
     #[inline]
     fn gt(&self, other: &Self) -> bool {
-        self.deref_gc().gt(other.deref_gc())
+        self.as_ref().gt(other.as_ref())
     }
 }
 
 impl<'gc, T: ?Sized, K, M> Ord for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: Ord,
+    K: GcStore<'gc, T>,
+    T: Ord,
 {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
-        self.deref_gc().cmp(other.deref_gc())
+        self.as_ref().cmp(other.as_ref())
     }
 }
 
 impl<'gc, T: ?Sized, K, M> Hash for Gc<'gc, T, K, M>
 where
-    Self: GcDeref<'gc>,
-    <Self as GcDeref<'gc>>::Target: Hash,
+    K: GcStore<'gc, T>,
+    T: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.deref_gc().hash(state)
+        self.as_ref().hash(state)
     }
 }
 

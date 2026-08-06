@@ -9,7 +9,7 @@ use crate::{
     collect::Collect,
     context::Mutation,
     gc::{Gc, GcBuilder},
-    repr::{AllocMeta, Fat, PtrMeta, Thin, TypeMeta, UnitTypeMeta},
+    meta::{AllocMeta, Fat, PtrMeta, Thin, TypeMeta, UnitTypeMeta},
     static_wrapper::Static,
 };
 
@@ -36,7 +36,7 @@ pub type GcSliceWithHeader<'gc, H, E, M = ()> =
     Gc<'gc, SliceWithHeader<H, E>, Fat<SliceWithHeaderPtrMeta<H, E>>, M>;
 
 pub type GcThinSliceWithHeader<'gc, H, E, M = ()> =
-    Gc<'gc, H, Thin<SliceWithHeader<H, E>, SliceWithHeaderPtrMeta<H, E>>, M>;
+    Gc<'gc, SliceWithHeader<H, E>, Thin<SliceWithHeaderPtrMeta<H, E>>, M>;
 
 pub struct SliceWithHeaderPtrMeta<H, E>(PhantomData<(H, E)>);
 

@@ -3,8 +3,8 @@ use core::fmt;
 use crate::{
     collect::{Collect, Trace},
     context::{Finalization, Mutation},
-    gc::Gc,
-    repr::SizedPtrKind,
+    gc::{Gc, GcStore},
+    meta::DefaultPtrKind,
 };
 
 /// A weak pointer to a garbage collected.
@@ -14,39 +14,57 @@ use crate::{
 /// A reachable "weak" GC pointer does not prevent having the stored value collected. Instead, the
 /// owner of a `GcWeak<T>` may check at any time if a value has been collected and if it has not,
 /// turn it back into a `Gc<T>` through [`GcWeak::upgrade`].
-pub struct GcWeak<'gc, T: ?Sized + 'gc, K = SizedPtrKind, M = ()> {
+pub struct GcWeak<'gc, T: ?Sized + 'gc, K = DefaultPtrKind, M = ()>
+where
+    K: GcStore<'gc, T>,
+{
     pub(crate) inner: Gc<'gc, T, K, M>,
 }
 
-impl<'gc, T: ?Sized, K, M> Copy for GcWeak<'gc, T, K, M> {}
+impl<'gc, T: ?Sized, K, M> Copy for GcWeak<'gc, T, K, M> where K: GcStore<'gc, T> {}
 
-impl<'gc, T: ?Sized, K, M> fmt::Pointer for GcWeak<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> fmt::Pointer for GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&GcWeak::as_ptr(*self), fmt)
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Clone for GcWeak<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> Clone for GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     #[inline]
     fn clone(&self) -> GcWeak<'gc, T, K, M> {
         *self
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Debug for GcWeak<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> fmt::Debug for GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         write!(fmt, "(GcWeak)")
     }
 }
 
-unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for GcWeak<'gc, T, K, M> {
+unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
         cc.trace_gc_weak(Self::erase(*self))
     }
 }
 
-impl<'gc, T: ?Sized, K, M> GcWeak<'gc, T, K, M> {
+impl<'gc, T: ?Sized, K, M> GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     /// If the `GcWeak` pointer can be safely upgraded to a strong pointer, upgrade it.
     ///
     /// This will fail if the value the `GcWeak` points to is dropped, or if we are in the
@@ -131,18 +149,6 @@ impl<'gc, T: ?Sized, K, M> GcWeak<'gc, T, K, M> {
         GcWeak { inner }
     }
 
-    /// Cast the internal pointer to a different type.
-    ///
-    /// # Safety
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
-    #[inline]
-    pub unsafe fn cast<U: 'gc>(this: GcWeak<'gc, T, K, M>) -> GcWeak<'gc, U, K, M> {
-        unsafe {
-            let inner = Gc::cast::<U>(this.inner);
-            GcWeak { inner }
-        }
-    }
-
     /// Cast a `GcWeak` to the unit type.
     ///
     /// This is exactly the same as `unsafe { GcWeak::cast::<()>(this) }`, but we can provide this
@@ -153,6 +159,20 @@ impl<'gc, T: ?Sized, K, M> GcWeak<'gc, T, K, M> {
         GcWeak {
             inner: Gc::erase(this.inner),
         }
+    }
+}
+
+impl<'gc, T: ?Sized, M> GcWeak<'gc, T, DefaultPtrKind, M> {
+    /// Cast the internal pointer to a different type.
+    ///
+    /// # Safety
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    #[inline]
+    pub unsafe fn cast<U: 'gc>(
+        this: GcWeak<'gc, T, DefaultPtrKind, M>,
+    ) -> GcWeak<'gc, U, DefaultPtrKind, M> {
+        let inner = unsafe { Gc::cast::<U>(this.inner) };
+        GcWeak { inner }
     }
 }
 
