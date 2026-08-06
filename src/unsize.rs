@@ -1,4 +1,4 @@
-use crate::{Gc, GcWeak};
+use crate::{Gc, GcWeak, gc::GcStore};
 
 /// Unsizes a [`Gc`] or [`GcWeak`] pointer.
 ///
@@ -68,7 +68,10 @@ pub unsafe trait __CoercePtrInternal<Dst> {
         F: FnOnce(*const Self::FromPtr) -> *const Self::ToPtr;
 }
 
-unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
+unsafe impl<'gc, T, U: ?Sized, K, M> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     type FromPtr = T;
     type ToPtr = U;
 
@@ -81,7 +84,10 @@ unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<Gc<'gc, U>> for Gc<'gc, T> {
     }
 }
 
-unsafe impl<'gc, T, U: ?Sized> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'gc, T> {
+unsafe impl<'gc, T, U: ?Sized, K, M> __CoercePtrInternal<GcWeak<'gc, U>> for GcWeak<'gc, T, K, M>
+where
+    K: GcStore<'gc, T>,
+{
     type FromPtr = T;
     type ToPtr = U;
 

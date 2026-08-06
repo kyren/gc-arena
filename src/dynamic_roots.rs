@@ -59,7 +59,7 @@ impl<'gc> DynamicRootSet<'gc> {
         mc.backward_barrier(Gc::erase(self.0), Some(Gc::erase(root)));
 
         let mut slots = self.0.slots.borrow_mut();
-        let index = slots.add(unsafe { Gc::cast(root) });
+        let index = slots.add(Gc::erase(root));
 
         let ptr =
             unsafe { mem::transmute::<Gc<'gc, Root<'gc, R>>, Gc<'static, Root<'static, R>>>(root) };

@@ -11,7 +11,7 @@ use crate::{
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
     metrics::Metrics,
-    repr::{AllocMeta, TypeMeta},
+    meta::{AllocMeta, TypeMeta},
     types::{GcColor, Invariant},
 };
 
