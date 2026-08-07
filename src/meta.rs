@@ -31,7 +31,16 @@ impl TypeMeta for UnitTypeMeta {
 ///
 /// The [`PtrMeta::Metadata`] value will be stored next to the allocated value in memory, so there
 /// is a *per-allocation* cost.
-pub unsafe trait PtrMeta<T: ?Sized, M> {
+///
+/// # Safety
+///
+/// Though it is not unsafe to implement this trait, it is unsafe to construct a new `Gc` pointer
+/// with an arbitrary implementation of `PtrMeta` and you must assert that it is implemented
+/// correctly when doing so.
+///
+/// If `from_raw_parts` is given `thin` and `ptr_meta` that came from a call to `to_raw_parts`, it
+/// must return a valid and dereferencable pointer.
+pub trait PtrMeta<T: ?Sized, M> {
     type PtrMetadata: Copy + Send;
     type Thin;
 
@@ -46,7 +55,15 @@ pub unsafe trait PtrMeta<T: ?Sized, M> {
 
 /// An extension of the [`PtrMeta`] trait that tells the garbage collector how to allocate and free
 /// memory associated with unsized values.
-pub unsafe trait AllocMeta<T: ?Sized, M>: PtrMeta<T, M> {
+///
+/// # Safety
+///
+/// Though it is not unsafe to implement this trait, it is unsafe to construct a new `Gc` pointer
+/// with an arbitrary implementation of `AllocMeta` and you must assert that it is implemented
+/// correctly when doing so.
+///
+/// The returned layout must be of sufficient size and alignment to hold an allocated value.
+pub trait AllocMeta<T: ?Sized, M>: PtrMeta<T, M> {
     fn layout(type_meta: &'static M, ptr_meta: Self::PtrMetadata) -> Option<Layout>;
 }
 
@@ -55,9 +72,12 @@ pub unsafe trait AllocMeta<T: ?Sized, M>: PtrMeta<T, M> {
 ///
 /// In this representation, the `PtrMeta::Metadata` type is `()` (unit) and the "fat" `*const T`
 /// pointer is the same as the "thin" `*const PtrMeta::Thin` pointer.
+///
+/// It is always safe to create or cast to a `Gc` with this `PtrMeta` implementation, because it
+/// does no pointer conversion, and assumes nothing about the per-type or per-value metadata.
 pub struct UnitPtrMeta;
 
-unsafe impl<T, M> PtrMeta<T, M> for UnitPtrMeta {
+impl<T, M> PtrMeta<T, M> for UnitPtrMeta {
     type PtrMetadata = ();
     type Thin = T;
 
@@ -72,7 +92,7 @@ unsafe impl<T, M> PtrMeta<T, M> for UnitPtrMeta {
     }
 }
 
-unsafe impl<T, M> AllocMeta<T, M> for UnitPtrMeta {
+impl<T, M> AllocMeta<T, M> for UnitPtrMeta {
     #[inline]
     fn layout(_type_meta: &M, _ptr_meta: ()) -> Option<Layout> {
         Some(Layout::new::<T>())

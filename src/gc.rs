@@ -300,6 +300,10 @@ where
     ///
     /// To be "compatible" means that for both the per-type and per-value metadata types, you can
     /// dereference a (valid, dereferenceble) pointer to the old type `*const Old` as `*const New`.
+    ///
+    /// The implementation of `PtrMeta` within the `K` kind must also be valid and always return
+    /// dereferencable fat pointers for both the existing per-type metadata (cast to its new type)
+    /// and the existing per-value metadata (cast to its new type).
     #[inline]
     pub unsafe fn from_ptr_with_kind(ptr: *const T) -> Gc<'gc, T, K> {
         unsafe {
@@ -321,10 +325,9 @@ where
 
     /// Cast a `Gc` to the unit type.
     ///
-    /// This converts the `Gc` to point to a `()`, and converts changes the kind to
-    /// [`DefaultGcKind`].
+    /// This converts the `Gc` to point to a `()`, and changes the kind to [`DefaultGcKind`].
     ///
-    /// This is always safe to do as it is always save to dereference a `*const ()` which comes from
+    /// This is always safe to do as it is always safe to dereference a `*const ()` which comes from
     /// some other dereferencable pointer type and `DefaultGcKind` has `()` for both per-type and
     /// per-value metadata.
     #[inline]
@@ -568,7 +571,7 @@ where
     /// per-allocation cost, but there is one vtable per `T` <-> `TM` pair.
     #[inline]
     pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>() -> Self {
-        Self::new_with_type_and_ptr_meta::<TM>(())
+        unsafe { Self::new_with_type_and_ptr_meta::<TM>(()) }
     }
 }
 
@@ -579,8 +582,13 @@ where
 {
     /// Create a new `GcBuilder` suitable for building a `Gc` pointing to an *unsized* `T`with the
     /// given `ptr_meta` per-value metadata and per-type metadata from `TM`.
+    ///
+    /// # Safety
+    ///
+    /// Using this method requires asserting that `P: AllocMeta` is correctly implemented for the
+    /// `TM::METADATA` being used to create the `Gc`.
     #[inline]
-    pub fn new_with_type_and_ptr_meta<TM: TypeMeta<TypeMetadata = M>>(
+    pub unsafe fn new_with_type_and_ptr_meta<TM: TypeMeta<TypeMetadata = M>>(
         ptr_meta: P::PtrMetadata,
     ) -> Self {
         let ptr = GcPtr::<T>::alloc::<TM, P>(ptr_meta);
@@ -656,7 +664,7 @@ impl<'gc, T: ?Sized, M, P> GcBuilder<'gc, T, M, P> {
         mem::forget(self);
 
         ptr.header().set_live(true);
-        mc.link(ptr);
+        mc.link(ptr.erase());
         Gc {
             ptr,
             _marker: PhantomData,

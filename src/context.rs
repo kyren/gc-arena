@@ -78,7 +78,7 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn link<T: ?Sized>(&self, gc_ptr: GcPtr<T>) {
+    pub(crate) fn link(&self, gc_ptr: GcPtr) {
         self.context.link(gc_ptr)
     }
 
@@ -361,7 +361,7 @@ impl Context {
     /// Link a newly allocated `GcPtr<T>` into the `all` list and mark that it was allocated in
     /// metrics.
     #[inline]
-    fn link<'gc, T: ?Sized>(&self, gc_ptr: GcPtr<T>) {
+    fn link(&self, gc_ptr: GcPtr) {
         gc_ptr.header().set_next(self.all.get());
 
         self.all.set(Some(gc_ptr.erase()));

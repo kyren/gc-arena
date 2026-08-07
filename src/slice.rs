@@ -55,7 +55,7 @@ impl<H, E> SliceWithHeader<H, E> {
 
 pub struct SliceWithHeaderPtrMeta;
 
-unsafe impl<H, E, M> PtrMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
+impl<H, E, M> PtrMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
     type PtrMetadata = usize;
     type Thin = H;
 
@@ -70,7 +70,7 @@ unsafe impl<H, E, M> PtrMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMet
     }
 }
 
-unsafe impl<H, E, M> AllocMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
+impl<H, E, M> AllocMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
     #[inline]
     fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
         SliceWithHeader::<H, E>::layout(len)
@@ -99,8 +99,10 @@ impl<'gc, H: Collect<'gc>, E: Collect<'gc>, M> GcSliceWithHeaderBuilder<'gc, H, 
     /// Create a new `GcSliceWithHeaderBuilder` with an uninitialized slice of length `len` and
     /// per-type metadata from `TM`.
     pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>(len: usize) -> Self {
+        // SAFETY: `SliceWithHeaderPtrMeta` is implemented correctly for `SliceWithHeader` and not
+        // depend on any particular per-type metadata.
         Self {
-            inner: GcBuilder::new_with_type_and_ptr_meta::<TM>(len),
+            inner: unsafe { GcBuilder::new_with_type_and_ptr_meta::<TM>(len) },
         }
     }
 }
@@ -159,23 +161,6 @@ impl<'gc, H, E, M> Drop for GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
             core::ptr::drop_in_place(ptr.cast_mut());
 
             ManuallyDrop::drop(&mut self.inner);
-        }
-    }
-}
-
-impl<'gc, E: Collect<'gc>> GcSliceWithHeaderSliceBuilder<'gc, (), E, ()> {
-    pub fn new(len: usize) -> Self {
-        Self::new_with_type_meta::<UnitTypeMeta>(len)
-    }
-}
-
-impl<'gc, E: Collect<'gc>, M> GcSliceWithHeaderSliceBuilder<'gc, (), E, M> {
-    /// Create a new `GcSliceWithHeaderBuilder` with an uninitialized slice of length `len` and
-    /// per-type metadata from `TM`.
-    pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>(len: usize) -> Self {
-        Self {
-            inner: ManuallyDrop::new(GcBuilder::new_with_type_and_ptr_meta::<TM>(len)),
-            init_length: 0,
         }
     }
 }
@@ -243,6 +228,11 @@ impl<'gc, H, E: Copy, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
         mc: &Mutation<'gc>,
         elements: &[E],
     ) -> GcSliceWithHeader<'gc, H, E, M> {
+        let len = self.slice_ptr().len();
+        assert!(
+            elements.len() >= len,
+            "`elements` is less than length {len}"
+        );
         unsafe {
             ptr::copy_nonoverlapping(
                 elements.as_ptr(),
@@ -273,7 +263,7 @@ impl<'gc, E: 'static + Copy> GcSlice<'gc, E> {
 
 pub struct SlicePtrMeta;
 
-unsafe impl<E, M> PtrMeta<[E], M> for SlicePtrMeta {
+impl<E, M> PtrMeta<[E], M> for SlicePtrMeta {
     type PtrMetadata = usize;
     type Thin = ();
 
@@ -288,7 +278,7 @@ unsafe impl<E, M> PtrMeta<[E], M> for SlicePtrMeta {
     }
 }
 
-unsafe impl<E, M> AllocMeta<[E], M> for SlicePtrMeta {
+impl<E, M> AllocMeta<[E], M> for SlicePtrMeta {
     #[inline]
     fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
         SliceWithHeader::<(), E>::layout(len)
@@ -301,14 +291,14 @@ pub struct GcSliceBuilder<'gc, E, M = ()>(GcSliceWithHeaderSliceBuilder<'gc, (),
 impl<'gc, E: Collect<'gc>> GcSliceBuilder<'gc, E> {
     /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len`.
     pub fn new(len: usize) -> Self {
-        Self(GcSliceWithHeaderSliceBuilder::<(), E>::new(len))
+        Self(GcSliceWithHeaderBuilder::<(), E>::new(len).write_header(()))
     }
 }
 
 impl<'gc, E: Collect<'gc>, M> GcSliceBuilder<'gc, E, M> {
     /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len`.
     pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>(len: usize) -> Self {
-        Self(GcSliceWithHeaderSliceBuilder::<(), E, M>::new_with_type_meta::<TM>(len))
+        Self(GcSliceWithHeaderBuilder::<(), E, M>::new_with_type_meta::<TM>(len).write_header(()))
     }
 }
 
