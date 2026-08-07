@@ -8,9 +8,10 @@ use core::{
 use crate::{
     collect::{Collect, Trace},
     gc::Gc,
+    gc_ptr::GcPtr,
     gc_weak::GcWeak,
     metrics::Metrics,
-    types::{GcColor, GcPtr, Invariant},
+    types::{GcColor, Invariant},
 };
 
 /// Handle value given by arena callbacks during construction and mutation. Allows allocating new
@@ -77,8 +78,8 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + 'gc>(&self, t: T) -> GcPtr<T> {
-        self.context.allocate(t)
+    pub(crate) fn link(&self, gc_ptr: GcPtr) {
+        self.context.link(gc_ptr)
     }
 
     #[inline]
@@ -100,6 +101,7 @@ pub struct Finalization<'gc> {
 impl<'gc> Deref for Finalization<'gc> {
     type Target = Mutation<'gc>;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         // SAFETY: Finalization and Mutation are #[repr(transparent)]
         unsafe { mem::transmute::<&Self, &Mutation>(&self) }
@@ -114,10 +116,12 @@ impl<'gc> Finalization<'gc> {
 }
 
 impl<'gc> Trace<'gc> for Context {
+    #[inline]
     fn trace_gc(&mut self, gc: Gc<'gc, ()>) {
         Context::trace(self, gc.ptr)
     }
 
+    #[inline]
     fn trace_gc_weak(&mut self, gc: GcWeak<'gc, ()>) {
         Context::trace_weak(self, gc.inner.ptr)
     }
@@ -269,7 +273,7 @@ impl Context {
     // Do some collection work until either we have achieved our `target` (paying off debt or
     // finishing a full collection) or we have reached the `stop` condition.
     //
-    // In order for this to be safe, at the time of call no `Gc` pointers can be live that are not
+    // In order for this to be safe, at the time of call no Gc pointers can be live that are not
     // reachable from the given root object.
     //
     // If we are currently in `Phase::Sleep` and have positive debt, this will immediately
@@ -354,14 +358,11 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
+    /// Link a newly allocated `GcPtr<T>` into the `all` list and mark that it was allocated in
+    /// metrics.
     #[inline]
-    fn allocate<'gc, T: Collect<'gc>>(&self, t: T) -> GcPtr<T> {
-        let gc_ptr = GcPtr::alloc(t);
-
-        let header = gc_ptr.header();
-        header.set_next(self.all.get());
-        header.set_live(true);
-        header.set_needs_trace(T::NEEDS_TRACE);
+    fn link(&self, gc_ptr: GcPtr) {
+        gc_ptr.header().set_next(self.all.get());
 
         self.all.set(Some(gc_ptr.erase()));
         if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
@@ -369,8 +370,6 @@ impl Context {
         }
 
         self.metrics.mark_gc_allocated(1);
-
-        gc_ptr
     }
 
     #[inline]
@@ -490,6 +489,7 @@ impl Context {
     }
 
     /// Determines whether or not a Gc pointer is safe to be upgraded.
+    ///
     /// This is used by weak pointers to determine if it can safely upgrade to a strong pointer.
     #[inline]
     fn upgrade(&self, gc_ptr: GcPtr) -> bool {
@@ -641,7 +641,7 @@ impl Context {
                 // object.
                 unsafe {
                     if sweep_header.is_live() {
-                        // If the alive flag is set, that means we haven't dropped the inner value
+                        // If the is_live flag is set, that means we haven't dropped the inner value
                         // of this object,
                         sweep.drop_in_place();
                         self.metrics.mark_gc_dropped(1);
@@ -651,9 +651,8 @@ impl Context {
                 }
             }
             // Keep the `GcPtr` as part of the linked list if we traced a weak pointer to it. The
-            // weak pointer still needs access to the `GcPtr` to be able to check if the object
-            // is still alive. We can only deallocate the `GcPtr`, once there are no weak pointers
-            // left.
+            // weak pointer still needs access to the `GcPtr` to be able to check if the object is
+            // still live. We can only deallocate the `GcPtr`, once there are no weak pointers left.
             GcColor::WhiteWeak => {
                 self.sweep_prev.set(Some(sweep));
                 sweep_header.set_color(GcColor::White);
@@ -686,6 +685,7 @@ impl Context {
     }
 
     // Take a black pointer and turn it gray and put it in the `gray_again` queue.
+    #[inline]
     fn make_gray_again(&self, gc_ptr: GcPtr) {
         let header = gc_ptr.header();
         debug_assert_eq!(header.color(), GcColor::Black);

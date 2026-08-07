@@ -13,11 +13,14 @@ pub mod collect;
 mod collect_impl;
 mod context;
 pub mod dynamic_roots;
-mod gc;
+pub mod gc;
+mod gc_ptr;
 mod gc_weak;
 pub mod lock;
+pub mod meta;
 pub mod metrics;
 mod no_drop;
+pub mod slice;
 mod static_wrapper;
 mod types;
 mod unsize;
@@ -48,8 +51,12 @@ pub use self::{
     collect::Collect,
     context::{Finalization, Mutation},
     dynamic_roots::{DynamicRoot, DynamicRootSet},
-    gc::Gc,
+    gc::{Gc, GcBuilder, GcFat, GcThin},
     gc_weak::GcWeak,
     lock::{GcLock, GcRefLock, Lock, RefLock},
+    slice::{
+        GcSlice, GcSliceBuilder, GcSliceWithHeader, GcSliceWithHeaderBuilder, GcThinSlice,
+        GcThinSliceWithHeader, SliceWithHeader,
+    },
     static_wrapper::Static,
 };
