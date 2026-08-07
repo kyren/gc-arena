@@ -73,17 +73,17 @@ pub struct GcSliceWithHeaderBuilder<'gc, H, E, M = ()> {
 
 impl<'gc, H: Collect<'gc>, E: Collect<'gc>> GcSliceWithHeaderBuilder<'gc, H, E> {
     /// Create a new `GcSliceWithHeaderBuilder` with an uninitialized slice of length `len`.
-    pub fn new(mc: &Mutation<'gc>, len: usize) -> Self {
-        Self::new_with_type_meta::<UnitTypeMeta>(mc, len)
+    pub fn new(len: usize) -> Self {
+        Self::new_with_type_meta::<UnitTypeMeta>(len)
     }
 }
 
 impl<'gc, H: Collect<'gc>, E: Collect<'gc>, M> GcSliceWithHeaderBuilder<'gc, H, E, M> {
     /// Create a new `GcSliceWithHeaderBuilder` with an uninitialized slice of length `len` and
     /// per-type metadata from `TM`.
-    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>, len: usize) -> Self {
+    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(len: usize) -> Self {
         Self {
-            inner: GcBuilder::new_with_ptr_and_type_meta::<TM>(mc, len),
+            inner: GcBuilder::new_with_ptr_and_type_meta::<TM>(len),
         }
     }
 }
@@ -150,17 +150,17 @@ impl<'gc, H, E, M> Drop for GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
 }
 
 impl<'gc, E: Collect<'gc>> GcSliceWithHeaderSliceBuilder<'gc, (), E, ()> {
-    pub fn new(mc: &Mutation<'gc>, len: usize) -> Self {
-        Self::new_with_type_meta::<UnitTypeMeta>(mc, len)
+    pub fn new(len: usize) -> Self {
+        Self::new_with_type_meta::<UnitTypeMeta>(len)
     }
 }
 
 impl<'gc, E: Collect<'gc>, M> GcSliceWithHeaderSliceBuilder<'gc, (), E, M> {
     /// Create a new `GcSliceWithHeaderBuilder` with an uninitialized slice of length `len` and
     /// per-type metadata from `TM`.
-    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>, len: usize) -> Self {
+    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(len: usize) -> Self {
         Self {
-            inner: ManuallyDrop::new(GcBuilder::new_with_ptr_and_type_meta::<TM>(mc, len)),
+            inner: ManuallyDrop::new(GcBuilder::new_with_ptr_and_type_meta::<TM>(len)),
             init_length: 0,
         }
     }
@@ -191,11 +191,11 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
 
     /// Finish constructing a `GcSliceWithHeader<H, E>` by unsafely assuming that the held slice is
     /// properly initialized.
-    pub unsafe fn assume_init(mut self) -> GcSliceWithHeader<'gc, H, E, M> {
+    pub unsafe fn assume_init(mut self, mc: &Mutation<'gc>) -> GcSliceWithHeader<'gc, H, E, M> {
         unsafe {
             let inner = ManuallyDrop::take(&mut self.inner);
             mem::forget(self);
-            inner.assume_init()
+            inner.assume_init(mc)
         }
     }
 
@@ -205,6 +205,7 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     /// The given callback will always be called in-order.
     pub fn write_slice_with(
         mut self,
+        mc: &Mutation<'gc>,
         mut create_element: impl FnMut(usize) -> E,
     ) -> GcSliceWithHeader<'gc, H, E, M> {
         unsafe {
@@ -216,21 +217,25 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
                 element.write(create_element(i));
                 self.init_length = i + 1;
             }
-            self.assume_init()
+            self.assume_init(mc)
         }
     }
 }
 
 impl<'gc, H, E: Copy, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     /// Finish constructing a `GcSliceWithHeader<H, E>` by copying elements from the given slice.
-    pub fn copy_slice(mut self, elements: &[E]) -> GcSliceWithHeader<'gc, H, E, M> {
+    pub fn copy_slice(
+        mut self,
+        mc: &Mutation<'gc>,
+        elements: &[E],
+    ) -> GcSliceWithHeader<'gc, H, E, M> {
         unsafe {
             ptr::copy_nonoverlapping(
                 elements.as_ptr(),
                 self.slice_ptr() as *mut E,
                 elements.len(),
             );
-            self.assume_init()
+            self.assume_init(mc)
         }
     }
 }
@@ -240,15 +245,15 @@ pub type GcThinSlice<'gc, E, M = ()> = GcThin<'gc, [E], SlicePtrMeta, M>;
 
 impl<'gc, E: Collect<'gc> + Copy> GcSlice<'gc, E> {
     pub fn new_slice(mc: &Mutation<'gc>, elements: &[E]) -> GcSlice<'gc, E> {
-        GcSliceBuilder::new(mc, elements.len()).copy_slice(elements)
+        GcSliceBuilder::new(elements.len()).copy_slice(mc, elements)
     }
 }
 
 impl<'gc, E: 'static + Copy> GcSlice<'gc, E> {
     pub fn new_slice_static(mc: &Mutation<'gc>, elements: &[E]) -> GcSlice<'gc, E> {
-        GcSliceBuilder::new(mc, elements.len())
+        GcSliceBuilder::new(elements.len())
             .unwrap_static()
-            .copy_slice(elements)
+            .copy_slice(mc, elements)
     }
 }
 
@@ -286,15 +291,15 @@ pub struct GcSliceBuilder<'gc, E, M = ()>(GcSliceWithHeaderSliceBuilder<'gc, (),
 
 impl<'gc, E: Collect<'gc>> GcSliceBuilder<'gc, E> {
     /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len`.
-    pub fn new(mc: &Mutation<'gc>, len: usize) -> Self {
-        Self(GcSliceWithHeaderSliceBuilder::<(), E>::new(mc, len))
+    pub fn new(len: usize) -> Self {
+        Self(GcSliceWithHeaderSliceBuilder::<(), E>::new(len))
     }
 }
 
 impl<'gc, E: Collect<'gc>, M> GcSliceBuilder<'gc, E, M> {
     /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len`.
-    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>, len: usize) -> Self {
-        Self(GcSliceWithHeaderSliceBuilder::<(), E, M>::new_with_type_meta::<TM>(mc, len))
+    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(len: usize) -> Self {
+        Self(GcSliceWithHeaderSliceBuilder::<(), E, M>::new_with_type_meta::<TM>(len))
     }
 }
 
@@ -313,23 +318,27 @@ impl<'gc, E, M> GcSliceBuilder<'gc, E, M> {
 
     /// Finish constructing a `GcSlice<E>` by unsafely assuming that the held slice is properly
     /// initialized.
-    pub unsafe fn assume_init(self) -> GcSlice<'gc, E, M> {
-        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(self.0.assume_init()) as *const [E]) }
+    pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcSlice<'gc, E, M> {
+        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(self.0.assume_init(mc)) as *const [E]) }
     }
 
     /// Finish constructing a `GcSlice<E>` by initializing elements from the given callback.
     ///
     /// The given callback will always be called in-order.
-    pub fn write_slice_with(self, create_element: impl FnMut(usize) -> E) -> GcSlice<'gc, E, M> {
-        let val = self.0.write_slice_with(create_element);
+    pub fn write_slice_with(
+        self,
+        mc: &Mutation<'gc>,
+        create_element: impl FnMut(usize) -> E,
+    ) -> GcSlice<'gc, E, M> {
+        let val = self.0.write_slice_with(mc, create_element);
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(val) as *const [E]) }
     }
 }
 
 impl<'gc, E: Copy, M> GcSliceBuilder<'gc, E, M> {
     /// Finish constructing a `GcSlice<E>` by copying elements from the given slice.
-    pub fn copy_slice(self, elements: &[E]) -> GcSlice<'gc, E, M> {
-        let val = self.0.copy_slice(elements);
+    pub fn copy_slice(self, mc: &Mutation<'gc>, elements: &[E]) -> GcSlice<'gc, E, M> {
+        let val = self.0.copy_slice(mc, elements);
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(val) as *const [E]) }
     }
 }

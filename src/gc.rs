@@ -3,6 +3,7 @@ use core::{
     fmt,
     hash::{Hash, Hasher},
     marker::PhantomData,
+    mem,
     ops::Deref,
 };
 
@@ -217,28 +218,11 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> GcFat<'gc, T, P, M>
-where
-    T: Collect<'gc>,
-    P: AllocMeta<T>,
-{
-    #[inline]
-    unsafe fn allocate<TM: TypeMeta<Metadata = M>>(
-        mc: &Mutation<'gc>,
-        ptr_meta: P::Metadata,
-    ) -> Self {
-        Gc {
-            ptr: mc.allocate::<T, P, TM>(ptr_meta),
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<'gc, T: Collect<'gc>> Gc<'gc, T> {
     /// Allocate a new `Gc` pointer.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        GcBuilder::new(mc).write(t)
+        GcBuilder::new().write(mc, t)
     }
 }
 
@@ -262,7 +246,7 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     /// ```
     #[inline]
     pub fn new_static(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        GcBuilder::new(mc).unwrap_static().write(t)
+        GcBuilder::new().unwrap_static().write(mc, t)
     }
 }
 
@@ -320,7 +304,7 @@ where
     pub unsafe fn from_ptr_with_kind(ptr: *const T) -> Gc<'gc, T, K> {
         unsafe {
             Gc {
-                ptr: K::to_store(GcPtr::from_ptr(ptr)),
+                ptr: K::to_store(GcPtr::from_ptr(ptr.cast_mut())),
                 _marker: PhantomData,
             }
         }
@@ -346,7 +330,7 @@ where
     #[inline]
     pub fn erase(this: Self) -> Gc<'gc, ()> {
         Gc {
-            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const ()) },
+            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *mut ()) },
             _marker: PhantomData,
         }
     }
@@ -361,7 +345,7 @@ impl<'gc, T: ?Sized, P, M> GcFat<'gc, T, P, M> {
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Self) -> GcFat<'gc, U, P, M> {
         Gc {
-            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const U) },
+            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *mut U) },
             _marker: PhantomData,
         }
     }
@@ -376,12 +360,7 @@ impl<'gc, T: ?Sized> Gc<'gc, T> {
     /// yet, and must be dereferencable as its current type.
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
-        unsafe {
-            Gc {
-                ptr: GcPtr::from_ptr(ptr),
-                _marker: PhantomData,
-            }
-        }
+        unsafe { Gc::from_ptr_with_kind(ptr) }
     }
 }
 
@@ -556,14 +535,23 @@ where
 
 /// A type used for more advanced ways of allocating a [`Gc`].
 pub struct GcBuilder<'gc, T: ?Sized, P = UnitPtrMeta, M = ()> {
-    gc: GcFat<'gc, T, P, M>,
+    ptr: GcPtr<T>,
+    _marker: PhantomData<(Invariant<'gc>, P, M)>,
+}
+
+impl<'gc, T: ?Sized, P, M> Drop for GcBuilder<'gc, T, P, M> {
+    fn drop(&mut self) {
+        unsafe {
+            self.ptr.dealloc();
+        }
+    }
 }
 
 impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
     /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a *sized* `T`.
     #[inline]
-    pub fn new(mc: &Mutation<'gc>) -> Self {
-        GcBuilder::new_with_type_meta::<UnitTypeMeta>(mc)
+    pub fn new() -> Self {
+        GcBuilder::new_with_type_meta::<UnitTypeMeta>()
     }
 }
 
@@ -577,8 +565,8 @@ where
     /// The `TM::METADATA` pointer will be stored in the static *per-type* vtable so there is no
     /// per-allocation cost, but there is one vtable per `T` <-> `TM` pair.
     #[inline]
-    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>) -> Self {
-        Self::new_with_ptr_and_type_meta::<TM>(mc, ())
+    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>() -> Self {
+        Self::new_with_ptr_and_type_meta::<TM>(())
     }
 }
 
@@ -590,8 +578,8 @@ where
     /// Create a new `GcBuilder` suitable building a `Gc` pointing to an *unsized* `T` with the
     /// given `ptr_meta` per-value metadata.
     #[inline]
-    pub fn new_with_ptr_meta(mc: &Mutation<'gc>, ptr_meta: P::Metadata) -> Self {
-        Self::new_with_ptr_and_type_meta::<UnitTypeMeta>(mc, ptr_meta)
+    pub fn new_with_ptr_meta(ptr_meta: P::Metadata) -> Self {
+        Self::new_with_ptr_and_type_meta::<UnitTypeMeta>(ptr_meta)
     }
 }
 
@@ -603,12 +591,13 @@ where
     /// Create a new `GcBuilder` suitable for building a `Gc` pointing to an *unsized* `T`with the
     /// given `ptr_meta` per-value metadata and per-type metadata from `TM`.
     #[inline]
-    pub fn new_with_ptr_and_type_meta<TM: TypeMeta<Metadata = M>>(
-        mc: &Mutation<'gc>,
-        ptr_meta: P::Metadata,
-    ) -> Self {
+    pub fn new_with_ptr_and_type_meta<TM: TypeMeta<Metadata = M>>(ptr_meta: P::Metadata) -> Self {
+        let ptr = GcPtr::<T>::alloc::<P, TM>(ptr_meta);
+        ptr.header().set_needs_trace(T::NEEDS_TRACE);
+
         GcBuilder {
-            gc: unsafe { Gc::allocate::<TM>(mc, ptr_meta) },
+            ptr,
+            _marker: PhantomData,
         }
     }
 }
@@ -644,12 +633,14 @@ impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
     /// The pointer will always point to valid, aligned memory for the type `T` and may be written
     /// to to initialize the value.
     pub fn as_ptr(&mut self) -> *mut T {
-        Gc::as_ptr(self.gc).cast_mut()
+        self.ptr.as_ptr()
     }
 
     /// Convert this `GcBuilder` into a bare pointer.
     pub fn into_raw(self) -> *mut T {
-        Gc::as_ptr(self.gc).cast_mut()
+        let ptr = self.ptr;
+        mem::forget(self);
+        ptr.as_ptr()
     }
 
     /// Retrieve a `GcBuilder` from a pointer obtained from [`GcBuilder::into_raw`].
@@ -661,26 +652,34 @@ impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
     pub unsafe fn from_raw(ptr: *mut T) -> GcBuilder<'gc, T, P, M> {
         unsafe {
             Self {
-                gc: Gc::from_ptr_with_kind(ptr),
+                ptr: GcPtr::from_ptr(ptr),
+                _marker: PhantomData,
             }
         }
     }
 
     /// Finish constructing a `Gc<T>` by unsafely assuming that the held memory is properly
     /// initialized.
-    pub unsafe fn assume_init(self) -> GcFat<'gc, T, P, M> {
-        self.gc.ptr.header().set_live(true);
-        self.gc
+    pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcFat<'gc, T, P, M> {
+        let ptr = self.ptr;
+        mem::forget(self);
+
+        ptr.header().set_live(true);
+        mc.link(ptr);
+        Gc {
+            ptr,
+            _marker: PhantomData,
+        }
     }
 }
 
 impl<'gc, T, P, M> GcBuilder<'gc, T, P, M> {
     /// Finish constructing a `Gc<T>` by initializing the (sized) value with `val`.
     #[inline]
-    pub fn write(mut self, val: T) -> GcFat<'gc, T, P, M> {
+    pub fn write(mut self, mc: &Mutation<'gc>, val: T) -> GcFat<'gc, T, P, M> {
         unsafe {
             self.as_ptr().write(val);
-            self.assume_init()
+            self.assume_init(mc)
         }
     }
 }
