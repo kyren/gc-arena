@@ -10,8 +10,8 @@ use crate::{
     gc::Gc,
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    metrics::Metrics,
     meta::{AllocMeta, TypeMeta},
+    metrics::Metrics,
     types::{GcColor, Invariant},
 };
 

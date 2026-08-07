@@ -10,7 +10,7 @@ use crate::{
     barrier::Unlock,
     collect::{Collect, Trace},
     context::Mutation,
-    gc::Gc,
+    gc::{Gc, IsGcKind},
 };
 
 // Helper macro to factor out the common parts of locks types.
@@ -148,7 +148,10 @@ impl<T: Copy + fmt::Debug> fmt::Debug for Lock<T> {
     }
 }
 
-impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
+impl<'gc, T: Copy, K> Gc<'gc, Lock<T>, K>
+where
+    K: IsGcKind<'gc, Lock<T>>,
+{
     #[inline]
     pub fn get(self) -> T {
         self.cell.get()
@@ -160,7 +163,7 @@ impl<'gc, T: Copy + 'gc> Gc<'gc, Lock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc> + Copy + 'gc> Collect<'gc> for Lock<T> {
+unsafe impl<'gc, T: Collect<'gc> + Copy> Collect<'gc> for Lock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]
@@ -260,7 +263,10 @@ impl<T: fmt::Debug + ?Sized> fmt::Debug for RefLock<T> {
     }
 }
 
-impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
+impl<'gc, T: ?Sized, K> Gc<'gc, RefLock<T>, K>
+where
+    K: IsGcKind<'gc, RefLock<T>>,
+{
     #[track_caller]
     #[inline]
     pub fn borrow(self) -> Ref<'gc, T> {
@@ -284,7 +290,7 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, RefLock<T>> {
     }
 }
 
-unsafe impl<'gc, T: Collect<'gc> + 'gc + ?Sized> Collect<'gc> for RefLock<T> {
+unsafe impl<'gc, T: Collect<'gc> + ?Sized> Collect<'gc> for RefLock<T> {
     const NEEDS_TRACE: bool = T::NEEDS_TRACE;
 
     #[inline]

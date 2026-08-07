@@ -76,6 +76,11 @@ impl<T: ?Sized> BorrowMut<T> for Static<T> {
     }
 }
 
+/// Takes a `P` which implements [`PtrMeta`] for a type `T` and makes an implementation of `PtrMeta`
+/// which works on `Static<T>`.
+///
+/// Does not modify the inner implementation and converts all `*const Static<T>` to `*const T`,
+/// which is safe to do since `Static` is `#[repr(transparent)]`.
 pub struct StaticPtrMeta<P>(PhantomData<P>);
 
 unsafe impl<T: ?Sized, P: PtrMeta<T>> PtrMeta<Static<T>> for StaticPtrMeta<P> {

@@ -12,10 +12,48 @@ use crate::{
     context::{Finalization, Mutation},
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    meta::{AllocMeta, DefaultPtrKind, Fat, PtrMeta, SizedPtrMeta, Thin, TypeMeta, UnitTypeMeta},
+    meta::{AllocMeta, PtrMeta, TypeMeta, UnitPtrMeta, UnitTypeMeta},
     static_wrapper::{Static, StaticPtrMeta},
     types::{GcColor, Invariant},
 };
+
+/// A marker type to state that a `Gc` stores a "fat" pointer to the value.
+///
+/// If there is a `PtrMeta<T>` implementation for the `T: ?Sized` of a `Gc`, then this pointer
+/// contains compatible ptr metadata in its GC header section, and the `Gc` can automatically be
+/// converted to a "thin" representation which will read this metadata from the header.
+///
+/// This type is used as the "default" pointer representation, it is possible to create a `Gc`
+/// with an unsized `T` where a valid `PtrMeta<T>` implementation is *not* present (such as via
+/// the `unsize!` macro). This means that a `Gc` cannot be automatically converted to a "thin"
+/// representation, because the pointer was not allocated with the correct ptr metadata to
+/// reconstruct a "fat" pointer from a "thin" one.
+///
+/// Similarly, if the `T` is `Sized`, then the "thin" and "fat" pointer types are the same, so
+/// `Gc<T, GcKind<Fat, UnitPtrMeta, M>>` will really store a "thin sized" pointer.
+pub struct Fat;
+
+/// A marker type to state that a `Gc` stores a "thin" pointer to the value with pointer metadata
+/// stored in the header section.
+///
+/// `Gc`s with this representation must have a valid `PtrMeta<T>` implementation and will store a
+/// "thin" pointer that is automatically converted to a "fat" pointer on access.
+pub struct Thin;
+
+/// A type which describes the stored pointer type of a `Gc` along with what header metadata is
+/// present
+///
+/// The `PtrSize` representation must be either [`Fat`] or [`Thin`] and describes whether the `Gc`
+/// stores a "thin" pointer which can be reconstructed into a "fat" one.
+///
+/// The `PtrMeta` parameter describes the *per-value* metadata stored in the GC header.
+///
+/// The `TypeMetadata` parameter describes the *per-type* metadata stored in the pointer's vtable.
+pub struct GcKind<PtrSize, PtrMeta, TypeMetadata>(PhantomData<(PtrSize, PtrMeta, TypeMetadata)>);
+
+/// A `GcKind` which stores the `T` pointer directly and contains `()` for per-type and per-value
+/// metadata.
+pub type DefaultGcKind<M = ()> = GcKind<Fat, UnitPtrMeta, M>;
 
 /// A garbage collected pointer to a type T.
 ///
@@ -25,24 +63,33 @@ use crate::{
 /// "generativity" such `Gc` pointers may not escape the arena they were born in or be stored inside
 /// TLS. This, combined with correct `Collect` implementations, means that `Gc` pointers will never
 /// be dangling and are always safe to access.
-pub struct Gc<'gc, T: ?Sized + 'gc, K = DefaultPtrKind, M = ()>
+///
+/// # Kind
+///
+/// `Gc` carries a `K` parameter which is expected to be a valid [`GcKind`] (implements
+/// [`IsGcKind`]). This type acts as an indicator of the storage mode of the `Gc` as well as the
+/// per-type and per-value metadata stored with the value.
+pub struct Gc<'gc, T: ?Sized + 'gc, K = DefaultGcKind>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     pub(crate) ptr: GcPtr<K::Store>,
-    _marker: PhantomData<(Invariant<'gc>, K, M)>,
+    _marker: PhantomData<(Invariant<'gc>, K)>,
 }
 
-#[allow(private_interfaces)]
-pub unsafe trait GcStore<'gc, T: ?Sized> {
+pub type GcFat<'gc, T, P, M = ()> = Gc<'gc, T, GcKind<Fat, P, M>>;
+
+pub type GcThin<'gc, T, P, M = ()> = Gc<'gc, T, GcKind<Thin, P, M>>;
+
+/// Trait to fetch the "fat" version of the stored pointer.
+pub(crate) unsafe trait GcStore<'gc, T: ?Sized> {
     type Store: ?Sized + 'gc;
 
     fn from_store(store_ptr: GcPtr<Self::Store>) -> GcPtr<T>;
     fn to_store(ptr: GcPtr<T>) -> GcPtr<Self::Store>;
 }
 
-#[allow(private_interfaces)]
-unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Fat<P> {
+unsafe impl<'gc, T: ?Sized + 'gc, P, M> GcStore<'gc, T> for GcKind<Fat, P, M> {
     type Store = T;
 
     #[inline(always)]
@@ -56,8 +103,7 @@ unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Fat<P> {
     }
 }
 
-#[allow(private_interfaces)]
-unsafe impl<'gc, T: ?Sized + 'gc, P> GcStore<'gc, T> for Thin<P>
+unsafe impl<'gc, T: ?Sized + 'gc, P, M> GcStore<'gc, T> for GcKind<Thin, P, M>
 where
     P: PtrMeta<T>,
     P::Thin: 'gc,
@@ -75,18 +121,31 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Pointer for Gc<'gc, T, K, M>
+/// A trait declaring that a [`GcKind`] is valid.
+///
+/// A `GcKind<Fat, _, _>` is always valid because the stored pointer is `*const T` (which will be
+/// "thin sized" if `T: Sized`).
+///
+/// A `GcKind<Thin, P, _>` is only valid when `P: PtrMeta<'gc, T>` because the stored pointer is
+/// `*const P::Thin` and the correct pointer metadata must be present to reconstruct the "fat"
+/// version of the pointer.
+#[allow(private_bounds)]
+pub trait IsGcKind<'gc, T: ?Sized>: GcStore<'gc, T> {}
+
+impl<'gc, T: ?Sized, K: GcStore<'gc, T>> IsGcKind<'gc, T> for K {}
+
+impl<'gc, T: ?Sized, K> fmt::Pointer for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         fmt::Pointer::fmt(&Gc::as_ptr(*self), fmt)
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Debug for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Debug for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: fmt::Debug,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -94,9 +153,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> fmt::Display for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> fmt::Display for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: fmt::Display,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -104,21 +163,21 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Copy for Gc<'gc, T, K, M> where K: GcStore<'gc, T> {}
+impl<'gc, T: ?Sized, K> Copy for Gc<'gc, T, K> where K: IsGcKind<'gc, T> {}
 
-impl<'gc, T: ?Sized, K, M> Clone for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Clone for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     #[inline]
-    fn clone(&self) -> Gc<'gc, T, K, M> {
+    fn clone(&self) -> Gc<'gc, T, K> {
         *self
     }
 }
 
-unsafe impl<'gc, T: ?Sized, K, M> Collect<'gc> for Gc<'gc, T, K, M>
+unsafe impl<'gc, T: ?Sized, K> Collect<'gc> for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     #[inline]
     fn trace<C: Trace<'gc>>(&self, cc: &mut C) {
@@ -126,9 +185,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> AsRef<T> for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> AsRef<T> for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     #[inline]
     fn as_ref(&self) -> &T {
@@ -136,9 +195,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Deref for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Deref for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     type Target = T;
 
@@ -148,9 +207,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Borrow<T> for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Borrow<T> for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     #[inline]
     fn borrow(&self) -> &T {
@@ -158,7 +217,7 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> Gc<'gc, T, Fat<P>, M>
+impl<'gc, T: ?Sized, P, M> GcFat<'gc, T, P, M>
 where
     T: Collect<'gc>,
     P: AllocMeta<T>,
@@ -176,9 +235,10 @@ where
 }
 
 impl<'gc, T: Collect<'gc>> Gc<'gc, T> {
+    /// Allocate a new `Gc` pointer.
     #[inline]
     pub fn new(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        GcBuilder::allocate(mc).write(t)
+        GcBuilder::new(mc).write(t)
     }
 }
 
@@ -202,46 +262,62 @@ impl<'gc, T: 'static> Gc<'gc, T> {
     /// ```
     #[inline]
     pub fn new_static(mc: &Mutation<'gc>, t: T) -> Gc<'gc, T> {
-        GcBuilder::allocate(mc).unwrap_static().write(t)
+        GcBuilder::new(mc).unwrap_static().write(t)
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
+    /// Downgrade a `Gc` pointer into a [`GcWeak`] one.
     #[inline]
-    pub fn downgrade(this: Gc<'gc, T, K, M>) -> GcWeak<'gc, T, K, M> {
+    pub fn downgrade(this: Self) -> GcWeak<'gc, T, K> {
         GcWeak { inner: this }
     }
 
     /// Returns true when a pointer is *dead* during finalization. This is equivalent to
-    /// `GcWeak::is_dead` for strong pointers.
+    /// [`GcWeak::is_dead`] for strong pointers.
     ///
     /// Any strong pointer reachable from the root will never be dead, BUT there can be strong
     /// pointers reachable only through other weak pointers that can be dead.
     #[inline]
-    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T, K, M>) -> bool {
+    pub fn is_dead(_: &Finalization<'gc>, gc: Gc<'gc, T, K>) -> bool {
         matches!(gc.ptr.header().color(), GcColor::White | GcColor::WhiteWeak)
     }
 
     /// Manually marks a dead `Gc` pointer as reachable and keeps it alive.
     ///
-    /// Equivalent to `GcWeak::resurrect` for strong pointers. Manually marks this pointer and
+    /// Equivalent to [`GcWeak::resurrect`] for strong pointers. Manually marks this pointer and
     /// all transitively held pointers as reachable, thus keeping them from being dropped this
     /// collection cycle.
     #[inline]
-    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T, K, M>) {
+    pub fn resurrect(fc: &Finalization<'gc>, gc: Gc<'gc, T, K>) {
         fc.resurrect(gc.ptr.erase());
     }
 
+    /// Returns the pointer held inside the `Gc`.
+    ///
+    /// This always returns the "fat" version of the pointer, the same one accessed on dereference.
     #[inline]
-    pub fn as_ptr(gc: Gc<'gc, T, K, M>) -> *const T {
+    pub fn as_ptr(gc: Gc<'gc, T, K>) -> *const T {
         K::from_store(gc.ptr).as_ptr()
     }
 
+    /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
+    ///
+    /// # Safety
+    ///
+    /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
+    /// have been collected yet.
+    ///
+    /// The `K` kind parameter may be changed here and MUST be "compatible" with the original GcKind
+    /// used to allocate the `ptr`.
+    ///
+    /// To be "compatible" means that for both the per-type and per-value metadata types, you can
+    /// dereference a (valid, dereferenceble) pointer to the old type `*const Old` as `*const New`.
     #[inline]
-    pub unsafe fn from_ptr_cast_meta(ptr: *const T) -> Gc<'gc, T, K, M> {
+    pub unsafe fn from_ptr_with_kind(ptr: *const T) -> Gc<'gc, T, K> {
         unsafe {
             Gc {
                 ptr: K::to_store(GcPtr::from_ptr(ptr)),
@@ -255,35 +331,36 @@ where
     /// Similarly to `Rc::ptr_eq` and `Arc::ptr_eq`, this function ignores the metadata of `dyn`
     /// pointers.
     #[inline]
-    pub fn ptr_eq(this: Gc<'gc, T, K, M>, other: Gc<'gc, T, K, M>) -> bool {
+    pub fn ptr_eq(this: Self, other: Self) -> bool {
         this.ptr.addr_eq(other.ptr)
     }
 
     /// Cast a `Gc` to the unit type.
     ///
-    /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
-    /// method safely because it is always safe to dereference a `*mut ()` that has come from
-    /// casting a `*mut T`.
+    /// This converts the `Gc` to point to a `()`, and converts changes the kind to
+    /// [`DefaultGcKind`].
+    ///
+    /// This is always safe to do as it is always save to dereference a `*const ()` which comes from
+    /// some other dereferencable pointer type and `DefaultGcKind` has `()` for both per-type and
+    /// per-value metadata.
     #[inline]
-    pub fn erase(this: Gc<'gc, T, K, M>) -> Gc<'gc, ()> {
-        Gc::<'gc, ()> {
+    pub fn erase(this: Self) -> Gc<'gc, ()> {
+        Gc {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const ()) },
             _marker: PhantomData,
         }
     }
 }
 
-impl<'gc, T: ?Sized, M> Gc<'gc, T, DefaultPtrKind, M> {
+impl<'gc, T: ?Sized, P, M> GcFat<'gc, T, P, M> {
     /// Cast a `Gc` pointer to a different type.
     ///
     /// # Safety
     ///
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    /// It must be valid to dereference a `*const U` that has come from casting a `*const T`.
     #[inline]
-    pub unsafe fn cast<U: 'gc>(
-        this: Gc<'gc, T, DefaultPtrKind, M>,
-    ) -> Gc<'gc, U, DefaultPtrKind, M> {
-        Gc::<'gc, U, DefaultPtrKind, M> {
+    pub unsafe fn cast<U: 'gc>(this: Self) -> GcFat<'gc, U, P, M> {
+        Gc {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *const U) },
             _marker: PhantomData,
         }
@@ -308,9 +385,9 @@ impl<'gc, T: ?Sized> Gc<'gc, T> {
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: Unlock,
 {
     /// Shorthand for [`Gc::write`]`(mc, self).`[`unlock()`](Write::unlock).
@@ -320,16 +397,16 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
 {
     /// Obtains a long-lived reference to the contents of this `Gc`.
     ///
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
     #[inline]
-    pub fn as_ref(self: Gc<'gc, T, K, M>) -> &'gc T {
+    pub fn as_ref(self: Gc<'gc, T, K>) -> &'gc T {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
         // cannot be stored inside the GC root.
@@ -354,28 +431,60 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, P, M> Gc<'gc, T, Fat<P>, M>
+impl<'gc, T: ?Sized, P, M> GcFat<'gc, T, P, M>
 where
     P: PtrMeta<T>,
-    P::Thin: 'static,
+    P::Thin: 'gc,
 {
-    pub fn as_thin(gc: Self) -> Gc<'gc, T, Thin<P>, M> {
-        unsafe { Gc::from_ptr_cast_meta(gc.ptr.as_ptr()) }
+    /// Convert a "fat" `Gc` to a "thin" one.
+    ///
+    /// From the outside, the resulting `Gc` behaves identically to the "fat" representation but is
+    /// the size of a "thin" pointer instead.
+    ///
+    /// If called on a `Gc<'gc, T>` for a `T: Sized` type, then this has no practical effect (other
+    /// than changing the type of the `Gc`).
+    ///
+    /// # Performance
+    ///
+    /// This representation of pointers has performance implications vs the "fat" one. The garbage
+    /// collector *must* store pointer metadata next to the value in the allocated memory for
+    /// garbage collection, so it is always possible to store a thin pointer and reconstruct a fat
+    /// one by combining the metadata stored in the GC header with the thin representation.
+    ///
+    /// But, this means that on "thin" pointers, operations like finding the length of a slice must
+    /// visit the memory that the `Gc` points to rather than this metadata being available next to
+    /// the pointer itself.
+    pub fn as_thin(gc: Self) -> GcThin<'gc, T, P, M> {
+        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(gc)) }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, P, M> GcThin<'gc, T, P, M>
 where
-    K: GcStore<'gc, T>,
+    P: PtrMeta<T>,
+    P::Thin: 'gc,
 {
-    pub fn type_metadata(gc: Gc<'gc, T, K, M>) -> &'static M {
+    /// Convert a "thin" `Gc` to a "fat" one.
+    ///
+    /// This is the reverse of [`Gc::as_thin`]
+    pub fn as_fat(gc: Self) -> GcFat<'gc, T, P, M> {
+        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(gc)) }
+    }
+}
+
+impl<'gc, T: ?Sized, S, P, M> Gc<'gc, T, GcKind<S, P, M>>
+where
+    GcKind<S, P, M>: IsGcKind<'gc, T>,
+{
+    /// Retrieve the *per-type* metadata specified when a `Gc` was allocated.
+    pub fn type_metadata(gc: Gc<'gc, T, GcKind<S, P, M>>) -> &'static M {
         unsafe { gc.ptr.type_metadata::<M>() }
     }
 }
 
-impl<'gc, T: ?Sized, K, M> PartialEq for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> PartialEq for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -387,16 +496,16 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Eq for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Eq for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: Eq,
 {
 }
 
-impl<'gc, T: ?Sized, K, M> PartialOrd for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> PartialOrd for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: PartialOrd,
 {
     #[inline]
@@ -425,9 +534,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Ord for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Ord for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: Ord,
 {
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
@@ -435,9 +544,9 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, K, M> Hash for Gc<'gc, T, K, M>
+impl<'gc, T: ?Sized, K> Hash for Gc<'gc, T, K>
 where
-    K: GcStore<'gc, T>,
+    K: IsGcKind<'gc, T>,
     T: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -445,24 +554,44 @@ where
     }
 }
 
-pub struct GcBuilder<'gc, T: ?Sized, P = SizedPtrMeta, M = ()> {
-    gc: Gc<'gc, T, Fat<P>, M>,
+/// A type used for more advanced ways of allocating a [`Gc`].
+pub struct GcBuilder<'gc, T: ?Sized, P = UnitPtrMeta, M = ()> {
+    gc: GcFat<'gc, T, P, M>,
 }
 
 impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
+    /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a *sized* `T`.
     #[inline]
-    pub fn allocate(mc: &Mutation<'gc>) -> Self {
-        GcBuilder::allocate_with_type_meta::<UnitTypeMeta>(mc)
+    pub fn new(mc: &Mutation<'gc>) -> Self {
+        GcBuilder::new_with_type_meta::<UnitTypeMeta>(mc)
     }
 }
 
-impl<'gc, T, M> GcBuilder<'gc, T, SizedPtrMeta, M>
+impl<'gc, T, M> GcBuilder<'gc, T, UnitPtrMeta, M>
 where
     T: Collect<'gc>,
 {
+    /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a *sized* `T` with the
+    /// *per-type* metadata from `TM`.
+    ///
+    /// The `TM::METADATA` pointer will be stored in the static *per-type* vtable so there is no
+    /// per-allocation cost, but there is one vtable per `T` <-> `TM` pair.
     #[inline]
-    pub fn allocate_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>) -> Self {
-        Self::allocate_with_all_meta::<TM>(mc, ())
+    pub fn new_with_type_meta<TM: TypeMeta<Metadata = M>>(mc: &Mutation<'gc>) -> Self {
+        Self::new_with_ptr_and_type_meta::<TM>(mc, ())
+    }
+}
+
+impl<'gc, T: ?Sized, P> GcBuilder<'gc, T, P, ()>
+where
+    T: Collect<'gc>,
+    P: AllocMeta<T>,
+{
+    /// Create a new `GcBuilder` suitable building a `Gc` pointing to an *unsized* `T` with the
+    /// given `ptr_meta` per-value metadata.
+    #[inline]
+    pub fn new_with_ptr_meta(mc: &Mutation<'gc>, ptr_meta: P::Metadata) -> Self {
+        Self::new_with_ptr_and_type_meta::<UnitTypeMeta>(mc, ptr_meta)
     }
 }
 
@@ -471,8 +600,10 @@ where
     T: Collect<'gc>,
     P: AllocMeta<T>,
 {
+    /// Create a new `GcBuilder` suitable for building a `Gc` pointing to an *unsized* `T`with the
+    /// given `ptr_meta` per-value metadata and per-type metadata from `TM`.
     #[inline]
-    pub fn allocate_with_all_meta<TM: TypeMeta<Metadata = M>>(
+    pub fn new_with_ptr_and_type_meta<TM: TypeMeta<Metadata = M>>(
         mc: &Mutation<'gc>,
         ptr_meta: P::Metadata,
     ) -> Self {
@@ -482,14 +613,25 @@ where
     }
 }
 
-impl<'gc, T: ?Sized, M> GcBuilder<'gc, Static<T>, SizedPtrMeta, M> {
+impl<'gc, T: ?Sized, M> GcBuilder<'gc, Static<T>, UnitPtrMeta, M> {
+    /// Safely unwrap a `GcBuilder<'gc, Static<T>>` into a `GcBuilder<'gc, T>`.
+    ///
+    /// This is always safe to do since a `Static<T>` has the same representation as `T`.
+    ///
+    /// This can be used to allocate a type wrapped in [`Static`] as a bare value.
     #[inline]
-    pub fn unwrap_static(self) -> GcBuilder<'gc, T, SizedPtrMeta, M> {
+    pub fn unwrap_static(self) -> GcBuilder<'gc, T, UnitPtrMeta, M> {
         unsafe { GcBuilder::from_raw(self.into_raw() as *mut T) }
     }
 }
 
 impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, Static<T>, StaticPtrMeta<P>, M> {
+    /// Safely unwrap a `GcBuilder<'gc, Static<T>, StaticPtrMeta<P>>` into a `GcBuilder<'gc, T, P>`.
+    ///
+    /// This is always safe to do since a `Static<T>` has the same representation as `T` and
+    /// `StaticPtrMeta<P>` always wraps the `P: PtrMeta` without modification.
+    ///
+    /// This can be used to allocate a type wrapped in [`Static`] as a bare value.
     #[inline]
     pub fn unwrap_static(self) -> GcBuilder<'gc, T, P, M> {
         unsafe { GcBuilder::from_raw(self.into_raw() as *mut T) }
@@ -497,37 +639,47 @@ impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, Static<T>, StaticPtrMeta<P>, M> {
 }
 
 impl<'gc, T: ?Sized, P, M> GcBuilder<'gc, T, P, M> {
-    pub fn as_ptr(&self) -> *const T {
-        Gc::as_ptr(self.gc)
-    }
-
-    pub fn as_mut_ptr(&mut self) -> *mut T {
+    /// Returns a pointer to the (possibly uninitialized) value being built.
+    ///
+    /// The pointer will always point to valid, aligned memory for the type `T` and may be written
+    /// to to initialize the value.
+    pub fn as_ptr(&mut self) -> *mut T {
         Gc::as_ptr(self.gc).cast_mut()
     }
 
+    /// Convert this `GcBuilder` into a bare pointer.
     pub fn into_raw(self) -> *mut T {
         Gc::as_ptr(self.gc).cast_mut()
     }
 
+    /// Retrieve a `GcBuilder` from a pointer obtained from [`GcBuilder::into_raw`].
+    ///
+    /// # Safety
+    ///
+    /// The types of `T`, `P`, and `M` must be compatible with the originally constructed
+    /// `GcBuilder`.
     pub unsafe fn from_raw(ptr: *mut T) -> GcBuilder<'gc, T, P, M> {
         unsafe {
             Self {
-                gc: Gc::from_ptr_cast_meta(ptr),
+                gc: Gc::from_ptr_with_kind(ptr),
             }
         }
     }
 
-    pub unsafe fn assume_init(self) -> Gc<'gc, T, Fat<P>, M> {
+    /// Finish constructing a `Gc<T>` by unsafely assuming that the held memory is properly
+    /// initialized.
+    pub unsafe fn assume_init(self) -> GcFat<'gc, T, P, M> {
         self.gc.ptr.header().set_live(true);
         self.gc
     }
 }
 
 impl<'gc, T, P, M> GcBuilder<'gc, T, P, M> {
+    /// Finish constructing a `Gc<T>` by initializing the (sized) value with `val`.
     #[inline]
-    pub fn write(mut self, val: T) -> Gc<'gc, T, Fat<P>, M> {
+    pub fn write(mut self, val: T) -> GcFat<'gc, T, P, M> {
         unsafe {
-            self.as_mut_ptr().write(val);
+            self.as_ptr().write(val);
             self.assume_init()
         }
     }
