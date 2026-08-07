@@ -34,12 +34,12 @@ unsafe impl<'gc, H: Collect<'gc>, E: Collect<'gc>> Collect<'gc> for SliceWithHea
 
 impl<H, E> SliceWithHeader<H, E> {
     #[inline(always)]
-    fn ptr_to_raw_parts(slice: *const SliceWithHeader<H, E>) -> (*const H, usize) {
-        (slice as *const H, (slice as *const [u8]).len())
+    fn ptr_to_thin(slice: *const SliceWithHeader<H, E>) -> *const H {
+        slice as *const H
     }
 
     #[inline(always)]
-    fn ptr_from_raw_parts(ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
+    fn ptr_from_thin(ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
         ptr::slice_from_raw_parts(ptr as *const u8, len) as *const SliceWithHeader<H, E>
     }
 
@@ -60,13 +60,13 @@ impl<H, E, M> PtrMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
     type Thin = H;
 
     #[inline]
-    fn to_raw_parts(_type_meta: &M, slice: *const SliceWithHeader<H, E>) -> (*const H, usize) {
-        SliceWithHeader::ptr_to_raw_parts(slice)
+    fn to_thin(_type_meta: &M, slice: *const SliceWithHeader<H, E>) -> *const H {
+        SliceWithHeader::ptr_to_thin(slice)
     }
 
     #[inline]
-    fn from_raw_parts(_type_meta: &M, ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
-        SliceWithHeader::ptr_from_raw_parts(ptr, len)
+    fn from_thin(_type_meta: &M, ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
+        SliceWithHeader::ptr_from_thin(ptr, len)
     }
 }
 
@@ -156,8 +156,8 @@ impl<'gc, H, E, M> Drop for GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     fn drop(&mut self) {
         unsafe {
             let slice_with_header_ptr = self.inner.as_ptr();
-            let (ptr, _) = SliceWithHeader::ptr_to_raw_parts(slice_with_header_ptr);
-            let ptr = SliceWithHeader::<H, E>::ptr_from_raw_parts(ptr, self.init_length);
+            let ptr = SliceWithHeader::ptr_to_thin(slice_with_header_ptr);
+            let ptr = SliceWithHeader::<H, E>::ptr_from_thin(ptr, self.init_length);
             core::ptr::drop_in_place(ptr.cast_mut());
 
             ManuallyDrop::drop(&mut self.inner);
@@ -268,13 +268,13 @@ impl<E, M> PtrMeta<[E], M> for SlicePtrMeta {
     type Thin = ();
 
     #[inline]
-    fn to_raw_parts(_type_meta: &M, slice: *const [E]) -> (*const (), usize) {
-        SliceWithHeader::ptr_to_raw_parts(slice as *const SliceWithHeader<(), E>)
+    fn to_thin(_type_meta: &M, slice: *const [E]) -> *const () {
+        SliceWithHeader::ptr_to_thin(slice as *const SliceWithHeader<(), E>)
     }
 
     #[inline]
-    fn from_raw_parts(_type_meta: &M, ptr: *const (), len: usize) -> *const [E] {
-        SliceWithHeader::<(), E>::ptr_from_raw_parts(ptr, len) as *const [E]
+    fn from_thin(_type_meta: &M, ptr: *const (), len: usize) -> *const [E] {
+        SliceWithHeader::<(), E>::ptr_from_thin(ptr, len) as *const [E]
     }
 }
 

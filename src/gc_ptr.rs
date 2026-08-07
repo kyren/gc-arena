@@ -67,7 +67,7 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
                 .byte_sub(mem::size_of::<GcHeader>())
                 .cast::<GcHeader>();
 
-            let fat_ptr = P::from_raw_parts(
+            let fat_ptr = P::from_thin(
                 TM::TYPE_METADATA,
                 value_ptr.cast::<P::Thin>().as_ptr(),
                 ptr_meta,
@@ -120,7 +120,7 @@ impl<T: ?Sized> GcPtr<T> {
     #[inline(always)]
     pub(crate) unsafe fn thin_ptr<M: 'static, P: PtrMeta<T, M>>(self) -> GcPtr<P::Thin> {
         unsafe {
-            let (p, _) = P::to_raw_parts(self.type_metadata(), self.0.as_ptr());
+            let p = P::to_thin(self.type_metadata(), self.0.as_ptr());
             GcPtr(NonNull::new_unchecked(p.cast_mut()))
         }
     }
@@ -349,8 +349,7 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrProps<T, M, P> {
         unsafe {
             let ptr_meta = Self::read_ptr_meta(value_ptr);
             NonNull::new_unchecked(
-                P::from_raw_parts(type_meta, value_ptr.as_ptr() as *const P::Thin, ptr_meta)
-                    .cast_mut(),
+                P::from_thin(type_meta, value_ptr.as_ptr() as *const P::Thin, ptr_meta).cast_mut(),
             )
         }
     }

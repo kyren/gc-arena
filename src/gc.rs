@@ -301,9 +301,9 @@ where
     /// To be "compatible" means that for both the per-type and per-value metadata types, you can
     /// dereference a (valid, dereferenceble) pointer to the old type `*const Old` as `*const New`.
     ///
-    /// The implementation of `PtrMeta` within the `K` kind must also be valid and always return
-    /// dereferencable fat pointers for both the existing per-type metadata (cast to its new type)
-    /// and the existing per-value metadata (cast to its new type).
+    /// Additionally, if the `P` parameter within the `GcKind` implements `PtrMeta<T>`, the
+    /// implementation must be correct for the existing per-type metadata (cast to its new type) and
+    /// the existing per-value metadata (cast to its new type).
     #[inline]
     pub unsafe fn from_ptr_with_kind(ptr: *const T) -> Gc<'gc, T, K> {
         unsafe {

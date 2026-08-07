@@ -88,21 +88,17 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrMeta<Static<T>, M> for StaticPtrMeta<P> 
     type Thin = Static<P::Thin>;
 
     #[inline]
-    fn to_raw_parts(
-        type_meta: &'static M,
-        fat: *const Static<T>,
-    ) -> (*const Static<P::Thin>, P::PtrMetadata) {
-        let (p, m) = P::to_raw_parts(type_meta, fat as *const T);
-        (p as *const Static<P::Thin>, m)
+    fn to_thin(type_meta: &'static M, fat: *const Static<T>) -> *const Static<P::Thin> {
+        P::to_thin(type_meta, fat as *const T) as *const Static<P::Thin>
     }
 
     #[inline]
-    fn from_raw_parts(
+    fn from_thin(
         type_meta: &'static M,
         thin: *const Static<P::Thin>,
         ptr_meta: P::PtrMetadata,
     ) -> *const Static<T> {
-        P::from_raw_parts(type_meta, thin as *const P::Thin, ptr_meta) as *const Static<T>
+        P::from_thin(type_meta, thin as *const P::Thin, ptr_meta) as *const Static<T>
     }
 }
 
