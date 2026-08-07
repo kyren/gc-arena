@@ -38,15 +38,14 @@ impl TypeMeta for UnitTypeMeta {
 /// with an arbitrary implementation of `PtrMeta` and you must assert that it is implemented
 /// correctly when doing so.
 ///
-/// If `from_raw_parts` is given `thin` and `ptr_meta` that came from a call to `to_raw_parts`, it
-/// must return a valid and dereferencable pointer.
+/// If `from_thin` is given `thin` and `ptr_meta` that came from a call to `to_thin`, it must return
+/// the *same* pointer value as the one given to `to_thin`.
 pub trait PtrMeta<T: ?Sized, M> {
     type PtrMetadata: Copy + Send;
     type Thin;
 
-    fn to_raw_parts(type_meta: &'static M, fat: *const T)
-    -> (*const Self::Thin, Self::PtrMetadata);
-    fn from_raw_parts(
+    fn to_thin(type_meta: &'static M, fat: *const T) -> *const Self::Thin;
+    fn from_thin(
         type_meta: &'static M,
         thin: *const Self::Thin,
         ptr_meta: Self::PtrMetadata,
@@ -82,12 +81,12 @@ impl<T, M> PtrMeta<T, M> for UnitPtrMeta {
     type Thin = T;
 
     #[inline]
-    fn to_raw_parts(_type_meta: &M, fat: *const T) -> (*const T, Self::PtrMetadata) {
-        (fat, ())
+    fn to_thin(_type_meta: &M, fat: *const T) -> *const T {
+        fat
     }
 
     #[inline]
-    fn from_raw_parts(_type_meta: &M, thin: *const T, _ptr_meta: Self::PtrMetadata) -> *const T {
+    fn from_thin(_type_meta: &M, thin: *const T, _ptr_meta: Self::PtrMetadata) -> *const T {
         thin
     }
 }
