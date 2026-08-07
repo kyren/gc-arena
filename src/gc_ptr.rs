@@ -75,7 +75,7 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
             );
 
             meta_ptr.write(ptr_meta);
-            header_ptr.write(GcHeader::new(&Vtable::<T, P, M>::VTABLE));
+            header_ptr.write(GcHeader::new(&VtableFor::<T, P, M>::VTABLE));
 
             GcPtr(NonNull::new_unchecked(fat_ptr))
         }
@@ -93,15 +93,27 @@ impl<T: ?Sized> GcPtr<T> {
         }
     }
 
-    pub(crate) unsafe fn fat_ptr<F: ?Sized, M: PtrMeta<F>>(self) -> GcPtr<F> {
-        unsafe { GcPtr(PtrProps::<F, M>::fat_ptr(self.0)) }
+    /// # Safety
+    ///
+    /// The given `P` ptr metadata type must be compatible with the one used to allocate the
+    /// `GcPtr`.
+    pub(crate) unsafe fn fat_ptr<F: ?Sized, P: PtrMeta<F>>(self) -> GcPtr<F> {
+        unsafe { GcPtr(PtrProps::<F, P>::fat_ptr(self.0)) }
     }
 
-    pub(crate) unsafe fn thin_ptr<M: PtrMeta<T>>(self) -> GcPtr<M::Thin> {
-        let (p, _) = M::to_raw_parts(self.0.as_ptr());
+    /// # Safety
+    ///
+    /// The given `P` ptr metadata type must be compatible with the one used to allocate the
+    /// `GcPtr`.
+    pub(crate) unsafe fn thin_ptr<P: PtrMeta<T>>(self) -> GcPtr<P::Thin> {
+        let (p, _) = P::to_raw_parts(self.0.as_ptr());
         unsafe { GcPtr(NonNull::new_unchecked(p.cast_mut())) }
     }
 
+    /// # Safety
+    ///
+    /// The given `M` per-type metadata type must be compatible with the `TypeMeta::METADATA` from
+    /// the `TM` used to allocate the `GcPtr`.
     pub(crate) unsafe fn type_metadata<M>(self) -> &'static M {
         unsafe { self.header().vtable().metadata.cast::<M>().as_ref() }
     }
@@ -327,9 +339,9 @@ impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
     }
 }
 
-struct Vtable<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
+struct VtableFor<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
 
-impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> Vtable<T, P, M> {
+impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> VtableFor<T, P, M> {
     const VTABLE: GcVtable = GcVtable {
         trace_value: |value_ptr, cc| unsafe {
             PtrProps::<T, P>::fat_ptr(value_ptr).as_ref().trace(cc);
