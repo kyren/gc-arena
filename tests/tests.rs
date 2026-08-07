@@ -6,7 +6,7 @@ use std::{array, collections::HashMap, rc::Rc};
 use rand::distr::Distribution;
 
 use gc_arena::{
-    Arena, Collect, DynamicRootSet, Gc, GcWeak, Lock, RefLock, Rootable,
+    Arena, Collect, DynamicRootSet, Gc, GcBuilder, GcWeak, Lock, RefLock, Rootable,
     arena::CollectionPhase,
     collect::{DynCollect, dyn_collect},
     metrics::Pacing,
@@ -1270,9 +1270,9 @@ fn test_alloc_slice_with_header() {
             }
 
             gc_arena::arena::rootless_mutate(|mc| {
-                let gc_ptr = gc_arena::GcSliceWithHeaderBuilder::new(mc, $len)
+                let gc_ptr = gc_arena::GcSliceWithHeaderBuilder::new($len)
                     .write_header(Header(expected_array(0)))
-                    .write_slice_with(|i| Element(expected_array(i + 1)));
+                    .write_slice_with(mc, |i| Element(expected_array(i + 1)));
 
                 assert!(gc_ptr.header.0 == expected_array(0));
 
@@ -1434,9 +1434,9 @@ fn test_slice_with_header_drop() {
     let rc = Rc::new(());
 
     gc_arena::arena::rootless_mutate(|mc| {
-        let _ = gc_arena::GcSliceWithHeaderBuilder::new(mc, 10)
+        let _ = gc_arena::GcSliceWithHeaderBuilder::new(10)
             .write_header(rc.clone())
-            .write_slice_with(|_| rc.clone());
+            .write_slice_with(mc, |_| rc.clone());
     });
 
     assert_eq!(Rc::strong_count(&rc), 1);
@@ -1450,9 +1450,9 @@ fn test_panicking_slice_with_header_drop() {
 
     let Err(err) = catch_unwind(|| {
         gc_arena::arena::rootless_mutate(|mc| {
-            let _ = gc_arena::GcSliceWithHeaderBuilder::new(mc, 10)
+            let _ = gc_arena::GcSliceWithHeaderBuilder::new(10)
                 .write_header(rc.clone())
-                .write_slice_with(|i| {
+                .write_slice_with(mc, |i| {
                     if i < 5 {
                         rc.clone()
                     } else {
@@ -1471,9 +1471,9 @@ fn test_panicking_slice_with_header_drop() {
 #[test]
 fn test_slice_with_header_copy() {
     gc_arena::arena::rootless_mutate(|mc| {
-        let ptr = gc_arena::GcSliceWithHeaderBuilder::new(mc, 5)
+        let ptr = gc_arena::GcSliceWithHeaderBuilder::new(5)
             .write_header(47)
-            .copy_slice(&[5, 6, 7, 8, 9]);
+            .copy_slice(mc, &[5, 6, 7, 8, 9]);
 
         assert_eq!(ptr.header, 47);
         assert_eq!(ptr.slice, [5, 6, 7, 8, 9]);
@@ -1488,9 +1488,9 @@ fn test_thin_slice_with_header() {
     assert!(mem::size_of::<GcThinSliceWithHeader<i32, i32>>() == mem::size_of::<Gc<()>>());
 
     gc_arena::arena::rootless_mutate(|mc| {
-        let ptr = GcSliceWithHeaderBuilder::new(mc, 5)
+        let ptr = GcSliceWithHeaderBuilder::new(5)
             .write_header(47)
-            .copy_slice(&[5, 6, 7, 8, 9]);
+            .copy_slice(mc, &[5, 6, 7, 8, 9]);
 
         let thin_ptr: GcThinSliceWithHeader<i32, i32> = Gc::as_thin(ptr);
         assert_eq!(thin_ptr.as_ref().header, 47);
@@ -1543,13 +1543,22 @@ fn test_type_metadata() {
             const METADATA: &'static u32 = &8;
         }
 
-        let a = gc_arena::GcBuilder::new_with_type_meta::<TypeA>(mc).write(TypeA(7));
-        let b = gc_arena::GcBuilder::new_with_type_meta::<TypeB>(mc).write(TypeB(8));
+        let a = GcBuilder::new_with_type_meta::<TypeA>().write(mc, TypeA(7));
+        let b = GcBuilder::new_with_type_meta::<TypeB>().write(mc, TypeB(8));
 
         assert_eq!(a.0, 7);
         assert_eq!(*Gc::type_metadata(a), 7);
         assert_eq!(b.0, 8);
         assert_eq!(*Gc::type_metadata(b), 8);
+    });
+}
+
+#[test]
+fn test_builder_drop() {
+    gc_arena::arena::rootless_mutate(|mc| {
+        for i in 0..10 {
+            GcBuilder::<i32>::new().write(mc, i);
+        }
     });
 }
 

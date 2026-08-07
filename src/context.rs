@@ -10,7 +10,6 @@ use crate::{
     gc::Gc,
     gc_ptr::GcPtr,
     gc_weak::GcWeak,
-    meta::{AllocMeta, TypeMeta},
     metrics::Metrics,
     types::{GcColor, Invariant},
 };
@@ -79,11 +78,8 @@ impl<'gc> Mutation<'gc> {
     }
 
     #[inline]
-    pub(crate) fn allocate<T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
-        &self,
-        ptr_meta: P::Metadata,
-    ) -> GcPtr<T> {
-        self.context.allocate::<T, P, M>(ptr_meta)
+    pub(crate) fn link<T: ?Sized>(&self, gc_ptr: GcPtr<T>) {
+        self.context.link(gc_ptr)
     }
 
     #[inline]
@@ -362,20 +358,11 @@ impl Context {
         cx.log_progress("GC: yielding...");
     }
 
-    /// Allocate a `GcPtr<T>` with uninitialized values.
-    ///
-    /// The returned ptr's header will have `is_live` as false and this should be set to true when
-    /// it is correctly initialized.
+    /// Link a newly allocated `GcPtr<T>` into the `all` list and mark that it was allocated in
+    /// metrics.
     #[inline]
-    fn allocate<'gc, T: Collect<'gc> + ?Sized, P: AllocMeta<T>, M: TypeMeta>(
-        &self,
-        ptr_meta: P::Metadata,
-    ) -> GcPtr<T> {
-        let gc_ptr = GcPtr::<T>::alloc::<P, M>(ptr_meta);
-
-        let header = gc_ptr.header();
-        header.set_needs_trace(T::NEEDS_TRACE);
-        header.set_next(self.all.get());
+    fn link<'gc, T: ?Sized>(&self, gc_ptr: GcPtr<T>) {
+        gc_ptr.header().set_next(self.all.get());
 
         self.all.set(Some(gc_ptr.erase()));
         if self.phase == Phase::Sweep && self.sweep_prev.get().is_none() {
@@ -383,7 +370,6 @@ impl Context {
         }
 
         self.metrics.mark_gc_allocated(1);
-        gc_ptr
     }
 
     #[inline]

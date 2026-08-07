@@ -119,7 +119,7 @@ impl<T: ?Sized> GcPtr<T> {
     }
 
     #[inline(always)]
-    pub(crate) fn as_ptr(self) -> *const T {
+    pub(crate) fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
     }
 
@@ -127,8 +127,8 @@ impl<T: ?Sized> GcPtr<T> {
     ///
     /// The provided ptr must have come from `GcPtr::as_ptr`.
     #[inline(always)]
-    pub(crate) unsafe fn from_ptr(p: *const T) -> Self {
-        Self(unsafe { NonNull::new_unchecked(p.cast_mut()) })
+    pub(crate) unsafe fn from_ptr(p: *mut T) -> Self {
+        Self(unsafe { NonNull::new_unchecked(p) })
     }
 
     /// A convenience method to cast to `()`.
