@@ -43,9 +43,11 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
     ///
     /// Panics if there is no valid layout we can allocate.
     #[inline]
-    pub(crate) fn alloc<P: AllocMeta<T>, M: TypeMeta>(ptr_meta: P::Metadata) -> Self {
-        let meta_header_layout = PtrProps::<T, P>::META_HEADER_LAYOUT;
-        let value_layout = P::layout(ptr_meta).expect("no layout for value");
+    pub(crate) fn alloc<TM: TypeMeta, P: AllocMeta<T, TM::TypeMetadata>>(
+        ptr_meta: P::PtrMetadata,
+    ) -> Self {
+        let meta_header_layout = PtrProps::<T, TM::TypeMetadata, P>::META_HEADER_LAYOUT;
+        let value_layout = P::layout(TM::TYPE_METADATA, ptr_meta).expect("no layout for value");
         let (alloc_layout, value_offset) = prefix_header_layout(meta_header_layout, value_layout)
             .expect("no layout for GC allocation");
 
@@ -59,14 +61,18 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
 
             let meta_ptr = value_ptr
                 .byte_sub(meta_header_layout.size())
-                .cast::<P::Metadata>();
+                .cast::<P::PtrMetadata>();
 
             let header_ptr = value_ptr
                 .byte_sub(mem::size_of::<GcHeader>())
                 .cast::<GcHeader>();
 
-            let fat_ptr =
-                P::from_raw_parts(value_ptr.cast::<P::Thin>().as_ptr(), ptr_meta).cast_mut();
+            let fat_ptr = P::from_raw_parts(
+                TM::TYPE_METADATA,
+                value_ptr.cast::<P::Thin>().as_ptr(),
+                ptr_meta,
+            )
+            .cast_mut();
 
             debug_assert!(
                 meta_ptr.is_aligned()
@@ -75,7 +81,7 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
             );
 
             meta_ptr.write(ptr_meta);
-            header_ptr.write(GcHeader::new(&VtableFor::<T, P, M>::VTABLE));
+            header_ptr.write(GcHeader::new(&VtableFor::<T, TM, P>::VTABLE));
 
             GcPtr(NonNull::new_unchecked(fat_ptr))
         }
@@ -95,27 +101,37 @@ impl<T: ?Sized> GcPtr<T> {
 
     /// # Safety
     ///
-    /// The given `P` ptr metadata type must be compatible with the one used to allocate the
-    /// `GcPtr`.
-    pub(crate) unsafe fn fat_ptr<F: ?Sized, P: PtrMeta<F>>(self) -> GcPtr<F> {
-        unsafe { GcPtr(PtrProps::<F, P>::fat_ptr(self.0)) }
+    /// The given `M` per-type and `P` per-ptr metadata types must be compatible with the one used
+    /// to allocate the `GcPtr`.
+    #[inline(always)]
+    pub(crate) unsafe fn fat_ptr<F: ?Sized, M: 'static, P: PtrMeta<F, M>>(self) -> GcPtr<F> {
+        unsafe {
+            GcPtr(PtrProps::<F, M, P>::fat_ptr(
+                self.type_metadata::<M>(),
+                self.0,
+            ))
+        }
     }
 
     /// # Safety
     ///
-    /// The given `P` ptr metadata type must be compatible with the one used to allocate the
-    /// `GcPtr`.
-    pub(crate) unsafe fn thin_ptr<P: PtrMeta<T>>(self) -> GcPtr<P::Thin> {
-        let (p, _) = P::to_raw_parts(self.0.as_ptr());
-        unsafe { GcPtr(NonNull::new_unchecked(p.cast_mut())) }
+    /// The given `M` per-type and `P` per-ptr metadata types must be compatible with the one used
+    /// to allocate the `GcPtr`.
+    #[inline(always)]
+    pub(crate) unsafe fn thin_ptr<M: 'static, P: PtrMeta<T, M>>(self) -> GcPtr<P::Thin> {
+        unsafe {
+            let (p, _) = P::to_raw_parts(self.type_metadata(), self.0.as_ptr());
+            GcPtr(NonNull::new_unchecked(p.cast_mut()))
+        }
     }
 
     /// # Safety
     ///
-    /// The given `M` per-type metadata type must be compatible with the `TypeMeta::METADATA` from
-    /// the `TM` used to allocate the `GcPtr`.
+    /// The given `M` per-type metadata type must be compatible with the `TM::Metadata` used to
+    /// allocate the `GcPtr`.
+    #[inline(always)]
     pub(crate) unsafe fn type_metadata<M>(self) -> &'static M {
-        unsafe { self.header().vtable().metadata.cast::<M>().as_ref() }
+        unsafe { self.header().vtable().type_metadata.cast::<M>().as_ref() }
     }
 
     #[inline(always)]
@@ -304,14 +320,14 @@ struct GcVtable {
     drop_value: unsafe fn(NonNull<()>),
     /// Frees the allocation for given value pointer.
     dealloc: unsafe fn(NonNull<()>),
-    metadata: NonNull<()>,
+    type_metadata: NonNull<()>,
 }
 
-struct PtrProps<T: ?Sized, P>(PhantomData<(*const T, P)>);
+struct PtrProps<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
 
-impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
+impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrProps<T, M, P> {
     const META_HEADER_LAYOUT: Layout = {
-        if let Ok((layout, _)) = Layout::new::<P::Metadata>().extend(Layout::new::<GcHeader>()) {
+        if let Ok((layout, _)) = Layout::new::<P::PtrMetadata>().extend(Layout::new::<GcHeader>()) {
             layout.pad_to_align()
         } else {
             unreachable!();
@@ -319,42 +335,49 @@ impl<T: ?Sized, P: PtrMeta<T>> PtrProps<T, P> {
     };
 
     #[inline(always)]
-    unsafe fn read_ptr_meta<U: ?Sized>(value_ptr: NonNull<U>) -> P::Metadata {
+    unsafe fn read_ptr_meta<U: ?Sized>(value_ptr: NonNull<U>) -> P::PtrMetadata {
         unsafe {
             value_ptr
                 .byte_sub(Self::META_HEADER_LAYOUT.size())
-                .cast::<P::Metadata>()
+                .cast::<P::PtrMetadata>()
                 .read()
         }
     }
 
     #[inline(always)]
-    unsafe fn fat_ptr<U: ?Sized>(value_ptr: NonNull<U>) -> NonNull<T> {
+    unsafe fn fat_ptr<U: ?Sized>(type_meta: &'static M, value_ptr: NonNull<U>) -> NonNull<T> {
         unsafe {
             let ptr_meta = Self::read_ptr_meta(value_ptr);
             NonNull::new_unchecked(
-                P::from_raw_parts(value_ptr.as_ptr() as *const P::Thin, ptr_meta).cast_mut(),
+                P::from_raw_parts(type_meta, value_ptr.as_ptr() as *const P::Thin, ptr_meta)
+                    .cast_mut(),
             )
         }
     }
 }
 
-struct VtableFor<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
+struct VtableFor<T: ?Sized, TM, P>(PhantomData<(*const T, TM, P)>);
 
-impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> VtableFor<T, P, M> {
+impl<'gc, T: ?Sized + Collect<'gc>, TM: TypeMeta, P: AllocMeta<T, TM::TypeMetadata>>
+    VtableFor<T, TM, P>
+{
     const VTABLE: GcVtable = GcVtable {
         trace_value: |value_ptr, cc| unsafe {
-            PtrProps::<T, P>::fat_ptr(value_ptr).as_ref().trace(cc);
+            PtrProps::<T, TM::TypeMetadata, P>::fat_ptr(TM::TYPE_METADATA, value_ptr)
+                .as_ref()
+                .trace(cc);
         },
         drop_value: |value_ptr| unsafe {
-            ptr::drop_in_place(PtrProps::<T, P>::fat_ptr(value_ptr).as_ptr());
+            ptr::drop_in_place(
+                PtrProps::<T, TM::TypeMetadata, P>::fat_ptr(TM::TYPE_METADATA, value_ptr).as_ptr(),
+            );
         },
         dealloc: |value_ptr| {
             unsafe {
-                let ptr_meta = PtrProps::<T, P>::read_ptr_meta(value_ptr);
+                let ptr_meta = PtrProps::<T, TM::TypeMetadata, P>::read_ptr_meta(value_ptr);
                 let (alloc_layout, value_offset) = prefix_header_layout(
-                    PtrProps::<T, P>::META_HEADER_LAYOUT,
-                    P::layout(ptr_meta).unwrap(),
+                    PtrProps::<T, TM::TypeMetadata, P>::META_HEADER_LAYOUT,
+                    P::layout(TM::TYPE_METADATA, ptr_meta).unwrap(),
                 )
                 .unwrap();
 
@@ -363,7 +386,7 @@ impl<'gc, T: ?Sized + Collect<'gc>, P: AllocMeta<T>, M: TypeMeta> VtableFor<T, P
                 alloc::dealloc(alloc_ptr as *mut u8, alloc_layout);
             }
         },
-        metadata: NonNull::from_ref(M::METADATA).cast(),
+        type_metadata: NonNull::from_ref(TM::TYPE_METADATA).cast(),
     };
 }
 

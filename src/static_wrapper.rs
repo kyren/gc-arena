@@ -83,25 +83,32 @@ impl<T: ?Sized> BorrowMut<T> for Static<T> {
 /// which is safe to do since `Static` is `#[repr(transparent)]`.
 pub struct StaticPtrMeta<P>(PhantomData<P>);
 
-unsafe impl<T: ?Sized, P: PtrMeta<T>> PtrMeta<Static<T>> for StaticPtrMeta<P> {
-    type Metadata = P::Metadata;
+unsafe impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrMeta<Static<T>, M> for StaticPtrMeta<P> {
+    type PtrMetadata = P::PtrMetadata;
     type Thin = Static<P::Thin>;
 
     #[inline]
-    fn to_raw_parts(fat: *const Static<T>) -> (*const Static<P::Thin>, P::Metadata) {
-        let (p, m) = P::to_raw_parts(fat as *const T);
+    fn to_raw_parts(
+        type_meta: &'static M,
+        fat: *const Static<T>,
+    ) -> (*const Static<P::Thin>, P::PtrMetadata) {
+        let (p, m) = P::to_raw_parts(type_meta, fat as *const T);
         (p as *const Static<P::Thin>, m)
     }
 
     #[inline]
-    fn from_raw_parts(thin: *const Static<P::Thin>, metadata: P::Metadata) -> *const Static<T> {
-        P::from_raw_parts(thin as *const P::Thin, metadata) as *const Static<T>
+    fn from_raw_parts(
+        type_meta: &'static M,
+        thin: *const Static<P::Thin>,
+        ptr_meta: P::PtrMetadata,
+    ) -> *const Static<T> {
+        P::from_raw_parts(type_meta, thin as *const P::Thin, ptr_meta) as *const Static<T>
     }
 }
 
-unsafe impl<T: ?Sized, P: AllocMeta<T>> AllocMeta<Static<T>> for StaticPtrMeta<P> {
+unsafe impl<T: ?Sized, M, P: AllocMeta<T, M>> AllocMeta<Static<T>, M> for StaticPtrMeta<P> {
     #[inline]
-    fn layout(metadata: Self::Metadata) -> Option<core::alloc::Layout> {
-        P::layout(metadata)
+    fn layout(type_meta: &'static M, ptr_meta: Self::PtrMetadata) -> Option<core::alloc::Layout> {
+        P::layout(type_meta, ptr_meta)
     }
 }

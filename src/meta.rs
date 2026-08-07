@@ -8,9 +8,9 @@ use core::alloc::Layout;
 /// The metadata pointer for allocated `Gc` values will be stored in a *per-type* static vtable (one
 /// vtable per (allocated type <-> metadata) pair), there is no per-allocation cost.
 pub trait TypeMeta {
-    type Metadata: 'static;
+    type TypeMetadata: 'static;
 
-    const METADATA: &'static Self::Metadata;
+    const TYPE_METADATA: &'static Self::TypeMetadata;
 }
 
 /// A simple implementation of [`TypeMeta`] that does not store any type-level metadata (only the
@@ -18,9 +18,9 @@ pub trait TypeMeta {
 pub struct UnitTypeMeta;
 
 impl TypeMeta for UnitTypeMeta {
-    type Metadata = ();
+    type TypeMetadata = ();
 
-    const METADATA: &'static Self::Metadata = &();
+    const TYPE_METADATA: &'static Self::TypeMetadata = &();
 }
 
 /// A trait to describe pointers to unsized values and the *per-value* metadata stored in the GC
@@ -31,18 +31,23 @@ impl TypeMeta for UnitTypeMeta {
 ///
 /// The [`PtrMeta::Metadata`] value will be stored next to the allocated value in memory, so there
 /// is a *per-allocation* cost.
-pub unsafe trait PtrMeta<T: ?Sized> {
-    type Metadata: Copy + Send;
+pub unsafe trait PtrMeta<T: ?Sized, M> {
+    type PtrMetadata: Copy + Send;
     type Thin;
 
-    fn to_raw_parts(fat: *const T) -> (*const Self::Thin, Self::Metadata);
-    fn from_raw_parts(thin: *const Self::Thin, metadata: Self::Metadata) -> *const T;
+    fn to_raw_parts(type_meta: &'static M, fat: *const T)
+    -> (*const Self::Thin, Self::PtrMetadata);
+    fn from_raw_parts(
+        type_meta: &'static M,
+        thin: *const Self::Thin,
+        ptr_meta: Self::PtrMetadata,
+    ) -> *const T;
 }
 
 /// An extension of the [`PtrMeta`] trait that tells the garbage collector how to allocate and free
 /// memory associated with unsized values.
-pub unsafe trait AllocMeta<T: ?Sized>: PtrMeta<T> {
-    fn layout(metadata: Self::Metadata) -> Option<Layout>;
+pub unsafe trait AllocMeta<T: ?Sized, M>: PtrMeta<T, M> {
+    fn layout(type_meta: &'static M, ptr_meta: Self::PtrMetadata) -> Option<Layout>;
 }
 
 /// A trivial implementation of [`PtrMeta`] and [`AllocMeta`] that can only allocate sized values
@@ -52,24 +57,24 @@ pub unsafe trait AllocMeta<T: ?Sized>: PtrMeta<T> {
 /// pointer is the same as the "thin" `*const PtrMeta::Thin` pointer.
 pub struct UnitPtrMeta;
 
-unsafe impl<T> PtrMeta<T> for UnitPtrMeta {
-    type Metadata = ();
+unsafe impl<T, M> PtrMeta<T, M> for UnitPtrMeta {
+    type PtrMetadata = ();
     type Thin = T;
 
     #[inline]
-    fn to_raw_parts(fat: *const T) -> (*const T, Self::Metadata) {
+    fn to_raw_parts(_type_meta: &M, fat: *const T) -> (*const T, Self::PtrMetadata) {
         (fat, ())
     }
 
     #[inline]
-    fn from_raw_parts(thin: *const T, _metadata: Self::Metadata) -> *const T {
+    fn from_raw_parts(_type_meta: &M, thin: *const T, _ptr_meta: Self::PtrMetadata) -> *const T {
         thin
     }
 }
 
-unsafe impl<T> AllocMeta<T> for UnitPtrMeta {
+unsafe impl<T, M> AllocMeta<T, M> for UnitPtrMeta {
     #[inline]
-    fn layout(_metadata: ()) -> Option<Layout> {
+    fn layout(_type_meta: &M, _ptr_meta: ()) -> Option<Layout> {
         Some(Layout::new::<T>())
     }
 }

@@ -1534,13 +1534,13 @@ fn test_type_metadata() {
         struct TypeB(u32);
 
         impl gc_arena::meta::TypeMeta for TypeA {
-            type Metadata = u32;
-            const METADATA: &'static u32 = &7;
+            type TypeMetadata = u32;
+            const TYPE_METADATA: &'static u32 = &7;
         }
 
         impl gc_arena::meta::TypeMeta for TypeB {
-            type Metadata = u32;
-            const METADATA: &'static u32 = &8;
+            type TypeMetadata = u32;
+            const TYPE_METADATA: &'static u32 = &8;
         }
 
         let a = GcBuilder::new_with_type_meta::<TypeA>().write(mc, TypeA(7));
