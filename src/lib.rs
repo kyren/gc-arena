@@ -55,8 +55,8 @@ pub use self::{
     gc_weak::GcWeak,
     lock::{GcLock, GcRefLock, Lock, RefLock},
     slice::{
-        GcSlice, GcSliceBuilder, GcSliceWithHeader, GcSliceWithHeaderBuilder, GcThinSlice,
-        GcThinSliceWithHeader, SliceWithHeader,
+        GcSlice, GcSliceBuilder, GcSliceWithHeader, GcSliceWithHeaderBuilder, GcStr, GcStrBuilder,
+        GcThinSlice, GcThinSliceWithHeader, GcThinStr, SliceWithHeader,
     },
     static_wrapper::Static,
 };

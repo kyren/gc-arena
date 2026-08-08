@@ -1493,12 +1493,13 @@ fn test_thin_slice_with_header() {
             .copy_slice(mc, &[5, 6, 7, 8, 9]);
 
         let thin_ptr: GcThinSliceWithHeader<i32, i32> = Gc::as_thin(ptr);
-        assert_eq!(thin_ptr.as_ref().header, 47);
-        assert_eq!(thin_ptr.as_ref().slice, [5, 6, 7, 8, 9]);
+        assert_eq!(*Gc::as_thin_ref(thin_ptr), 47);
+        assert_eq!(thin_ptr.header, 47);
+        assert_eq!(thin_ptr.slice, [5, 6, 7, 8, 9]);
 
         let fat_ptr: GcSliceWithHeader<i32, i32> = Gc::as_fat(thin_ptr);
-        assert_eq!(fat_ptr.as_ref().header, 47);
-        assert_eq!(fat_ptr.as_ref().slice, [5, 6, 7, 8, 9]);
+        assert_eq!(fat_ptr.header, 47);
+        assert_eq!(fat_ptr.slice, [5, 6, 7, 8, 9]);
     });
 }
 
@@ -1513,10 +1514,28 @@ fn test_thin_slice() {
         let ptr = Gc::new_slice(mc, &[5, 6, 7, 8, 9]);
 
         let thin_ptr: GcThinSlice<i32> = Gc::as_thin(ptr);
-        assert_eq!(thin_ptr.as_ref(), [5, 6, 7, 8, 9]);
+        assert_eq!(*thin_ptr, [5, 6, 7, 8, 9]);
 
         let fat_ptr: GcSlice<i32> = Gc::as_fat(thin_ptr);
-        assert_eq!(fat_ptr.as_ref(), [5, 6, 7, 8, 9]);
+        assert_eq!(*fat_ptr, [5, 6, 7, 8, 9]);
+    });
+}
+
+#[test]
+fn test_thin_str() {
+    use gc_arena::{GcStr, GcThinStr};
+
+    assert!(mem::size_of::<GcStr>() > mem::size_of::<Gc<()>>());
+    assert!(mem::size_of::<GcThinStr>() == mem::size_of::<Gc<()>>());
+
+    gc_arena::arena::rootless_mutate(|mc| {
+        let s = Gc::new_str(mc, "foo");
+
+        let thin_s: GcThinStr = Gc::as_thin(s);
+        assert_eq!(thin_s.as_ref(), "foo");
+
+        let fat_s: GcStr = Gc::as_fat(thin_s);
+        assert_eq!(fat_s.as_ref(), "foo");
     });
 }
 

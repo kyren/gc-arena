@@ -110,6 +110,7 @@ impl<'gc, H: Collect<'gc>, E: Collect<'gc>, M> GcSliceWithHeaderBuilder<'gc, H, 
 impl<'gc, H, E, M> GcSliceWithHeaderBuilder<'gc, Static<H>, E, M> {
     /// Safely unwrap a `GcSliceWithHeaderBuilder<Static<H>, _, _>` into a
     /// `GcSliceWithHeaderBuilder<H, _, _>`.
+    #[inline]
     pub fn unwrap_static_header(self) -> GcSliceWithHeaderBuilder<'gc, H, E, M> {
         unsafe {
             let builder = GcSliceWithHeaderBuilder {
@@ -122,6 +123,7 @@ impl<'gc, H, E, M> GcSliceWithHeaderBuilder<'gc, Static<H>, E, M> {
 
 impl<'gc, H, E, M> GcSliceWithHeaderBuilder<'gc, H, E, M> {
     /// Return a pointer to the (possibly uninitialized) slice being constructed.
+    #[inline]
     pub fn header_ptr(&mut self) -> *mut H {
         unsafe { &raw mut (*self.inner.as_ptr()).header }
     }
@@ -168,6 +170,7 @@ impl<'gc, H, E, M> Drop for GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
 impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, Static<E>, M> {
     /// Safely unwrap a `GcSliceWithHeaderSliceBuilder<_, Static<E>, _>` into a
     /// `GcSliceWithHeaderSliceBuilder<_, E, _>`.
+    #[inline]
     pub fn unwrap_static_element(mut self) -> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
         unsafe {
             let builder = GcSliceWithHeaderSliceBuilder {
@@ -184,6 +187,7 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, Static<E>, M> {
 
 impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     /// Return a pointer to the (possibly uninitialized) slice being constructed.
+    #[inline]
     pub fn slice_ptr(&mut self) -> *mut [E] {
         unsafe { &raw mut (*self.inner.as_ptr()).slice }
     }
@@ -223,6 +227,11 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
 
 impl<'gc, H, E: Copy, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     /// Finish constructing a `GcSliceWithHeader<H, E>` by copying elements from the given slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `elements.len()` is not at least as large as the length given in
+    /// [`GcSliceWithHeaderBuilder::new`].
     pub fn copy_slice(
         mut self,
         mc: &Mutation<'gc>,
@@ -296,7 +305,8 @@ impl<'gc, E: Collect<'gc>> GcSliceBuilder<'gc, E> {
 }
 
 impl<'gc, E: Collect<'gc>, M> GcSliceBuilder<'gc, E, M> {
-    /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len`.
+    /// Create a new `GcSliceBuilder` with an uninitialized slice of length `len` and per-type
+    /// metadata from `TM`.
     pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>(len: usize) -> Self {
         Self(GcSliceWithHeaderBuilder::<(), E, M>::new_with_type_meta::<TM>(len).write_header(()))
     }
@@ -304,6 +314,7 @@ impl<'gc, E: Collect<'gc>, M> GcSliceBuilder<'gc, E, M> {
 
 impl<'gc, E, M> GcSliceBuilder<'gc, Static<E>, M> {
     /// Safely unwrap a `GcSliceBuilder<Static<E>, _>` into a `GcSliceBuilder<E, _>`.
+    #[inline]
     pub fn unwrap_static(self) -> GcSliceBuilder<'gc, E, M> {
         GcSliceBuilder(self.0.unwrap_static_element())
     }
@@ -311,6 +322,7 @@ impl<'gc, E, M> GcSliceBuilder<'gc, Static<E>, M> {
 
 impl<'gc, E, M> GcSliceBuilder<'gc, E, M> {
     /// Return a pointer to the (possibly uninitialized) slice being constructed.
+    #[inline]
     pub fn slice_ptr(&mut self) -> *mut [E] {
         self.0.slice_ptr()
     }
@@ -336,8 +348,88 @@ impl<'gc, E, M> GcSliceBuilder<'gc, E, M> {
 
 impl<'gc, E: Copy, M> GcSliceBuilder<'gc, E, M> {
     /// Finish constructing a `GcSlice<E>` by copying elements from the given slice.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `elements.len()` is not at least as large as the length given in
+    /// [`GcSliceBuilder::new`].
     pub fn copy_slice(self, mc: &Mutation<'gc>, elements: &[E]) -> GcSlice<'gc, E, M> {
         let val = self.0.copy_slice(mc, elements);
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(val) as *const [E]) }
+    }
+}
+
+pub type GcStr<'gc, M = ()> = GcFat<'gc, str, M, StrPtrMeta>;
+pub type GcThinStr<'gc, M = ()> = GcThin<'gc, str, M, StrPtrMeta>;
+
+impl<'gc> GcStr<'gc> {
+    pub fn new_str(mc: &Mutation<'gc>, s: &str) -> GcStr<'gc> {
+        GcStrBuilder::new(s.len()).copy_str(mc, s)
+    }
+}
+
+pub struct StrPtrMeta;
+
+impl<M> PtrMeta<str, M> for StrPtrMeta {
+    type PtrMetadata = usize;
+    type Thin = ();
+
+    #[inline]
+    fn to_thin(_type_meta: &M, s: *const str) -> *const () {
+        SliceWithHeader::ptr_to_thin(s as *const SliceWithHeader<(), u8>)
+    }
+
+    #[inline]
+    fn from_thin(_type_meta: &M, s: *const (), len: usize) -> *const str {
+        SliceWithHeader::<(), u8>::ptr_from_thin(s, len) as *const str
+    }
+}
+
+impl<M> AllocMeta<str, M> for StrPtrMeta {
+    #[inline]
+    fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
+        SliceWithHeader::<(), u8>::layout(len)
+    }
+}
+
+/// Provides a way to construct a new `GcStr`.
+pub struct GcStrBuilder<'gc, M = ()>(GcSliceBuilder<'gc, u8, M>);
+
+impl<'gc> GcStrBuilder<'gc> {
+    /// Create a new `GcStr` with an uninitialized str of length `len`.
+    pub fn new(len: usize) -> Self {
+        Self(GcSliceBuilder::<u8>::new(len))
+    }
+}
+
+impl<'gc, M> GcStrBuilder<'gc, M> {
+    /// Create a new `GcStrBuilder` with an uninitialized str of length `len` and per-type metadata
+    /// from `TM`.
+    pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>(len: usize) -> Self {
+        Self(GcSliceBuilder::<u8, M>::new_with_type_meta::<TM>(len))
+    }
+}
+
+impl<'gc, M> GcStrBuilder<'gc, M> {
+    /// Return a pointer to the (possibly uninitialized) str being constructed.
+    #[inline]
+    pub fn str_ptr(&mut self) -> *mut str {
+        self.0.slice_ptr() as *mut str
+    }
+
+    /// Finish constructing a `GcStr` by unsafely assuming that the held str is properly
+    /// initialized.
+    pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcStr<'gc, M> {
+        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(self.0.assume_init(mc)) as *const str) }
+    }
+
+    /// Finish constructing a `GcStr` by copying from the given `str`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `s.len()` is not at least as large as the length given in [`GcStrBuilder::new`].
+    pub fn copy_str(self, mc: &Mutation<'gc>, s: &str) -> GcStr<'gc, M> {
+        let s = self.0.copy_slice(mc, s.as_bytes());
+        unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(s) as *const str) }
     }
 }
