@@ -51,38 +51,35 @@ This crate was developed primarily as a means of writing VMs for garbage
 collected languages in safe Rust, but there are probably many more uses than
 just this.
 
-## Current status and TODOs
+## Current status
 
 Basically usable and safe! It is used by the Adobe Flash Player emulator
 [Ruffle](https://github.com/ruffle-rs/ruffle) for its ActionScript VM as well
 as some other projects (like my own stackless Lua runtime
 [piccolo](https://github.com/kyren/piccolo), for which the crate was originally
-designed)
+designed).
 
-The collection algorithm is an incremental mark-and-sweep algorithm very similar
-to the one in PUC-Rio Lua, and is optimized primarily for low pause time. During
-mutation, allocation "debt" is accumulated, and this "debt" determines the
-amount of work that the next call to `Arena::collect` will do.
+Collection uses an incremental mark-and-sweep algorithm very similar to the one
+in PUC-Rio Lua, and is optimized primarily for low pause time. During mutation,
+allocation "debt" is accumulated, and this "debt" determines the amount of work
+that the next call to `Arena::collect` will do.
 
-The pointers held in arenas (spelled `Gc<'gc, T>`) are zero-cost raw pointers.
-They implement `Copy` and are pointer sized, and no bookkeeping at all is done
-during mutation. 
+The pointers held in arenas (spelled `Gc<'gc, T>`) are zero-cost newtypes around
+`*const T` which implement `Copy`. No pointer bookkeeping at all is necessary as
+`Gc`s are moved or copied during mutation.
 
-Some notable current limitations:
+There is robust support for allocating slices, `str`s, and other DSTs
+(Dynamically Sized Types) directly in `Gc` pointers and converting `Gc` pointers
+from "fat" to "thin" representations which read pointer metadata from the GC
+object header.
 
-* Allocating DSTs is currently somewhat painful due to limitations in Rust. It
-  is possible to  have `Gc` pointers to DSTs, and there is a replacement for
-  unstable `Unsize` coercion, but there is no support for directly allocating
-  arbitrarily sized DSTs.
+### Some notable limitations:
 
-* There is no support at all for multi-threaded allocation and collection.
-  The basic lifetime and safety techniques here would still work in an arena
-  supporting multi-threading, but this crate does not support this. It is
-  optimized for single threaded use and multiple, independent arenas.
-  
-* The `Collect` trait does not provide a mechanism to move objects once they are
-  allocated, so this limits the types of collectors that could be written. This
-  is achievable but no work has been done towards this.
+* This crate is designed for single-threaded use and multiple, independent
+  arenas. It has no support for multi-threaded mutation or collection.
+
+* There is currently no mechanism for moving allocated objects or heap
+  compaction.
 
 ## Prior Art
 
