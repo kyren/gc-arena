@@ -53,11 +53,11 @@ just this.
 
 ## Current status
 
-Basically usable and safe! It is used by the Adobe Flash Player emulator
-[Ruffle](https://github.com/ruffle-rs/ruffle) for its ActionScript VM as well
-as some other projects (like my own stackless Lua runtime
-[piccolo](https://github.com/kyren/piccolo), for which the crate was originally
-designed).
+Basically usable and safe! It is used by the Adobe Flash Player
+emulator [Ruffle](https://github.com/ruffle-rs/ruffle) for its
+ActionScript VM as well my own GameMaker compatible compiler / VM
+[fabricator](https://github.com/kyren/fabricator) used by the game [Fields of
+Mistria](https://www.fieldsofmistria.com/).
 
 Collection uses an incremental mark-and-sweep algorithm very similar to the one
 in PUC-Rio Lua, and is optimized primarily for low pause time. During mutation,
@@ -69,9 +69,9 @@ The pointers held in arenas (spelled `Gc<'gc, T>`) are zero-cost newtypes around
 `Gc`s are moved or copied during mutation.
 
 There is robust support for allocating slices, `str`s, and other DSTs
-(Dynamically Sized Types) directly in `Gc` pointers and converting `Gc` pointers
-from "fat" to "thin" representations which read pointer metadata from the GC
-object header.
+(Dynamically Sized Types) directly in `Gc` pointers. `Gc` pointers to DSTs can
+also have either a "fat" or "thin" representation, the second of which reads
+pointer metadata from the GC object header.
 
 ### Some notable limitations:
 
