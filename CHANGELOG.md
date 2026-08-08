@@ -1,8 +1,48 @@
+## [0.7.0]
+
+Small release with one significant change: `Gc` now points to `T` directly,
+*eliminating* the extra soundness requirement documented in v0.6.1 for
+`Gc::cast` and `Gc::from_ptr`.
+
+This change also should enable very slightly improved performance by pointing
+directly to a `T` rather than pointing to a structure with `T` as a field.
+This comes with a very slight reduction in performance for tracing because the
+opposite is true there, the pointer must be negatively offset to the header.
+Since dereferencing is vastly more common than tracing, this is a win.
+
+There is also one *behavior only* API incompatible change, but it changes the
+behavior enough to warrant an incompatible semver change: GC pacing is now based
+on *`Gc` pointer count* and no longer on the (shallow) size of allocations in
+bytes.
+
+This change was made because it is has been too difficult in Rust to try
+and integrate with Rust's other ways of allocating and freeing memory and
+determining the cost of allocations, drops, and frees. With this change,
+there is no longer an association whatsoever with the shallow size in bytes
+for allocations and pacing. This was already very misleading, as it did not
+(automatically) count any allocations held by GC objects, and integrating
+external byte allocation proved far too complex and brittle and did not account
+for drops that are expensive in other ways.
+
+The replacement is either live with the inaccuracy of `Gc`-count pacing (which
+is practically no different than before), or to keep track of memory manually
+(which is equivalently difficult as using the previous "external bytes"
+features) and create debt artificially at an appropriate pace.
+
+Practically speaking, the only change for users will be to adjust pacing factors
+if you set them manually.
+
+### Release Highlights
+* Use raw `Gc` count for collection metrics and ignore allocation size.
+* New `ZstCache` type to share a single allocation among `Gc` pointers to ZSTs.
+* `Gc` and `GcWeak` now store pointers directly to `T` and are more or less
+  identical to `*const T` in behavior and performance.
+
 ## [0.6.1]
 
 (Doc-only) soundess fix for v0.6.0!
 
-The only change is:
+### Release Highlights
 * Document that `Gc::cast` and `Gc::from_ptr` require that the source and target
   types share the same alignment.
 
