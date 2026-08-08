@@ -288,7 +288,7 @@ where
         K::from_store(gc.ptr).as_ptr()
     }
 
-    /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
+    /// Retrieve a `Gc` from a raw pointer obtained from [`Gc::as_ptr`].
     ///
     /// # Safety
     ///
@@ -328,12 +328,26 @@ where
     /// This converts the `Gc` to point to a `()`, and changes the kind to [`DefaultGcKind`].
     ///
     /// This is always safe to do as it is always safe to dereference a `*const ()` which comes from
-    /// some other dereferencable pointer type and `DefaultGcKind` has `()` for both per-type and
-    /// per-value metadata.
+    /// some other dereferencable pointer type and `DefaultGcKind` assumes nothing about the real
+    /// per-type and per-value metadata.
     #[inline]
     pub fn erase(this: Self) -> Gc<'gc, ()> {
         Gc {
             ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr) as *mut ()) },
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<'gc, T: ?Sized, M, P> GcFat<'gc, T, M, P> {
+    /// Change the `Gc` kind to [`DefaultGcKind`].
+    ///
+    /// This is always safe to do because `DefaultGcKind` assumes nothing about the real per-type
+    /// and per-value metadata.
+    #[inline]
+    pub fn erase_kind(this: Self) -> Gc<'gc, T> {
+        Gc {
+            ptr: unsafe { GcPtr::from_ptr(GcPtr::as_ptr(this.ptr)) },
             _marker: PhantomData,
         }
     }
@@ -413,6 +427,17 @@ where
     }
 }
 
+impl<'gc, T: ?Sized, S, M, P> Gc<'gc, T, GcKind<S, M, P>>
+where
+    GcKind<S, M, P>: IsGcKind<'gc, T>,
+{
+    /// Retrieve the *per-type* metadata specified when a `Gc` was allocated.
+    #[inline]
+    pub fn type_metadata(gc: Gc<'gc, T, GcKind<S, M, P>>) -> &'static M {
+        unsafe { gc.ptr.type_metadata::<M>() }
+    }
+}
+
 impl<'gc, T: ?Sized, M, P> GcFat<'gc, T, M, P>
 where
     M: 'static,
@@ -437,6 +462,7 @@ where
     /// But, this means that on "thin" pointers, operations like finding the length of a slice must
     /// visit the memory that the `Gc` points to rather than this metadata being available next to
     /// the pointer itself.
+    #[inline]
     pub fn as_thin(gc: Self) -> GcThin<'gc, T, M, P> {
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(gc)) }
     }
@@ -451,18 +477,44 @@ where
     /// Convert a "thin" `Gc` to a "fat" one.
     ///
     /// This is the reverse of [`Gc::as_thin`]
+    #[inline]
     pub fn as_fat(gc: Self) -> GcFat<'gc, T, M, P> {
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(gc)) }
     }
 }
 
-impl<'gc, T: ?Sized, S, M, P> Gc<'gc, T, GcKind<S, M, P>>
+impl<'gc, T: ?Sized, M, P> GcThin<'gc, T, M, P>
 where
-    GcKind<S, M, P>: IsGcKind<'gc, T>,
+    M: 'static,
+    P: PtrMeta<T, M>,
+    P::Thin: 'gc,
 {
-    /// Retrieve the *per-type* metadata specified when a `Gc` was allocated.
-    pub fn type_metadata(gc: Gc<'gc, T, GcKind<S, M, P>>) -> &'static M {
-        unsafe { gc.ptr.type_metadata::<M>() }
+    /// Retrieve a reference to the thin value held in a [`GcThin`].
+    #[inline]
+    pub fn as_thin_ref(this: Self) -> &'gc P::Thin {
+        // SAFETY: The returned `'gc` lifetime is safe for the same reason as `Gc::as_ref`.
+        unsafe { this.ptr.as_ref() }
+    }
+
+    /// Retrieve the raw *thin* pointer held in a [`GcThin`].
+    #[inline]
+    pub fn as_thin_ptr(this: Self) -> *const P::Thin {
+        this.ptr.as_ptr()
+    }
+
+    /// Retrieve a `Gc` from a raw pointer obtained from [`Gc::as_thin_ptr`].
+    ///
+    /// # Safety
+    ///
+    /// This has all the same safety requirements as [`Gc::from_ptr_with_kind`].
+    #[inline]
+    pub unsafe fn from_thin_ptr_with_kind(ptr: *const P::Thin) -> GcThin<'gc, T, M, P> {
+        unsafe {
+            Gc {
+                ptr: GcPtr::from_ptr(ptr.cast_mut()),
+                _marker: PhantomData,
+            }
+        }
     }
 }
 
@@ -471,10 +523,12 @@ where
     K: IsGcKind<'gc, T>,
     T: PartialEq,
 {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.as_ref().eq(other.as_ref())
     }
 
+    #[inline]
     fn ne(&self, other: &Self) -> bool {
         self.as_ref().ne(other.as_ref())
     }
@@ -523,6 +577,7 @@ where
     K: IsGcKind<'gc, T>,
     T: Ord,
 {
+    #[inline]
     fn cmp(&self, other: &Self) -> core::cmp::Ordering {
         self.as_ref().cmp(other.as_ref())
     }
@@ -533,6 +588,7 @@ where
     K: IsGcKind<'gc, T>,
     T: Hash,
 {
+    #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.as_ref().hash(state)
     }
@@ -554,7 +610,6 @@ impl<'gc, T: ?Sized, M, P> Drop for GcBuilder<'gc, T, M, P> {
 
 impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
     /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a *sized* `T`.
-    #[inline]
     pub fn new() -> Self {
         GcBuilder::new_with_type_meta::<UnitTypeMeta>()
     }
@@ -569,7 +624,6 @@ where
     ///
     /// The `TM::METADATA` pointer will be stored in the static *per-type* vtable so there is no
     /// per-allocation cost, but there is one vtable per `T` <-> `TM` pair.
-    #[inline]
     pub fn new_with_type_meta<TM: TypeMeta<TypeMetadata = M>>() -> Self {
         unsafe { Self::new_with_type_and_ptr_meta::<TM>(()) }
     }
@@ -580,14 +634,13 @@ where
     T: Collect<'gc>,
     P: AllocMeta<T, M>,
 {
-    /// Create a new `GcBuilder` suitable for building a `Gc` pointing to an *unsized* `T`with the
-    /// given `ptr_meta` per-value metadata and per-type metadata from `TM`.
+    /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a (potentially *unsized*)
+    /// `T` with per-type metadata from `TM` and the given `ptr_meta` per-value metadata.
     ///
     /// # Safety
     ///
     /// Using this method requires asserting that `P: AllocMeta` is correctly implemented for the
     /// `TM::METADATA` being used to create the `Gc`.
-    #[inline]
     pub unsafe fn new_with_type_and_ptr_meta<TM: TypeMeta<TypeMetadata = M>>(
         ptr_meta: P::PtrMetadata,
     ) -> Self {
@@ -631,11 +684,13 @@ impl<'gc, T: ?Sized, M, P> GcBuilder<'gc, T, M, P> {
     ///
     /// The pointer will always point to valid, aligned memory for the type `T` and may be written
     /// to to initialize the value.
+    #[inline]
     pub fn as_ptr(&mut self) -> *mut T {
         self.ptr.as_ptr()
     }
 
     /// Convert this `GcBuilder` into a bare pointer.
+    #[inline]
     pub fn into_raw(self) -> *mut T {
         let ptr = self.ptr;
         mem::forget(self);
@@ -648,6 +703,7 @@ impl<'gc, T: ?Sized, M, P> GcBuilder<'gc, T, M, P> {
     ///
     /// The types of `T`, `P`, and `M` must be compatible with the originally constructed
     /// `GcBuilder`.
+    #[inline]
     pub unsafe fn from_raw(ptr: *mut T) -> GcBuilder<'gc, T, M, P> {
         unsafe {
             Self {
@@ -674,7 +730,6 @@ impl<'gc, T: ?Sized, M, P> GcBuilder<'gc, T, M, P> {
 
 impl<'gc, T, M, P> GcBuilder<'gc, T, M, P> {
     /// Finish constructing a `Gc<T>` by initializing the (sized) value with `val`.
-    #[inline]
     pub fn write(mut self, mc: &Mutation<'gc>, val: T) -> GcFat<'gc, T, M, P> {
         unsafe {
             self.as_ptr().write(val);
