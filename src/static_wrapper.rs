@@ -88,13 +88,13 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrMeta<Static<T>, M> for StaticPtrMeta<P> 
     type Thin = Static<P::Thin>;
 
     #[inline]
-    fn to_thin(type_meta: &'static M, fat: *const Static<T>) -> *const Static<P::Thin> {
+    fn to_thin(type_meta: M, fat: *const Static<T>) -> *const Static<P::Thin> {
         P::to_thin(type_meta, fat as *const T) as *const Static<P::Thin>
     }
 
     #[inline]
     fn from_thin(
-        type_meta: &'static M,
+        type_meta: M,
         thin: *const Static<P::Thin>,
         ptr_meta: P::PtrMetadata,
     ) -> *const Static<T> {
@@ -104,7 +104,7 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrMeta<Static<T>, M> for StaticPtrMeta<P> 
 
 impl<T: ?Sized, M, P: AllocMeta<T, M>> AllocMeta<Static<T>, M> for StaticPtrMeta<P> {
     #[inline]
-    fn layout(type_meta: &'static M, ptr_meta: Self::PtrMetadata) -> Option<core::alloc::Layout> {
+    fn layout(type_meta: M, ptr_meta: Self::PtrMetadata) -> Option<core::alloc::Layout> {
         P::layout(type_meta, ptr_meta)
     }
 }

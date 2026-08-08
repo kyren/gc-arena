@@ -5,11 +5,13 @@ extern crate std;
 
 extern crate alloc;
 
-pub mod arena;
-pub mod barrier;
-pub mod zst_cache;
 #[macro_use]
 pub mod collect;
+#[macro_use]
+pub mod meta;
+
+pub mod arena;
+pub mod barrier;
 mod collect_impl;
 mod context;
 pub mod dynamic_roots;
@@ -17,13 +19,13 @@ pub mod gc;
 mod gc_ptr;
 mod gc_weak;
 pub mod lock;
-pub mod meta;
 pub mod metrics;
 mod no_drop;
 pub mod slice;
 mod static_wrapper;
 mod types;
 mod unsize;
+pub mod zst_cache;
 
 #[cfg(feature = "enum-map")]
 mod enum_map;

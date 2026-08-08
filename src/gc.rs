@@ -105,7 +105,7 @@ unsafe impl<'gc, T: ?Sized + 'gc, M, P> GcStore<'gc, T> for GcKind<Fat, M, P> {
 
 unsafe impl<'gc, T: ?Sized + 'gc, M, P> GcStore<'gc, T> for GcKind<Thin, M, P>
 where
-    M: 'static,
+    M: Copy,
     P: PtrMeta<T, M>,
     P::Thin: 'gc,
 {
@@ -429,18 +429,19 @@ where
 
 impl<'gc, T: ?Sized, S, M, P> Gc<'gc, T, GcKind<S, M, P>>
 where
+    M: Copy,
     GcKind<S, M, P>: IsGcKind<'gc, T>,
 {
     /// Retrieve the *per-type* metadata specified when a `Gc` was allocated.
     #[inline]
-    pub fn type_metadata(gc: Gc<'gc, T, GcKind<S, M, P>>) -> &'static M {
+    pub fn type_metadata(gc: Gc<'gc, T, GcKind<S, M, P>>) -> M {
         unsafe { gc.ptr.type_metadata::<M>() }
     }
 }
 
 impl<'gc, T: ?Sized, M, P> GcFat<'gc, T, M, P>
 where
-    M: 'static,
+    M: Copy,
     P: PtrMeta<T, M>,
     P::Thin: 'gc,
 {
@@ -470,7 +471,7 @@ where
 
 impl<'gc, T: ?Sized, M, P> GcThin<'gc, T, M, P>
 where
-    M: 'static,
+    M: Copy,
     P: PtrMeta<T, M>,
     P::Thin: 'gc,
 {
@@ -485,7 +486,7 @@ where
 
 impl<'gc, T: ?Sized, M, P> GcThin<'gc, T, M, P>
 where
-    M: 'static,
+    M: Copy,
     P: PtrMeta<T, M>,
     P::Thin: 'gc,
 {

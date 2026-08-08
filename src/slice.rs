@@ -60,19 +60,19 @@ impl<H, E, M> PtrMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
     type Thin = H;
 
     #[inline]
-    fn to_thin(_type_meta: &M, slice: *const SliceWithHeader<H, E>) -> *const H {
+    fn to_thin(_type_meta: M, slice: *const SliceWithHeader<H, E>) -> *const H {
         SliceWithHeader::ptr_to_thin(slice)
     }
 
     #[inline]
-    fn from_thin(_type_meta: &M, ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
+    fn from_thin(_type_meta: M, ptr: *const H, len: usize) -> *const SliceWithHeader<H, E> {
         SliceWithHeader::ptr_from_thin(ptr, len)
     }
 }
 
 impl<H, E, M> AllocMeta<SliceWithHeader<H, E>, M> for SliceWithHeaderPtrMeta {
     #[inline]
-    fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
+    fn layout(_type_meta: M, len: usize) -> Option<Layout> {
         SliceWithHeader::<H, E>::layout(len)
     }
 }
@@ -277,19 +277,19 @@ impl<E, M> PtrMeta<[E], M> for SlicePtrMeta {
     type Thin = ();
 
     #[inline]
-    fn to_thin(_type_meta: &M, slice: *const [E]) -> *const () {
+    fn to_thin(_type_meta: M, slice: *const [E]) -> *const () {
         SliceWithHeader::ptr_to_thin(slice as *const SliceWithHeader<(), E>)
     }
 
     #[inline]
-    fn from_thin(_type_meta: &M, ptr: *const (), len: usize) -> *const [E] {
+    fn from_thin(_type_meta: M, ptr: *const (), len: usize) -> *const [E] {
         SliceWithHeader::<(), E>::ptr_from_thin(ptr, len) as *const [E]
     }
 }
 
 impl<E, M> AllocMeta<[E], M> for SlicePtrMeta {
     #[inline]
-    fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
+    fn layout(_type_meta: M, len: usize) -> Option<Layout> {
         SliceWithHeader::<(), E>::layout(len)
     }
 }
@@ -375,19 +375,19 @@ impl<M> PtrMeta<str, M> for StrPtrMeta {
     type Thin = ();
 
     #[inline]
-    fn to_thin(_type_meta: &M, s: *const str) -> *const () {
+    fn to_thin(_type_meta: M, s: *const str) -> *const () {
         SliceWithHeader::ptr_to_thin(s as *const SliceWithHeader<(), u8>)
     }
 
     #[inline]
-    fn from_thin(_type_meta: &M, s: *const (), len: usize) -> *const str {
+    fn from_thin(_type_meta: M, s: *const (), len: usize) -> *const str {
         SliceWithHeader::<(), u8>::ptr_from_thin(s, len) as *const str
     }
 }
 
 impl<M> AllocMeta<str, M> for StrPtrMeta {
     #[inline]
-    fn layout(_type_meta: &M, len: usize) -> Option<Layout> {
+    fn layout(_type_meta: M, len: usize) -> Option<Layout> {
         SliceWithHeader::<(), u8>::layout(len)
     }
 }
