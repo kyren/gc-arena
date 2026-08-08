@@ -6,7 +6,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.6.1"
 authors = ["kyren <catherine@kyju.org>", "moulins", "Aaron Hill <aa1ronham@gmail.com>"]
 edition = "2024"
 license = "MIT"
@@ -30,7 +30,7 @@ tracing = ["dep:tracing"]
 
 [dependencies]
 enum-map = { version = "2.7", optional = true, default-features = false }
-gc-arena-derive = { path = "./derive", version = "0.6.0"}
+gc-arena-derive = { path = "./derive", version = "0.6.1"}
 hashbrown = { version = "0.17", optional = true, default-features = false }
 indexmap = { version = "2.13", optional = true, default-features = false }
 slotmap = { version = "1.1", optional = true, default-features = false }

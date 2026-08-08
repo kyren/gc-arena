@@ -1,3 +1,11 @@
+## [0.6.1]
+
+(Doc-only) soundess fix for v0.6.0!
+
+The only change is:
+* Document that `Gc::cast` and `Gc::from_ptr` require that the source and target
+  types share the same alignment.
+
 ## [0.6.0]
 
 Big release with a huge number of changes.

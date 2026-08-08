@@ -125,7 +125,9 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     /// Cast a `Gc` pointer to a different type.
     ///
     /// # Safety
-    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`.
+    ///
+    /// It must be valid to dereference a `*mut U` that has come from casting a `*mut T`, and `U`
+    /// and `T` must have *identical alignment*.
     #[inline]
     pub unsafe fn cast<U: 'gc>(this: Gc<'gc, T>) -> Gc<'gc, U> {
         Gc {
@@ -135,20 +137,19 @@ impl<'gc, T: ?Sized + 'gc> Gc<'gc, T> {
     }
 
     /// Cast a `Gc` to the unit type.
-    ///
-    /// This is exactly the same as `unsafe { Gc::cast::<()>(this) }`, but we can provide this
-    /// method safely because it is always safe to dereference a `*mut ()` that has come from
-    /// casting a `*mut T`.
     #[inline]
     pub fn erase(this: Gc<'gc, T>) -> Gc<'gc, ()> {
         unsafe { Gc::cast(this) }
     }
 
-    /// Retrieve a `Gc` from a raw pointer obtained from `Gc::as_ptr`
+    /// Retrieve a `Gc` from a raw pointer obtained from [`Gc::as_ptr`].
     ///
     /// # Safety
+    ///
     /// The provided pointer must have been obtained from `Gc::as_ptr`, and the pointer must not
     /// have been collected yet.
+    ///
+    /// If the pointer has changed type, this also shares the safety requirements of [`Gc::cast`].
     #[inline]
     pub unsafe fn from_ptr(ptr: *const T) -> Gc<'gc, T> {
         unsafe {
