@@ -1544,12 +1544,10 @@ fn test_type_metadata() {
     gc_arena::arena::rootless_mutate(|mc| {
         #[derive(Collect)]
         #[collect(require_static)]
-        #[repr(C)]
         struct TypeA(u32);
 
         #[derive(Collect)]
         #[collect(require_static)]
-        #[repr(C)]
         struct TypeB(u32);
 
         impl gc_arena::meta::TypeMeta for TypeA {
@@ -1570,6 +1568,43 @@ fn test_type_metadata() {
         assert_eq!(b.0, 8);
         assert_eq!(*Gc::type_metadata(b), 8);
     });
+}
+
+#[test]
+fn test_type_meta_same_types() {
+    gc_arena::arena::rootless_mutate(|mc| {
+        #[derive(Collect)]
+        #[collect(no_drop)]
+        struct Object(HashMap<String, i32>);
+
+        #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+        struct IsLocked(bool);
+
+        struct Locked;
+
+        impl gc_arena::meta::TypeMeta for Locked {
+            type TypeMetadata = IsLocked;
+
+            const TYPE_METADATA: &'static IsLocked = &IsLocked(true);
+        }
+
+        struct Unlocked;
+
+        impl gc_arena::meta::TypeMeta for Unlocked {
+            type TypeMetadata = IsLocked;
+
+            const TYPE_METADATA: &'static IsLocked = &IsLocked(false);
+        }
+
+        let obj_a = GcBuilder::new_with_type_meta::<Locked>().write(mc, Object(HashMap::new()));
+        let obj_b = GcBuilder::new_with_type_meta::<Unlocked>().write(mc, Object(HashMap::new()));
+
+        assert_eq!(*Gc::type_metadata(obj_a), IsLocked(true));
+        assert_eq!(*Gc::type_metadata(obj_b), IsLocked(false));
+
+        let mut _obj_c = obj_a;
+        _obj_c = obj_b;
+    })
 }
 
 #[test]
