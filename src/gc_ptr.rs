@@ -11,7 +11,7 @@ use core::{
 use crate::{
     collect::Collect,
     context::Context,
-    meta::{AllocMeta, PtrMeta, TypeMeta},
+    meta::{self, AllocMeta, PtrMeta, TypeMeta},
     types::GcColor,
 };
 
@@ -81,7 +81,9 @@ impl<'gc, T: ?Sized + Collect<'gc>> GcPtr<T> {
             );
 
             meta_ptr.write(ptr_meta);
-            header_ptr.write(GcHeader::new(&VtableFor::<T, TM, P>::VTABLE));
+            header_ptr.write(GcHeader::new(
+                &TM::__type_properties::<VtableFor<T, TM, P>>(),
+            ));
 
             GcPtr(NonNull::new_unchecked(fat_ptr))
         }
@@ -104,7 +106,7 @@ impl<T: ?Sized> GcPtr<T> {
     /// The given `M` per-type and `P` per-ptr metadata types must be compatible with the one used
     /// to allocate the `GcPtr`.
     #[inline(always)]
-    pub(crate) unsafe fn fat_ptr<F: ?Sized, M: 'static, P: PtrMeta<F, M>>(self) -> GcPtr<F> {
+    pub(crate) unsafe fn fat_ptr<F: ?Sized, M: Copy, P: PtrMeta<F, M>>(self) -> GcPtr<F> {
         unsafe {
             GcPtr(PtrProps::<F, M, P>::fat_ptr(
                 self.type_metadata::<M>(),
@@ -118,7 +120,7 @@ impl<T: ?Sized> GcPtr<T> {
     /// The given `M` per-type and `P` per-ptr metadata types must be compatible with the one used
     /// to allocate the `GcPtr`.
     #[inline(always)]
-    pub(crate) unsafe fn thin_ptr<M: 'static, P: PtrMeta<T, M>>(self) -> GcPtr<P::Thin> {
+    pub(crate) unsafe fn thin_ptr<M: Copy, P: PtrMeta<T, M>>(self) -> GcPtr<P::Thin> {
         unsafe {
             let p = P::to_thin(self.type_metadata(), self.0.as_ptr());
             GcPtr(NonNull::new_unchecked(p.cast_mut()))
@@ -130,8 +132,10 @@ impl<T: ?Sized> GcPtr<T> {
     /// The given `M` per-type metadata type must be compatible with the `TM::Metadata` used to
     /// allocate the `GcPtr`.
     #[inline(always)]
-    pub(crate) unsafe fn type_metadata<M>(self) -> &'static M {
-        unsafe { self.header().vtable().type_metadata.cast::<M>().as_ref() }
+    pub(crate) unsafe fn type_metadata<M: Copy>(self) -> M {
+        let header_ptr = self.header().vtable_ptr();
+        let type_props_ptr = header_ptr as *const meta::__TypeProperties<M>;
+        unsafe { (*type_props_ptr).metadata }
     }
 
     #[inline(always)]
@@ -227,10 +231,10 @@ impl GcHeader {
     /// 2) `needs_trace` set to `false`
     /// 3) `is_live` set to `false`
     #[inline(always)]
-    fn new(vtable: &'static GcVtable) -> Self {
+    fn new<M>(type_props: &'static meta::__TypeProperties<M>) -> Self {
         Self {
             next: Cell::new(None),
-            tagged_vtable: Cell::new(vtable as *const _),
+            tagged_vtable: Cell::new(ptr::from_ref(type_props) as *const GcVtable),
         }
     }
 
@@ -241,6 +245,11 @@ impl GcHeader {
         // - the pointer was properly untagged.
         // - the vtable is stored in static memory.
         unsafe { &*ptr }
+    }
+
+    #[inline(always)]
+    fn vtable_ptr(&self) -> *const GcVtable {
+        tagged_ptr::untag(self.tagged_vtable.get())
     }
 
     /// Gets the next element in the global linked list of allocated objects.
@@ -313,14 +322,13 @@ impl GcHeader {
 /// We use a custom vtable instead of `dyn Collect` for extra flexibility. The type is over-aligned
 /// so that `GcHeader` can store flags into the LSBs of the vtable pointer.
 #[repr(align(16))]
-struct GcVtable {
+pub(crate) struct GcVtable {
     /// Traces the value at the given pointer.
     trace_value: unsafe fn(NonNull<()>, &mut Context),
     /// Drops the value at the given pointer.
     drop_value: unsafe fn(NonNull<()>),
     /// Frees the allocation for given value pointer.
     dealloc: unsafe fn(NonNull<()>),
-    type_metadata: NonNull<()>,
 }
 
 struct PtrProps<T: ?Sized, P, M>(PhantomData<(*const T, P, M)>);
@@ -345,7 +353,7 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrProps<T, M, P> {
     }
 
     #[inline(always)]
-    unsafe fn fat_ptr<U: ?Sized>(type_meta: &'static M, value_ptr: NonNull<U>) -> NonNull<T> {
+    unsafe fn fat_ptr<U: ?Sized>(type_meta: M, value_ptr: NonNull<U>) -> NonNull<T> {
         unsafe {
             let ptr_meta = Self::read_ptr_meta(value_ptr);
             NonNull::new_unchecked(
@@ -358,9 +366,9 @@ impl<T: ?Sized, M, P: PtrMeta<T, M>> PtrProps<T, M, P> {
 struct VtableFor<T: ?Sized, TM, P>(PhantomData<(*const T, TM, P)>);
 
 impl<'gc, T: ?Sized + Collect<'gc>, TM: TypeMeta, P: AllocMeta<T, TM::TypeMetadata>>
-    VtableFor<T, TM, P>
+    meta::__VtableProxy for VtableFor<T, TM, P>
 {
-    const VTABLE: GcVtable = GcVtable {
+    const VTABLE: meta::__Vtable = meta::__Vtable(GcVtable {
         trace_value: |value_ptr, cc| unsafe {
             PtrProps::<T, TM::TypeMetadata, P>::fat_ptr(TM::TYPE_METADATA, value_ptr)
                 .as_ref()
@@ -385,8 +393,7 @@ impl<'gc, T: ?Sized + Collect<'gc>, TM: TypeMeta, P: AllocMeta<T, TM::TypeMetada
                 alloc::dealloc(alloc_ptr as *mut u8, alloc_layout);
             }
         },
-        type_metadata: NonNull::from_ref(TM::TYPE_METADATA).cast(),
-    };
+    });
 }
 
 /// Compute the layout of a block of memory composed of a header and a value. Returns the layout and

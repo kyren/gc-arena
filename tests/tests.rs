@@ -1552,21 +1552,27 @@ fn test_type_metadata() {
 
         impl gc_arena::meta::TypeMeta for TypeA {
             type TypeMetadata = u32;
-            const TYPE_METADATA: &'static u32 = &7;
+
+            const TYPE_METADATA: u32 = 7;
+
+            gc_arena::meta::type_meta_const_promotion!();
         }
 
         impl gc_arena::meta::TypeMeta for TypeB {
             type TypeMetadata = u32;
-            const TYPE_METADATA: &'static u32 = &8;
+
+            const TYPE_METADATA: u32 = 8;
+
+            gc_arena::meta::type_meta_const_promotion!();
         }
 
         let a = GcBuilder::new_with_type_meta::<TypeA>().write(mc, TypeA(7));
         let b = GcBuilder::new_with_type_meta::<TypeB>().write(mc, TypeB(8));
 
         assert_eq!(a.0, 7);
-        assert_eq!(*Gc::type_metadata(a), 7);
+        assert_eq!(Gc::type_metadata(a), 7);
         assert_eq!(b.0, 8);
-        assert_eq!(*Gc::type_metadata(b), 8);
+        assert_eq!(Gc::type_metadata(b), 8);
     });
 }
 
