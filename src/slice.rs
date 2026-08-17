@@ -230,7 +230,7 @@ impl<'gc, H, E: Copy, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
     ///
     /// # Panics
     ///
-    /// Panics if `elements.len()` is not at least as large as the length given in
+    /// Panics if `elements.len()` is not equal to the length given in
     /// [`GcSliceWithHeaderBuilder::new`].
     pub fn copy_slice(
         mut self,
@@ -238,10 +238,7 @@ impl<'gc, H, E: Copy, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
         elements: &[E],
     ) -> GcSliceWithHeader<'gc, H, E, M> {
         let len = self.slice_ptr().len();
-        assert!(
-            elements.len() >= len,
-            "`elements` is less than length {len}"
-        );
+        assert!(elements.len() == len, "`elements` is not length {len}");
         unsafe {
             ptr::copy_nonoverlapping(
                 elements.as_ptr(),
@@ -351,8 +348,7 @@ impl<'gc, E: Copy, M> GcSliceBuilder<'gc, E, M> {
     ///
     /// # Panics
     ///
-    /// Panics if `elements.len()` is not at least as large as the length given in
-    /// [`GcSliceBuilder::new`].
+    /// Panics if `elements.len()` is not equal to the length given in [`GcSliceBuilder::new`].
     pub fn copy_slice(self, mc: &Mutation<'gc>, elements: &[E]) -> GcSlice<'gc, E, M> {
         let val = self.0.copy_slice(mc, elements);
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(val) as *const [E]) }
@@ -427,7 +423,7 @@ impl<'gc, M> GcStrBuilder<'gc, M> {
     ///
     /// # Panics
     ///
-    /// Panics if `s.len()` is not at least as large as the length given in [`GcStrBuilder::new`].
+    /// Panics if `s.len()` is not equal to the length given in [`GcStrBuilder::new`].
     pub fn copy_str(self, mc: &Mutation<'gc>, s: &str) -> GcStr<'gc, M> {
         let s = self.0.copy_slice(mc, s.as_bytes());
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(s) as *const str) }
