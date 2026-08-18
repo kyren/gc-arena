@@ -25,6 +25,9 @@ mod static_wrapper;
 mod types;
 mod unsize;
 
+#[cfg(all(feature = "ahash", feature = "std"))]
+mod ahash;
+
 #[cfg(feature = "enum-map")]
 mod enum_map;
 
