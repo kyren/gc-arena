@@ -29,7 +29,7 @@ std = []
 tracing = ["dep:tracing"]
 
 [dependencies]
-enum-map = { version = "2.7", optional = true, default-features = false }
+enum-map = { version = "3.1", optional = true, default-features = false }
 gc-arena-derive = { path = "./derive", version = "0.7.0"}
 hashbrown = { version = "0.17", optional = true, default-features = false }
 indexmap = { version = "2.13", optional = true, default-features = false }
