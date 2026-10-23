@@ -10,8 +10,8 @@ help: the trait `Collect<'_>` is not implemented for `NotCollect`
 3 | struct NotCollect;
   | ^^^^^^^^^^^^^^^^^
   = help: the following other types implement trait `Collect<'gc>`:
-            &'static T
             ()
+            (A,)
             (A, B)
             (A, B, C)
             (A, B, C, D)
@@ -35,8 +35,8 @@ help: the trait `Collect<'gc>` is not implemented for `NotCollect`
 3 | struct NotCollect;
   | ^^^^^^^^^^^^^^^^^
   = help: the following other types implement trait `Collect<'gc>`:
-            &'static T
             ()
+            (A,)
             (A, B)
             (A, B, C)
             (A, B, C, D)

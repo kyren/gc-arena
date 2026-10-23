@@ -82,6 +82,11 @@ pub type GcFat<'gc, T, M, P> = Gc<'gc, T, GcKind<Fat, M, P>>;
 pub type GcThin<'gc, T, M, P> = Gc<'gc, T, GcKind<Thin, M, P>>;
 
 /// Trait to fetch the "fat" version of the stored pointer.
+///
+/// # Safety
+///
+/// Implementations must ensure that converting between `Store` and `T` preserves the pointed-to
+/// allocation and produces a valid pointer to the same value, including its pointer metadata.
 pub(crate) unsafe trait GcStore<'gc, T: ?Sized> {
     type Store: ?Sized + 'gc;
 
@@ -401,7 +406,10 @@ where
     ///
     /// Unlike `AsRef` or `Deref`, the returned reference isn't bound to the `Gc` itself, and
     /// will stay valid for the entirety of the current arena callback.
+    ///
+    /// This method has a longer return lifetime than the standard `AsRef` method.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(self: Gc<'gc, T, K>) -> &'gc T {
         // SAFETY: The returned reference cannot escape the current arena callback, as `&'gc T`
         // never implements `Collect` (unless `'gc` is `'static`, which is impossible here), and so
@@ -527,11 +535,6 @@ where
     fn eq(&self, other: &Self) -> bool {
         self.as_ref().eq(other.as_ref())
     }
-
-    #[inline]
-    fn ne(&self, other: &Self) -> bool {
-        self.as_ref().ne(other.as_ref())
-    }
 }
 
 impl<'gc, T: ?Sized, K> Eq for Gc<'gc, T, K>
@@ -612,6 +615,12 @@ impl<'gc, T: Collect<'gc>> GcBuilder<'gc, T> {
     /// Create a new `GcBuilder` suitable for building a `Gc` pointer to a *sized* `T`.
     pub fn new() -> Self {
         GcBuilder::new_with_type_meta::<UnitTypeMeta>()
+    }
+}
+
+impl<'gc, T: Collect<'gc>> Default for GcBuilder<'gc, T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -715,6 +724,10 @@ impl<'gc, T: ?Sized, M, P> GcBuilder<'gc, T, M, P> {
 
     /// Finish constructing a `Gc<T>` by unsafely assuming that the held memory is properly
     /// initialized.
+    ///
+    /// # Safety
+    ///
+    /// The value in the builder's allocation must be fully initialized and valid for `T`.
     pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcFat<'gc, T, M, P> {
         let ptr = self.ptr;
         mem::forget(self);

@@ -113,10 +113,9 @@ impl<'gc, H, E, M> GcSliceWithHeaderBuilder<'gc, Static<H>, E, M> {
     #[inline]
     pub fn unwrap_static_header(self) -> GcSliceWithHeaderBuilder<'gc, H, E, M> {
         unsafe {
-            let builder = GcSliceWithHeaderBuilder {
+            GcSliceWithHeaderBuilder {
                 inner: GcBuilder::from_raw(self.inner.into_raw() as *mut SliceWithHeader<H, E>),
-            };
-            builder
+            }
         }
     }
 }
@@ -130,6 +129,10 @@ impl<'gc, H, E, M> GcSliceWithHeaderBuilder<'gc, H, E, M> {
 
     /// Convert to a [`GcSliceWithHeaderSliceBuilder`] by unsafely assuming that the held header is properly
     /// initialized.
+    ///
+    /// # Safety
+    ///
+    /// The header must be fully initialized and valid for `H`.
     pub unsafe fn assume_init(self) -> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
         GcSliceWithHeaderSliceBuilder {
             inner: ManuallyDrop::new(self.inner),
@@ -194,6 +197,11 @@ impl<'gc, H, E, M> GcSliceWithHeaderSliceBuilder<'gc, H, E, M> {
 
     /// Finish constructing a `GcSliceWithHeader<H, E>` by unsafely assuming that the held slice is
     /// properly initialized.
+    ///
+    /// # Safety
+    ///
+    /// The header and every element in the slice must be fully initialized and valid for their
+    /// respective types.
     pub unsafe fn assume_init(mut self, mc: &Mutation<'gc>) -> GcSliceWithHeader<'gc, H, E, M> {
         unsafe {
             let inner = ManuallyDrop::take(&mut self.inner);
@@ -326,6 +334,10 @@ impl<'gc, E, M> GcSliceBuilder<'gc, E, M> {
 
     /// Finish constructing a `GcSlice<E>` by unsafely assuming that the held slice is properly
     /// initialized.
+    ///
+    /// # Safety
+    ///
+    /// Every element in the slice must be fully initialized and valid for `E`.
     pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcSlice<'gc, E, M> {
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(self.0.assume_init(mc)) as *const [E]) }
     }
@@ -415,6 +427,10 @@ impl<'gc, M> GcStrBuilder<'gc, M> {
 
     /// Finish constructing a `GcStr` by unsafely assuming that the held str is properly
     /// initialized.
+    ///
+    /// # Safety
+    ///
+    /// Every byte in the string must be initialized and the byte sequence must be valid UTF-8.
     pub unsafe fn assume_init(self, mc: &Mutation<'gc>) -> GcStr<'gc, M> {
         unsafe { Gc::from_ptr_with_kind(Gc::as_ptr(self.0.assume_init(mc)) as *const str) }
     }

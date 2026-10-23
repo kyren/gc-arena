@@ -104,7 +104,7 @@ impl<'gc> Deref for Finalization<'gc> {
     #[inline]
     fn deref(&self) -> &Self::Target {
         // SAFETY: Finalization and Mutation are #[repr(transparent)]
-        unsafe { mem::transmute::<&Self, &Mutation>(&self) }
+        unsafe { mem::transmute::<&Self, &Mutation>(self) }
     }
 }
 
@@ -240,12 +240,12 @@ impl Context {
 
     #[inline]
     pub(crate) unsafe fn mutation_context<'gc>(&self) -> &Mutation<'gc> {
-        unsafe { mem::transmute::<&Self, &Mutation>(&self) }
+        unsafe { mem::transmute::<&Self, &Mutation>(self) }
     }
 
     #[inline]
     pub(crate) unsafe fn finalization_context<'gc>(&self) -> &Finalization<'gc> {
-        unsafe { mem::transmute::<&Self, &Finalization>(&self) }
+        unsafe { mem::transmute::<&Self, &Finalization>(self) }
     }
 
     #[inline]
@@ -287,7 +287,9 @@ impl Context {
     ) {
         let mut cx = PhaseGuard::enter(self, None);
 
-        if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+        if run_until == RunUntil::PayDebt
+            && cx.metrics.allocation_debt().partial_cmp(&0.0) != Some(core::cmp::Ordering::Greater)
+        {
             cx.log_progress("GC: paused");
             return;
         }
@@ -350,7 +352,10 @@ impl Context {
                 Phase::Drop => unreachable!(),
             }
 
-            if run_until == RunUntil::PayDebt && !(cx.metrics.allocation_debt() > 0.0) {
+            if run_until == RunUntil::PayDebt
+                && cx.metrics.allocation_debt().partial_cmp(&0.0)
+                    != Some(core::cmp::Ordering::Greater)
+            {
                 break;
             }
         }
@@ -393,7 +398,7 @@ impl Context {
             fn barrier(this: &Context, parent: GcPtr) {
                 this.make_gray_again(parent);
             }
-            barrier(&self, parent);
+            barrier(self, parent);
         }
     }
 
@@ -409,7 +414,7 @@ impl Context {
             fn barrier(this: &Context, parent: GcPtr) {
                 this.make_gray_again(parent);
             }
-            barrier(&self, parent);
+            barrier(self, parent);
         }
     }
 
@@ -429,7 +434,7 @@ impl Context {
             fn barrier(this: &Context, child: GcPtr) {
                 this.trace(child);
             }
-            barrier(&self, child);
+            barrier(self, child);
         }
     }
 
@@ -449,7 +454,7 @@ impl Context {
             fn barrier(this: &Context, child: GcPtr) {
                 this.trace_weak(child);
             }
-            barrier(&self, child);
+            barrier(self, child);
         }
     }
 
@@ -559,10 +564,8 @@ impl Context {
         // triggering another write barrier.
         let next_gray = if let Some(gc_ptr) = self.gray.pop() {
             Some(gc_ptr)
-        } else if let Some(gc_ptr) = self.gray_again.pop() {
-            Some(gc_ptr)
         } else {
-            None
+            self.gray_again.pop()
         };
 
         if let Some(gc_ptr) = next_gray {
@@ -717,14 +720,14 @@ impl<'a> Deref for PhaseGuard<'a> {
 
     #[inline(always)]
     fn deref(&self) -> &Context {
-        &self.cx
+        self.cx
     }
 }
 
 impl<'a> DerefMut for PhaseGuard<'a> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Context {
-        &mut self.cx
+        self.cx
     }
 }
 

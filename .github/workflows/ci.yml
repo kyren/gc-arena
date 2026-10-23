@@ -1,0 +1,65 @@
+name: Rust
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_n_test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: rustfmt
+        if: ${{ !cancelled() }}
+        run: cargo fmt --all -- --check
+
+      - name: check
+        if: ${{ !cancelled() }}
+        run: cargo check --verbose
+
+      - name: clippy
+        if: ${{ !cancelled() }}
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          cargo build --verbose
+          cargo clean
+          cargo build --verbose --tests --all-features
+
+      - name: Test
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: cargo test --all-features --all-targets --examples --verbose
+
+  semver:
+    name: Check semver
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check semver
+        if: ${{ !cancelled() }}
+        uses: obi1kenobi/cargo-semver-checks-action@v2

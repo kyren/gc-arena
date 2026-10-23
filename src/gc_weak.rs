@@ -70,7 +70,7 @@ where
     /// [`crate::arena::CollectionPhase::Sweeping`] phase and we know the pointer *will* be dropped.
     #[inline]
     pub fn upgrade(self, mc: &Mutation<'gc>) -> Option<Gc<'gc, T, K>> {
-        mc.upgrade(self.inner.ptr.erase()).then(|| self.inner)
+        mc.upgrade(self.inner.ptr.erase()).then_some(self.inner)
     }
 
     /// Returns whether the value referenced by this `GcWeak` has already been dropped.

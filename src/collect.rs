@@ -20,6 +20,7 @@ pub use gc_arena_derive::Collect;
 /// deriving `Collect`. A safe way of providing internal mutability in this case is to use
 /// [`crate::lock::Lock<T>`] and [`crate::lock::RefLock<T>`], which provides internal mutability
 /// while ensuring that write barriers are correctly executed.
+/// # Safety
 pub unsafe trait Collect<'gc> {
     /// As an optimization, if this type can never hold a `Gc` pointer and `trace` is unnecessary
     /// to call, you may set this to `false`. The default value is `true`, signaling that
@@ -122,6 +123,7 @@ macro_rules! static_collect {
 /// The `dyn DynCollect` trait object implements `Collect` automatically, but trait objects for user
 /// defined traits that have `DynCollect` as a parent trait can also be made to implement `Collect`
 /// by using the [`dyn_collect`] macro.
+/// # Safety
 pub unsafe trait DynCollect<'gc> {
     fn dyn_trace(&self, cc: &mut dyn Trace<'gc>);
 }
